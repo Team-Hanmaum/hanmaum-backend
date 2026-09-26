@@ -1,0 +1,16 @@
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+# Only a trusted reverse proxy may reach the application port in production.
+server:
+  forward-headers-strategy: framework
+
+app:
+  security:
+    login-success-url: ${FRONTEND_URL}
+  ai:
+    base-url: ${AI_BASE_URL}
+    api-key: ${AI_INTERNAL_API_KEY}
