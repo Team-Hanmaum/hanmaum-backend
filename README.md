@@ -126,7 +126,7 @@ docker build -t hanmaum-backend:local .
 
 Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 실행합니다. `.env`, Git 메타데이터, 로컬 빌드 결과는 이미지 빌드 컨텍스트에서 제외합니다. 컨테이너 실행 시 `SPRING_PROFILES_ACTIVE=prod`와 운영 환경변수를 주입합니다.
 
-첫 배포는 Lightsail 서울 리전의 2 vCPU·4GB급 Linux 서버와 Docker Compose를 기준으로 계획합니다. Nginx·Spring·FastAPI·PostgreSQL을 별도 컨테이너로 실행하고, DB 및 AI 포트는 외부에 공개하지 않습니다. HTTPS, 외부 DB 백업과 복원 검증, 자원 사용량 확인은 실제 배포 단계에서 구성합니다. 현재 `compose.yml`은 **로컬 DB용**이며 클라우드 리소스를 생성하지 않습니다.
+첫 배포는 Lightsail 서울 리전의 2 vCPU·4GB급 Linux 서버와 Docker Compose를 기준으로 계획합니다. Nginx·Spring·FastAPI·PostgreSQL을 별도 컨테이너로 실행하고, DB 및 AI 포트는 외부에 공개하지 않습니다. HTTPS, 외부 DB 백업과 복원 검증, 자원 사용량 확인은 실제 배포 단계에서 구성합니다. 현재 `docker-compose.yml`은 **로컬 DB용**이며 클라우드 리소스를 생성하지 않습니다.
 
 ## 구현 범위
 
