@@ -1,5 +1,6 @@
 package com.hanmaum.backend.global.exception;
 
+import com.hanmaum.backend.ai.client.AiServiceException;
 import com.hanmaum.backend.global.response.ApiError;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -55,5 +56,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
     log.error("Unhandled request failure: type={}", exception.getClass().getName());
     return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
         .body(ApiError.of("INTERNAL_ERROR", "요청 처리 중 오류가 발생했습니다."));
+  }
+
+  @ExceptionHandler(AiServiceException.class)
+  ResponseEntity<ApiError> handleAiFailure(AiServiceException exception) {
+    return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+        .body(ApiError.of("AI_SERVICE_UNAVAILABLE", exception.getMessage()));
   }
 }
