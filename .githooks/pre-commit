@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+for path in $(git diff --cached --name-only --diff-filter=ACMR); do
+  case "$path" in
+    *.java|*.gradle|*.md|*.yml|*.sql|.vscode/*.json|.editorconfig|.gitignore|.gitattributes|.githooks/*)
+      ./gradlew --quiet spotlessCheck
+      exit $?
+      ;;
+  esac
+done

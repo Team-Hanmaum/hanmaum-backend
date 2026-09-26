@@ -1,0 +1,43 @@
+# Gradle and build outputs
+.gradle/
+**/build/
+out/
+bin/
+*.class
+HELP.md
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.jks
+*.p12
+*.pem
+*.key
+
+# IDE-local state
+.idea/
+*.iml
+*.ipr
+*.iws
+.classpath
+.project
+.settings/
+.factorypath
+.apt_generated/
+.springBeans
+.sts4-cache/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/tasks.json
+
+# Logs and operating-system files
+*.log
+logs/
+.DS_Store
+Thumbs.db
+
+# Local database backups
+backups/
+*.dump

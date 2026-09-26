@@ -1,0 +1,22 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Java: format",
+      "type": "process",
+      "command": "./gradlew",
+      "windows": { "command": ".\\gradlew.bat" },
+      "args": ["spotlessApply"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Java: check",
+      "type": "process",
+      "command": "./gradlew",
+      "windows": { "command": ".\\gradlew.bat" },
+      "args": ["check"],
+      "group": "test",
+      "problemMatcher": []
+    }
+  ]
+}

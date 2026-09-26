@@ -1,0 +1,16 @@
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 2
+
+app:
+  security:
+    public-docs: true
+    allowed-origins:
+      - http://localhost:5173
+
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
