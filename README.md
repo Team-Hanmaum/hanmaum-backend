@@ -38,7 +38,9 @@ backend/
 │   ├── client/
 │   └── dto/
 └── global/            공통 개발 기반
+    ├── code/          ErrorCode 인터페이스·CommonErrorCode·SuccessCode
     ├── config/
+    ├── openapi/       공통·도메인 오류의 Swagger 응답 등록
     ├── security/
     ├── response/
     └── exception/
@@ -46,10 +48,11 @@ backend/
 
 회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 각 폴더의 `package-info.java`에 책임을 기록하며 도메인 기능은 아직 미구현입니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
 
-`auth`와 위 8개 업무 도메인은 아래 공통 하위 구조까지 준비했습니다. 빈 폴더에는 `.gitkeep`을 두어 같은 구조를 Git으로 공유합니다. 기존 코드가 있는 `auth/controller`에는 `.gitkeep`을 추가하지 않습니다.
+`auth`와 위 8개 업무 도메인은 아래 공통 하위 구조까지 준비했습니다. 빈 폴더에는 `.gitkeep`을 두어 같은 구조를 Git으로 공유합니다. 실제 파일이 있는 폴더에는 `.gitkeep`을 추가하지 않습니다.
 
 ```text
 각 업무 도메인/
+├── code/              해당 도메인의 오류 코드
 ├── controller/
 ├── service/
 ├── repository/
@@ -60,6 +63,10 @@ backend/
 담당자는 실제 파일을 추가할 때 해당 폴더의 `.gitkeep`을 제거하고, 기능에 필요 없는 계층은 삭제하거나 조정할 수 있습니다. 예를 들어 `dashboard/entity`는 구조를 맞춰 둔 빈 폴더이며 별도의 현황판 테이블이 필요하다는 의미는 아닙니다. 기존 `ai`와 `global`은 각자의 통신·공통 기반 구조를 유지합니다.
 
 공간 API는 `carespace/controller`, 공간 업무 로직은 `carespace/service`에 둡니다. 초대는 `carespace`에 포함하고, 공개 분석 업무인 `analysis`는 내부 통신을 맡은 `ai`를 사용합니다.
+
+오류 코드의 공통 인터페이스는 `global/code/ErrorCode.java`, 공통 오류 enum은 `CommonErrorCode.java`입니다. 도메인 오류 enum도 같은 인터페이스를 구현하며 `ApiException`과 `ApiResponse`를 함께 사용합니다. 현재 `AuthErrorCode`의 OAuth 실패, `CareItemErrorCode`의 항목 잠금, `ProposalErrorCode`의 제안 묶음 충돌을 분리했습니다. 나머지 도메인의 `code`는 기능 구현 시 확정된 오류를 추가할 수 있도록 비워뒀습니다.
+
+성공은 `SuccessCode`의 `SUCCESS`·`ACCEPTED`를 재사용합니다. HTTP 상태는 Controller에서 지정하고 204는 본문 없이 반환합니다. 오류 코드 추가와 Swagger 문서화 방법은 [공통 규격](docs/api-conventions.md)을 따릅니다.
 
 ## 빠른 시작
 

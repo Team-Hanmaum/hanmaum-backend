@@ -1,7 +1,7 @@
 package com.hanmaum.backend.global.config;
 
+import com.hanmaum.backend.global.openapi.ErrorResponseDocumentation;
 import com.hanmaum.backend.global.response.ApiResponse;
-import com.hanmaum.backend.global.response.ErrorCode;
 import io.swagger.v3.core.converter.ModelConverters;
 import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.OpenAPI;
@@ -9,25 +9,20 @@ import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.Paths;
 import io.swagger.v3.oas.models.info.Info;
-import io.swagger.v3.oas.models.media.Content;
-import io.swagger.v3.oas.models.media.MediaType;
-import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.responses.ApiResponses;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
 import org.springdoc.core.properties.SpringDocConfigProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.io.ResourceLoader;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "springdoc.api-docs.enabled", havingValue = "true")
 public class OpenApiConfig {
   @Bean
-  OpenAPI hanmaumOpenApi(SpringDocConfigProperties properties) {
+  OpenAPI hanmaumOpenApi(SpringDocConfigProperties properties, ResourceLoader resourceLoader) {
     var components =
         new Components()
             .schemas(
@@ -46,19 +41,7 @@ public class OpenApiConfig {
                     .in(SecurityScheme.In.HEADER)
                     .name("X-CSRF-TOKEN")
                     .description("GET /api/auth/csrf의 token 값. 로그인·로그아웃 후 재발급합니다."));
-    for (var code : ErrorCode.values()) {
-      components.addResponses(
-          code.name(),
-          new io.swagger.v3.oas.models.responses.ApiResponse()
-              .description(code.status().value() + " · " + code.message())
-              .content(
-                  new Content()
-                      .addMediaType(
-                          "application/json",
-                          new MediaType()
-                              .schema(new Schema<>().$ref("#/components/schemas/ApiResponse"))
-                              .example(errorExample(code)))));
-    }
+    ErrorResponseDocumentation.register(components, resourceLoader);
     return new OpenAPI()
         .info(
             new Info()
@@ -91,21 +74,5 @@ public class OpenApiConfig {
                             "403",
                             new io.swagger.v3.oas.models.responses.ApiResponse()
                                 .$ref("#/components/responses/FORBIDDEN"))));
-  }
-
-  private Map<String, Object> errorExample(ErrorCode code) {
-    // A map preserves the required null data field in OpenAPI examples.
-    Map<String, Object> example = new LinkedHashMap<>();
-    example.put("success", false);
-    example.put("code", code.name());
-    example.put("message", code.message());
-    example.put("data", null);
-    example.put(
-        "errors",
-        code == ErrorCode.INVALID_REQUEST
-            ? List.of(Map.of("field", "fieldName", "reason", "입력 내용을 확인해주세요."))
-            : List.of());
-    example.put("timestamp", "2026-10-07T08:00:00Z");
-    return example;
   }
 }

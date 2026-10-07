@@ -13,16 +13,24 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.hanmaum.backend.ai.client.AiServiceException;
+import com.hanmaum.backend.auth.code.AuthErrorCode;
+import com.hanmaum.backend.careitem.code.CareItemErrorCode;
+import com.hanmaum.backend.global.code.CommonErrorCode;
+import com.hanmaum.backend.global.code.ErrorCode;
 import com.hanmaum.backend.global.exception.ApiException;
+import com.hanmaum.backend.global.response.ApiFieldError;
 import com.hanmaum.backend.global.response.ApiResponse;
-import com.hanmaum.backend.global.response.ErrorCode;
+import com.hanmaum.backend.proposal.code.ProposalErrorCode;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -116,6 +124,7 @@ class SecurityIntegrationTests {
                 .content("{\"title\":\"소식\"}"))
         .andExpect(status().isOk())
         .andExpect(envelope(true, "SUCCESS"))
+        .andExpect(jsonPath("$.message").value("요청이 완료되었습니다."))
         .andExpect(jsonPath("$.data.title").value("소식"))
         .andExpect(jsonPath("$.errors").isEmpty());
   }
@@ -125,10 +134,12 @@ class SecurityIntegrationTests {
     mvc.perform(post("/api/test/created").with(user("member")).with(csrf()))
         .andExpect(status().isCreated())
         .andExpect(envelope(true, "SUCCESS"))
+        .andExpect(jsonPath("$.message").value("요청이 완료되었습니다."))
         .andExpect(jsonPath("$.data.title").value("created"));
     mvc.perform(post("/api/test/accepted").with(user("member")).with(csrf()))
         .andExpect(status().isAccepted())
         .andExpect(envelope(true, "ACCEPTED"))
+        .andExpect(jsonPath("$.message").value("요청이 접수되었습니다."))
         .andExpect(
             result ->
                 assertThat(
@@ -241,6 +252,25 @@ class SecurityIntegrationTests {
         .andExpect(envelope(false, "INTERNAL_ERROR"));
   }
 
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("errorContracts")
+  void preservesExistingCommonAndDomainErrorContracts(ErrorContract expected) throws Exception {
+    mvc.perform(get("/api/test/codes/{code}", expected.code()).with(user("member")))
+        .andExpect(status().is(expected.httpStatus()))
+        .andExpect(envelope(false, expected.code()))
+        .andExpect(jsonPath("$.message").value(expected.message()))
+        .andExpect(jsonPath("$.errors").isEmpty());
+  }
+
+  @Test
+  void preservesFieldErrorsFromDomainExceptions() throws Exception {
+    mvc.perform(get("/api/test/failure/proposal-fields").with(user("member")))
+        .andExpect(status().isConflict())
+        .andExpect(envelope(false, "PROPOSAL_BATCH_CONFLICT"))
+        .andExpect(jsonPath("$.errors[0].field").value("entries[0].proposalId"))
+        .andExpect(jsonPath("$.errors[0].reason").value("선택한 제안을 다시 확인해주세요."));
+  }
+
   @Test
   void requiresCsrfForLogoutAndInvalidatesThePersistedSession() throws Exception {
     mvc.perform(post("/api/auth/logout").with(user("member")))
@@ -335,7 +365,67 @@ class SecurityIntegrationTests {
               assertThat(example.get("data").isNull()).isTrue();
               assertThat(example.path("errors").get(0).path("field").asText())
                   .isEqualTo("fieldName");
+              errorContracts()
+                  .forEach(
+                      expected -> {
+                        var response =
+                            document.path("components").path("responses").path(expected.code());
+                        assertThat(response.path("description").asText())
+                            .startsWith(expected.httpStatus() + " · ");
+                        var errorExample =
+                            response.path("content").path("application/json").path("example");
+                        assertThat(errorExample.size()).isEqualTo(6);
+                        assertThat(errorExample.path("code").asText()).isEqualTo(expected.code());
+                        assertThat(errorExample.path("message").asText())
+                            .isEqualTo(expected.message());
+                        assertThat(errorExample.path("data").isNull()).isTrue();
+                      });
             });
+  }
+
+  // Public contract fixtures are kept independent of enum metadata to detect wire changes.
+  static Stream<ErrorContract> errorContracts() {
+    return Stream.of(
+        new ErrorContract(
+            CommonErrorCode.INVALID_REQUEST, "INVALID_REQUEST", 400, "입력 내용을 확인해주세요."),
+        new ErrorContract(CommonErrorCode.UNAUTHENTICATED, "UNAUTHENTICATED", 401, "로그인이 필요합니다."),
+        new ErrorContract(
+            AuthErrorCode.OAUTH_LOGIN_FAILED, "OAUTH_LOGIN_FAILED", 401, "소셜 로그인에 실패했습니다."),
+        new ErrorContract(CommonErrorCode.FORBIDDEN, "FORBIDDEN", 403, "요청 권한 또는 CSRF 토큰을 확인해주세요."),
+        new ErrorContract(
+            CommonErrorCode.RESOURCE_NOT_FOUND, "RESOURCE_NOT_FOUND", 404, "요청한 대상을 찾을 수 없습니다."),
+        new ErrorContract(
+            CommonErrorCode.VERSION_CONFLICT, "VERSION_CONFLICT", 409, "변경된 내용을 다시 확인해주세요."),
+        new ErrorContract(
+            CareItemErrorCode.ITEM_LOCKED, "ITEM_LOCKED", 409, "다른 사용자가 해당 항목을 편집 중입니다."),
+        new ErrorContract(
+            CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
+            "IDEMPOTENCY_KEY_REUSED",
+            409,
+            "같은 요청 ID를 다른 요청에 사용할 수 없습니다."),
+        new ErrorContract(
+            ProposalErrorCode.PROPOSAL_BATCH_CONFLICT,
+            "PROPOSAL_BATCH_CONFLICT",
+            409,
+            "선택한 제안을 함께 반영할 수 없습니다."),
+        new ErrorContract(
+            CommonErrorCode.DELETION_IMPACT_CHANGED,
+            "DELETION_IMPACT_CHANGED",
+            409,
+            "삭제 영향 범위가 변경되었습니다. 다시 확인해주세요."),
+        new ErrorContract(CommonErrorCode.INTERNAL_ERROR, "INTERNAL_ERROR", 500, "서버 오류가 발생했습니다."),
+        new ErrorContract(
+            CommonErrorCode.AI_SERVICE_UNAVAILABLE,
+            "AI_SERVICE_UNAVAILABLE",
+            502,
+            "AI 서비스를 이용할 수 없습니다."));
+  }
+
+  record ErrorContract(ErrorCode definition, String code, int httpStatus, String message) {
+    @Override
+    public String toString() {
+      return code;
+    }
   }
 
   private ResultMatcher envelope(boolean success, String code) {
@@ -424,11 +514,26 @@ class SecurityIntegrationTests {
     @GetMapping("/api/test/failure/{kind}")
     ApiResponse<Void> failure(@PathVariable String kind) {
       throw switch (kind) {
-        case "conflict" -> new ApiException(ErrorCode.VERSION_CONFLICT);
+        case "conflict" -> new ApiException(CommonErrorCode.VERSION_CONFLICT);
+        case "proposal-fields" ->
+            new ApiException(
+                ProposalErrorCode.PROPOSAL_BATCH_CONFLICT,
+                List.of(new ApiFieldError("entries[0].proposalId", "선택한 제안을 다시 확인해주세요.")));
         case "forbidden" -> new AccessDeniedException("PRIVATE-RECORD");
         case "ai" -> new AiServiceException();
         default -> new IllegalStateException("PRIVATE-RECORD");
       };
+    }
+
+    @GetMapping("/api/test/codes/{code}")
+    ApiResponse<Void> errorCode(@PathVariable String code) {
+      var definition =
+          errorContracts()
+              .filter(contract -> contract.code().equals(code))
+              .findFirst()
+              .orElseThrow()
+              .definition();
+      throw new ApiException(definition);
     }
   }
 

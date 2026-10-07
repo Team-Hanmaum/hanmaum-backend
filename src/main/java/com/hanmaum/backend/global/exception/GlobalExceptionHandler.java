@@ -1,9 +1,9 @@
 package com.hanmaum.backend.global.exception;
 
 import com.hanmaum.backend.ai.client.AiServiceException;
+import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.response.ApiFieldError;
 import com.hanmaum.backend.global.response.ApiResponse;
-import com.hanmaum.backend.global.response.ErrorCode;
 import java.util.List;
 import java.util.stream.Stream;
 import org.slf4j.Logger;
@@ -57,7 +57,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             .map(error -> new ApiFieldError(error.getField(), reason(error.getDefaultMessage())))
             .toList();
     return handleExceptionInternal(
-        exception, ApiResponse.error(ErrorCode.INVALID_REQUEST, errors), headers, status, request);
+        exception,
+        ApiResponse.error(CommonErrorCode.INVALID_REQUEST, errors),
+        headers,
+        status,
+        request);
   }
 
   @Override
@@ -89,7 +93,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
                 })
             .toList();
     return handleExceptionInternal(
-        exception, ApiResponse.error(ErrorCode.INVALID_REQUEST, errors), headers, status, request);
+        exception,
+        ApiResponse.error(CommonErrorCode.INVALID_REQUEST, errors),
+        headers,
+        status,
+        request);
   }
 
   @Override
@@ -103,7 +111,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
             ? List.of(new ApiFieldError(mismatch.getName(), "입력 형식을 확인해주세요."))
             : List.<ApiFieldError>of();
     return handleExceptionInternal(
-        exception, ApiResponse.error(ErrorCode.INVALID_REQUEST, errors), headers, status, request);
+        exception,
+        ApiResponse.error(CommonErrorCode.INVALID_REQUEST, errors),
+        headers,
+        status,
+        request);
   }
 
   @Override
@@ -114,7 +126,11 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
       WebRequest request) {
     var errors = List.of(new ApiFieldError(exception.getParameterName(), "필수 입력입니다."));
     return handleExceptionInternal(
-        exception, ApiResponse.error(ErrorCode.INVALID_REQUEST, errors), headers, status, request);
+        exception,
+        ApiResponse.error(CommonErrorCode.INVALID_REQUEST, errors),
+        headers,
+        status,
+        request);
   }
 
   @ExceptionHandler(ApiException.class)
@@ -125,27 +141,28 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
   @ExceptionHandler(AccessDeniedException.class)
   ResponseEntity<ApiResponse<Void>> handleAccessDenied(AccessDeniedException exception) {
-    return ResponseEntity.status(ErrorCode.FORBIDDEN.status())
-        .body(ApiResponse.error(ErrorCode.FORBIDDEN));
+    return ResponseEntity.status(CommonErrorCode.FORBIDDEN.status())
+        .body(ApiResponse.error(CommonErrorCode.FORBIDDEN));
   }
 
   @ExceptionHandler(AuthenticationException.class)
   ResponseEntity<ApiResponse<Void>> handleAuthentication(AuthenticationException exception) {
-    return ResponseEntity.status(ErrorCode.UNAUTHENTICATED.status())
-        .body(ApiResponse.error(ErrorCode.UNAUTHENTICATED));
+    return ResponseEntity.status(CommonErrorCode.UNAUTHENTICATED.status())
+        .body(ApiResponse.error(CommonErrorCode.UNAUTHENTICATED));
   }
 
   @ExceptionHandler(Exception.class)
   ResponseEntity<ApiResponse<Void>> handleUnexpectedException(Exception exception) {
     // Do not log messages or stack traces containing records or credentials.
     log.error("Unhandled request failure: type={}", exception.getClass().getName());
-    return ResponseEntity.internalServerError().body(ApiResponse.error(ErrorCode.INTERNAL_ERROR));
+    return ResponseEntity.internalServerError()
+        .body(ApiResponse.error(CommonErrorCode.INTERNAL_ERROR));
   }
 
   @ExceptionHandler(AiServiceException.class)
   ResponseEntity<ApiResponse<Void>> handleAiFailure(AiServiceException exception) {
-    return ResponseEntity.status(ErrorCode.AI_SERVICE_UNAVAILABLE.status())
-        .body(ApiResponse.error(ErrorCode.AI_SERVICE_UNAVAILABLE));
+    return ResponseEntity.status(CommonErrorCode.AI_SERVICE_UNAVAILABLE.status())
+        .body(ApiResponse.error(CommonErrorCode.AI_SERVICE_UNAVAILABLE));
   }
 
   private static String reason(String message) {

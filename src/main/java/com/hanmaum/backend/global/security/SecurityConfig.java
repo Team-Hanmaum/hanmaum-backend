@@ -1,7 +1,9 @@
 package com.hanmaum.backend.global.security;
 
+import com.hanmaum.backend.auth.code.AuthErrorCode;
+import com.hanmaum.backend.global.code.CommonErrorCode;
+import com.hanmaum.backend.global.code.ErrorCode;
 import com.hanmaum.backend.global.response.ApiResponse;
-import com.hanmaum.backend.global.response.ErrorCode;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
@@ -52,10 +54,10 @@ public class SecurityConfig {
                 errors
                     .authenticationEntryPoint(
                         (request, response, exception) ->
-                            writeError(response, mapper, ErrorCode.UNAUTHENTICATED))
+                            writeError(response, mapper, CommonErrorCode.UNAUTHENTICATED))
                     .accessDeniedHandler(
                         (request, response, exception) ->
-                            writeError(response, mapper, ErrorCode.FORBIDDEN)))
+                            writeError(response, mapper, CommonErrorCode.FORBIDDEN)))
         .logout(
             logout ->
                 logout
@@ -75,7 +77,7 @@ public class SecurityConfig {
                           response.sendRedirect(properties.loginSuccessUrl().toString()))
                   .failureHandler(
                       (request, response, exception) ->
-                          writeError(response, mapper, ErrorCode.OAUTH_LOGIN_FAILED)));
+                          writeError(response, mapper, AuthErrorCode.OAUTH_LOGIN_FAILED)));
     }
     // Keep Spring Security's session-based CSRF protection enabled.
     return http.build();

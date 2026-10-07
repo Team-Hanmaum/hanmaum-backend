@@ -10,9 +10,12 @@
 
 ## 코드 구조와 책임
 
-- `com.hanmaum.backend` 아래 `auth`와 업무 도메인은 `controller`, `service`, `repository`, `entity`, `dto`의 공통 하위 구조를 미리 준비한다. 빈 폴더는 `.gitkeep`으로 Git에 보존한다.
+- `com.hanmaum.backend` 아래 `auth`와 업무 도메인은 `code`, `controller`, `service`, `repository`, `entity`, `dto`의 공통 하위 구조를 미리 준비한다. 빈 폴더는 `.gitkeep`으로 Git에 보존한다.
 - 도메인 경계와 패키지는 `docs/architecture.md`를 따른다. 미구현 도메인의 책임은 `package-info.java`에 기록한다. 담당자는 실제 파일을 추가할 때 해당 폴더의 `.gitkeep`을 제거하고, 필요 없는 계층은 삭제하거나 조정할 수 있다. 폴더 구조를 채우기 위한 빈 업무 클래스·테이블은 만들지 않는다.
 - `global`은 공통 설정·보안·응답·예외를 담당한다. 공통 응답 코드는 업무 도메인에 의존하지 않는다.
+- 오류 규칙은 `global.code.ErrorCode` 인터페이스, 공통 오류는 `CommonErrorCode`, 공통 성공은 `SuccessCode`로 관리한다. 도메인 오류 enum은 각 도메인의 `code` 패키지에 두고 `ErrorCode`를 구현한다.
+- 기존 공통 오류는 재사용한다. 공개 코드 문자열은 서비스 전체에서 중복되지 않아야 하며, 코드·HTTP 상태·기본 메시지 변경은 API 계약 변경으로 검토한다. 전역 예외 처리기는 `ApiException`을 통해 도메인 오류를 동일하게 처리한다.
+- Swagger 오류 문서 조립은 `global.openapi`에서 담당한다. 애플리케이션 패키지 아래 `ErrorCode` 구현 enum을 자동으로 수집하며 각 API에는 실제 발생하는 오류 응답 참조를 명시한다.
 - `ai`는 내부 FastAPI 통신 어댑터이며 공개 분석 업무의 상태 관리·권한 판정과 구분한다.
 - Controller는 요청·응답 연결, Service는 업무 규칙·트랜잭션, Repository는 영속성 접근을 담당한다.
 - 엔티티와 내부 AI DTO를 공개 API 응답으로 직접 노출하지 않는다.

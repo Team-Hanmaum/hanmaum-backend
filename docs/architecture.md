@@ -45,7 +45,7 @@
 
 ## 도메인 패키지 구조
 
-루트는 `com.hanmaum.backend`입니다. 합의한 도메인별 최상위 패키지를 미리 준비하고, 미구현 도메인은 `package-info.java`에 책임을 기록합니다. `auth`와 아래 8개 업무 도메인은 `controller`, `service`, `repository`, `entity`, `dto`의 공통 하위 폴더까지 준비하며 빈 폴더는 `.gitkeep`으로 Git에 보존합니다. 기존 `ai`와 `global`은 통신 어댑터·공통 기반에 맞는 구조를 유지합니다.
+루트는 `com.hanmaum.backend`입니다. 합의한 도메인별 최상위 패키지를 미리 준비하고, 미구현 도메인은 `package-info.java`에 책임을 기록합니다. `auth`와 아래 8개 업무 도메인은 `code`, `controller`, `service`, `repository`, `entity`, `dto`의 공통 하위 폴더까지 준비하며 빈 폴더는 `.gitkeep`으로 Git에 보존합니다. `ai`는 통신 어댑터 구조, `global`은 공통 코드·응답·예외·문서·보안·설정 구조를 사용합니다.
 
 담당자는 실제 파일 추가 시 해당 폴더의 `.gitkeep`을 제거하고 불필요한 계층은 삭제하거나 조정할 수 있습니다. 공통 폴더 구조가 모든 도메인에 독립 엔티티·테이블을 만들라는 의미는 아닙니다. 업무 클래스와 영속성 모델은 기능 구현 시 추가합니다.
 
@@ -70,6 +70,9 @@
 - 도메인 간 업무 접근은 Service 경계를 사용합니다. 다른 도메인의 Controller 호출이나 무분별한 Repository 공유를 피합니다.
 - 공개 `analysis` 업무는 `ai` 어댑터를 호출합니다. 내부 DTO의 수치 제한·버전 타입을 공개 API 정책으로 그대로 사용하지 않습니다.
 - `global.response`는 업무 도메인에 의존하지 않습니다. 전역 예외 처리에서 내부 AI 실패를 공개 오류로 변환하는 기존 경계는 유지합니다.
+- `global.code.ErrorCode`는 공통 오류와 도메인 오류가 구현하는 인터페이스입니다. `CommonErrorCode`는 도메인 공통 오류, `SuccessCode`는 성공 응답의 코드·메시지를 담당합니다. 공개 코드·HTTP 상태·기본 메시지는 패키지 위치와 독립된 API 계약입니다.
+- 도메인별 오류는 각 `code` 패키지에 둡니다. 현재 OAuth 실패는 `auth`, 항목 잠금은 `careitem`, 제안 묶음 충돌은 `proposal`에서 관리합니다. 버전·반복 요청·삭제 영향 등 여러 도메인에 적용되는 오류는 공통 코드로 재사용합니다.
+- `global.exception`은 `ApiException`과 전역 예외 변환, `global.openapi`는 오류 enum 탐색·코드 중복 검사·Swagger 응답 등록, `global.config`는 OpenAPI 기본 설정 등을 담당합니다. 미구현 도메인의 오류 enum이나 API를 임의로 만들지 않습니다.
 - 공개 응답은 [API 공통 규격](api-conventions.md), 내부 계약은 [AI 계약](ai-contract.md)을 따릅니다.
 
 ERD와 노션 API는 검토 가능한 초안이며 물리 스키마·업무 구현 완료를 뜻하지 않습니다. 현재 Flyway V1에는 세션 테이블만 있습니다. 입력 제한·페이지네이션·잠금 TTL·검토/삭제 확인값 구현은 해당 기능 전에 합의합니다.

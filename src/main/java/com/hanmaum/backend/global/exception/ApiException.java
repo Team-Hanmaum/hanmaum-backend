@@ -1,7 +1,7 @@
 package com.hanmaum.backend.global.exception;
 
+import com.hanmaum.backend.global.code.ErrorCode;
 import com.hanmaum.backend.global.response.ApiFieldError;
-import com.hanmaum.backend.global.response.ErrorCode;
 import java.util.List;
 
 /** A known failure with a public error code and safe request-field descriptions. */

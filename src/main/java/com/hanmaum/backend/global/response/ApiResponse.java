@@ -1,6 +1,9 @@
 package com.hanmaum.backend.global.response;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.hanmaum.backend.global.code.CommonErrorCode;
+import com.hanmaum.backend.global.code.ErrorCode;
+import com.hanmaum.backend.global.code.SuccessCode;
 import io.swagger.v3.oas.annotations.media.Schema;
 import java.time.Instant;
 import java.util.List;
@@ -25,11 +28,15 @@ public record ApiResponse<T>(
   }
 
   public static <T> ApiResponse<T> success(T data) {
-    return new ApiResponse<>(true, "SUCCESS", "요청이 완료되었습니다.", data, List.of(), Instant.now());
+    return success(SuccessCode.SUCCESS, data);
   }
 
   public static <T> ApiResponse<T> accepted(T data) {
-    return new ApiResponse<>(true, "ACCEPTED", "요청이 접수되었습니다.", data, List.of(), Instant.now());
+    return success(SuccessCode.ACCEPTED, data);
+  }
+
+  private static <T> ApiResponse<T> success(SuccessCode code, T data) {
+    return new ApiResponse<>(true, code.code(), code.message(), data, List.of(), Instant.now());
   }
 
   public static ApiResponse<Void> error(ErrorCode code) {
@@ -37,17 +44,17 @@ public record ApiResponse<T>(
   }
 
   public static ApiResponse<Void> error(ErrorCode code, List<ApiFieldError> errors) {
-    return new ApiResponse<>(false, code.name(), code.message(), null, errors, Instant.now());
+    return new ApiResponse<>(false, code.code(), code.message(), null, errors, Instant.now());
   }
 
   public static ApiResponse<Void> error(HttpStatusCode status) {
     return switch (status.value()) {
-      case 400 -> error(ErrorCode.INVALID_REQUEST);
-      case 401 -> error(ErrorCode.UNAUTHENTICATED);
-      case 403 -> error(ErrorCode.FORBIDDEN);
-      case 404 -> error(ErrorCode.RESOURCE_NOT_FOUND);
-      case 500 -> error(ErrorCode.INTERNAL_ERROR);
-      case 502 -> error(ErrorCode.AI_SERVICE_UNAVAILABLE);
+      case 400 -> error(CommonErrorCode.INVALID_REQUEST);
+      case 401 -> error(CommonErrorCode.UNAUTHENTICATED);
+      case 403 -> error(CommonErrorCode.FORBIDDEN);
+      case 404 -> error(CommonErrorCode.RESOURCE_NOT_FOUND);
+      case 500 -> error(CommonErrorCode.INTERNAL_ERROR);
+      case 502 -> error(CommonErrorCode.AI_SERVICE_UNAVAILABLE);
       default ->
           new ApiResponse<>(
               false, "HTTP_" + status.value(), "요청을 처리할 수 없습니다.", null, List.of(), Instant.now());
