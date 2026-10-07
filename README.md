@@ -19,6 +19,22 @@ Spring Security OAuth2 Client · Spring Session JDBC · Validation · Springdoc 
 
 AI 처리는 별도 `hanmaum-ai`의 Python/FastAPI에서 담당합니다. 이 서버는 로그인·권한·원본 기록·사용자 확정·데이터 변경과 이력을 담당합니다.
 
+## 코드 구조
+
+`src/main/java/com/hanmaum/backend` 아래 도메인 중심으로 구성합니다.
+
+```text
+auth/controller       CSRF API, 로그인·로그아웃은 Security 필터 처리
+ai/client             내부 FastAPI HTTP 클라이언트와 연결 설정
+ai/dto                내부 AI 요청·응답 DTO
+global/config         공통 설정과 OpenAPI
+global/security       세션·CSRF·OAuth·CORS
+global/response       ApiResponse, ApiFieldError, ErrorCode
+global/exception      ApiException, 공통 예외 변환
+```
+
+회원·공간·기록·분석·제안·관리 항목·현황판·공유 도메인은 기능 구현 시 필요한 패키지를 추가합니다. 예정 패키지와 책임은 [설계 기준](docs/architecture.md)을 따릅니다. ERD·노션 명세 초안의 존재가 도메인 구현 완료를 뜻하지 않습니다.
+
 ## 빠른 시작
 
 필수 환경은 **JDK 21**과 **실행 중인 Docker Desktop(Linux 컨테이너)**입니다. Gradle은 저장소의 Wrapper를 사용합니다.
@@ -113,6 +129,17 @@ const headers = {
 
 로그인 성공·로그아웃 후에는 CSRF 토큰을 다시 받습니다. 로그아웃은 토큰을 포함한 `POST /api/auth/logout`입니다. 운영에서는 Nginx가 프론트와 백엔드를 같은 도메인으로 제공하도록 구성합니다.
 
+## API 공통 규격
+
+공개 JSON 응답은 `success`, `code`, `message`, `data`, `errors`, `timestamp` 여섯 필드를 사용합니다. 오류는 `data: null`, 필드 오류가 없으면 `errors: []`이며 기존 `fieldErrors`는 사용하지 않습니다.
+
+- 200·201은 `SUCCESS`, 비동기 접수 202는 `ACCEPTED`, 204는 본문 없음입니다.
+- MVC·Security·OAuth 실패는 같은 오류 응답을 사용합니다.
+- CSRF 발급 성공은 기존 `{headerName, token}`, OAuth 성공은 리다이렉트, 로그아웃 성공은 204를 유지합니다. 내부 AI 계약·Actuator·OpenAPI는 공통 응답으로 감싸지 않습니다.
+- Controller의 반환 타입, 예외 처리, UUID·버전·시각 표기는 [공통 규격](docs/api-conventions.md)을 따릅니다.
+
+Swagger에는 실제 구현된 CSRF·로그아웃 경로와 공통 스키마를 제공합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다. 미구현 도메인 API는 노션 초안에서 관리합니다.
+
 ## AI 연동
 
 `HanmaumAiClient`는 내부 FastAPI의 `POST /v1/analyses`를 호출합니다. 연결 제한은 3초, 응답 대기는 30초이며 자동 재시도는 하지 않습니다. 외부 오류 본문은 API 오류나 로그에 그대로 노출하지 않습니다.
@@ -131,6 +158,6 @@ Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 �
 
 ## 구현 범위
 
-- 완료: 빌드·포맷·DB 마이그레이션·세션·보안 기반·OAuth 설정·Swagger·상태 확인·AI HTTP 계약·통합 테스트
+- 준비: 빌드·포맷·세션 DB 마이그레이션·보안 기반·OAuth 설정·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
 - 후속: 회원 및 공간 기능, 초대, 기록, 제안 저장·확정, 항목 변경·이력, 현황판, 카카오톡 공유
 - 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. GitHub Actions workflows와 운영 배포는 별도 작업입니다.

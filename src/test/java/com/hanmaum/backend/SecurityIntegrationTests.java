@@ -297,7 +297,45 @@ class SecurityIntegrationTests {
   void publishesTheConfiguredOpenApiDocument() throws Exception {
     mvc.perform(get("/v3/api-docs"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.info.title").value("한마음 API"));
+        .andExpect(jsonPath("$.info.title").value("한마음 API"))
+        .andExpect(jsonPath("$.security").doesNotExist())
+        .andExpect(jsonPath("$.components.securitySchemes.SessionCookie.in").value("cookie"))
+        .andExpect(
+            jsonPath("$.components.securitySchemes.SessionCookie.name").value("HANMAUM_SESSION"))
+        .andExpect(jsonPath("$.components.securitySchemes.CsrfToken.name").value("X-CSRF-TOKEN"))
+        .andExpect(jsonPath("$.components.schemas.ApiResponse.properties.data").exists())
+        .andExpect(jsonPath("$.components.schemas.ApiResponse.required.length()").value(6))
+        .andExpect(jsonPath("$.components.schemas.ApiFieldError.required.length()").value(2))
+        .andExpect(jsonPath("$.paths['/api/auth/csrf'].get.security").doesNotExist())
+        .andExpect(jsonPath("$.paths['/api/auth/csrf'].get.parameters").doesNotExist())
+        .andExpect(
+            jsonPath(
+                    "$.paths['/api/auth/csrf'].get.responses['200'].content['application/json'].schema['$ref']")
+                .value("#/components/schemas/CsrfResponse"))
+        .andExpect(jsonPath("$.paths['/api/auth/csrf'].get.responses['401']").doesNotExist())
+        .andExpect(
+            jsonPath("$.paths['/api/auth/logout'].post.responses['204'].content").doesNotExist())
+        .andExpect(
+            jsonPath("$.paths['/api/auth/logout'].post.responses['403']['$ref']")
+                .value("#/components/responses/FORBIDDEN"))
+        .andExpect(jsonPath("$.paths['/api/auth/logout'].post.security[0].SessionCookie").isArray())
+        .andExpect(jsonPath("$.paths['/api/auth/logout'].post.security[0].CsrfToken").isArray())
+        .andExpect(
+            result -> {
+              var document = mapper.readTree(result.getResponse().getContentAsString());
+              var example =
+                  document
+                      .path("components")
+                      .path("responses")
+                      .path("INVALID_REQUEST")
+                      .path("content")
+                      .path("application/json")
+                      .path("example");
+              assertThat(example.size()).isEqualTo(6);
+              assertThat(example.get("data").isNull()).isTrue();
+              assertThat(example.path("errors").get(0).path("field").asText())
+                  .isEqualTo("fieldName");
+            });
   }
 
   private ResultMatcher envelope(boolean success, String code) {

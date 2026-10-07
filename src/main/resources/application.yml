@@ -42,6 +42,7 @@ management:
         enabled: true
 
 springdoc:
+  override-with-generic-response: false
   api-docs:
     enabled: false
   swagger-ui:

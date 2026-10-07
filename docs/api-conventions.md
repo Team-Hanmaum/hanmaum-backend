@@ -29,6 +29,16 @@
 
 합의된 코드는 `ErrorCode`로 관리하고 업무의 알려진 실패에는 `ApiException`을 사용합니다. MVC와 Security의 오류는 같은 응답 타입을 사용합니다.
 
+```java
+// Controller: 생성 성공도 HTTP 상태는 명시적으로 지정합니다.
+return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(response));
+
+// Service: 알려진 실패는 HTTP 상태와 안전한 안내가 정의된 코드를 사용합니다.
+throw new ApiException(ErrorCode.VERSION_CONFLICT);
+```
+
+필드 오류가 필요하면 `ApiException(code, List<ApiFieldError>)`를 사용합니다. Validation 메시지와 `reason`에는 원문·제출 값·인증 정보를 끼워 넣지 않습니다.
+
 | HTTP 상태 | 코드 |
 | --- | --- |
 | 400 | `INVALID_REQUEST` |
@@ -57,6 +67,8 @@
 ## 문서화와 적용 범위
 
 Swagger에 공통 응답·오류 스키마, 재사용 가능한 오류 응답, 세션 쿠키·CSRF 보안 스키마를 둡니다. 공개 경로에 인증을 잘못 표시하지 않도록 전역 보안 요구를 일괄 적용하지 않고 각 API에 필요한 조건과 실제 오류만 명시합니다.
+
+각 Controller의 OpenAPI 주석에서 `SessionCookie`, `CsrfToken` 보안 스키마와 `#/components/responses/코드명` 오류 응답을 참조합니다. 둘 다 필요하면 하나의 보안 요구에 묶어 AND 조건으로 표현합니다. 성공의 `data`는 해당 응답 DTO로 구체화합니다. 모든 예외 처리기의 응답을 모든 API에 자동 추가하는 Springdoc 옵션은 끄고 실제 발생 조건을 명시합니다.
 
 CSRF·로그아웃 등 존재하는 경로만 문서화하며 미구현 도메인 API를 문서용 Controller로 만들지 않습니다. Swagger는 브라우저 로그인 세션을 사용하며 임의 쿠키 입력이 실제 인증을 대신하지 않습니다.
 
