@@ -26,7 +26,6 @@ AI 처리는 별도 `hanmaum-ai`의 Python/FastAPI에서 담당합니다. 이 �
 ```text
 backend/
 ├── auth/              로그인·로그아웃·CSRF (기존 기반)
-│   └── controller/
 ├── user/              회원·소셜 계정 매핑·탈퇴
 ├── carespace/         공간·참여·초대·소유권
 ├── record/            원본 소식 작성·조회·삭제
@@ -47,7 +46,20 @@ backend/
 
 회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 각 폴더의 `package-info.java`에 책임을 기록하며 도메인 기능은 아직 미구현입니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
 
-각 도메인 아래 `controller`, `service`, `repository`, `entity`, `dto`는 기능 구현 시 필요한 것부터 추가합니다. 예를 들어 공간 API는 `carespace/controller`, 공간 업무 로직은 `carespace/service`에 둡니다. 초대는 `carespace`에 포함하고, 공개 분석 업무인 `analysis`는 내부 통신을 맡은 `ai`를 사용합니다.
+`auth`와 위 8개 업무 도메인은 아래 공통 하위 구조까지 준비했습니다. 빈 폴더에는 `.gitkeep`을 두어 같은 구조를 Git으로 공유합니다. 기존 코드가 있는 `auth/controller`에는 `.gitkeep`을 추가하지 않습니다.
+
+```text
+각 업무 도메인/
+├── controller/
+├── service/
+├── repository/
+├── entity/
+└── dto/
+```
+
+담당자는 실제 파일을 추가할 때 해당 폴더의 `.gitkeep`을 제거하고, 기능에 필요 없는 계층은 삭제하거나 조정할 수 있습니다. 예를 들어 `dashboard/entity`는 구조를 맞춰 둔 빈 폴더이며 별도의 현황판 테이블이 필요하다는 의미는 아닙니다. 기존 `ai`와 `global`은 각자의 통신·공통 기반 구조를 유지합니다.
+
+공간 API는 `carespace/controller`, 공간 업무 로직은 `carespace/service`에 둡니다. 초대는 `carespace`에 포함하고, 공개 분석 업무인 `analysis`는 내부 통신을 맡은 `ai`를 사용합니다.
 
 ## 빠른 시작
 
