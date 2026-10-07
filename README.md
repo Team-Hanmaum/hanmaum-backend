@@ -24,16 +24,30 @@ AI 처리는 별도 `hanmaum-ai`의 Python/FastAPI에서 담당합니다. 이 �
 `src/main/java/com/hanmaum/backend` 아래 도메인 중심으로 구성합니다.
 
 ```text
-auth/controller       CSRF API, 로그인·로그아웃은 Security 필터 처리
-ai/client             내부 FastAPI HTTP 클라이언트와 연결 설정
-ai/dto                내부 AI 요청·응답 DTO
-global/config         공통 설정과 OpenAPI
-global/security       세션·CSRF·OAuth·CORS
-global/response       ApiResponse, ApiFieldError, ErrorCode
-global/exception      ApiException, 공통 예외 변환
+backend/
+├── auth/              로그인·로그아웃·CSRF (기존 기반)
+│   └── controller/
+├── user/              회원·소셜 계정 매핑·탈퇴
+├── carespace/         공간·참여·초대·소유권
+├── record/            원본 소식 작성·조회·삭제
+├── analysis/          분석 실행·상태·재시도
+├── proposal/          AI 제안·구성원 변경 요청·최종 반영
+├── careitem/          관리 항목·잠금·근거·이력
+├── dashboard/         현재 유효한 돌봄 현황 조회
+├── sharing/           공유 링크·접근 권한 확인
+├── ai/                내부 FastAPI 통신 어댑터 (기존 기반)
+│   ├── client/
+│   └── dto/
+└── global/            공통 개발 기반
+    ├── config/
+    ├── security/
+    ├── response/
+    └── exception/
 ```
 
-회원·공간·기록·분석·제안·관리 항목·현황판·공유 도메인은 기능 구현 시 필요한 패키지를 추가합니다. 예정 패키지와 책임은 [설계 기준](docs/architecture.md)을 따릅니다. ERD·노션 명세 초안의 존재가 도메인 구현 완료를 뜻하지 않습니다.
+회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 각 폴더의 `package-info.java`에 책임을 기록하며 도메인 기능은 아직 미구현입니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
+
+각 도메인 아래 `controller`, `service`, `repository`, `entity`, `dto`는 기능 구현 시 필요한 것부터 추가합니다. 예를 들어 공간 API는 `carespace/controller`, 공간 업무 로직은 `carespace/service`에 둡니다. 초대는 `carespace`에 포함하고, 공개 분석 업무인 `analysis`는 내부 통신을 맡은 `ai`를 사용합니다.
 
 ## 빠른 시작
 

@@ -11,7 +11,7 @@
 ## 코드 구조와 책임
 
 - `com.hanmaum.backend` 아래 도메인별 패키지를 두고 필요한 `controller`, `service`, `repository`, `entity`, `dto`로 나눈다.
-- 도메인 경계와 예정 패키지는 `docs/architecture.md`를 따른다. 미구현 도메인의 빈 클래스·테이블은 미리 만들지 않는다.
+- 도메인 경계와 패키지는 `docs/architecture.md`를 따른다. 합의한 도메인 폴더는 `package-info.java`로 책임을 명시하여 미리 준비한다. 하위 계층은 기능 구현 시 필요한 것부터 추가하며 빈 업무 클래스·테이블은 미리 만들지 않는다.
 - `global`은 공통 설정·보안·응답·예외를 담당한다. 공통 응답 코드는 업무 도메인에 의존하지 않는다.
 - `ai`는 내부 FastAPI 통신 어댑터이며 공개 분석 업무의 상태 관리·권한 판정과 구분한다.
 - Controller는 요청·응답 연결, Service는 업무 규칙·트랜잭션, Repository는 영속성 접근을 담당한다.
