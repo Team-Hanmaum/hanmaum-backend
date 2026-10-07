@@ -10,7 +10,21 @@
 
 ## 코드 구조와 책임
 
-- `com.hanmaum.backend` 아래 `auth`와 업무 도메인은 `code`, `controller`, `service`, `repository`, `entity`, `dto`의 공통 하위 구조를 미리 준비한다. 빈 폴더는 `.gitkeep`으로 Git에 보존한다.
+노션 API 명세의 도메인 분류와 백엔드 패키지는 아래 기준으로 대응한다. 패키지명은 `com.hanmaum.backend` 아래 기준이며, 포함하는 API는 책임 범위이고 구현 완료 목록은 아니다.
+
+| API 도메인 분류 | 패키지 | 포함하는 API |
+| --- | --- | --- |
+| `Auth` | `auth` | 소셜 로그인, 세션, CSRF, 로그아웃 |
+| `User` | `user` | 내 정보, 계정 관리, 회원 탈퇴 |
+| `CareSpace` | `carespace` | 돌봄 공간, 구성원, 초대, 소유권 |
+| `Record` | `record` | 원본 소식 작성·조회·삭제 |
+| `Analysis` | `analysis` | AI 분석 상태 조회, 실패한 분석 재시도 |
+| `Proposal` | `proposal` | 제안 검토·수정·반영, 변경 요청 처리 |
+| `CareItem` | `careitem` | 일정·할 일·질문·관찰·안내, 항목 잠금·이력·근거 |
+| `Dashboard` | `dashboard` | 현황판 조회 |
+| `Sharing` | `sharing` | 공유 링크와 공유 대상 관리 |
+
+- 위 9개 도메인 모두 `code`, `controller`, `service`, `repository`, `entity`, `dto`의 공통 하위 구조를 미리 준비한다. 빈 폴더는 `.gitkeep`으로 Git에 보존한다.
 - 도메인 경계와 패키지는 `docs/architecture.md`를 따른다. 미구현 도메인의 책임은 `package-info.java`에 기록한다. 담당자는 실제 파일을 추가할 때 해당 폴더의 `.gitkeep`을 제거하고, 필요 없는 계층은 삭제하거나 조정할 수 있다. 폴더 구조를 채우기 위한 빈 업무 클래스·테이블은 만들지 않는다.
 - `global`은 공통 설정·보안·응답·예외를 담당한다. 공통 응답 코드는 업무 도메인에 의존하지 않는다.
 - `ai`는 내부 FastAPI 통신 어댑터이며 공개 분석 업무의 상태 관리·권한 판정과 구분한다.
