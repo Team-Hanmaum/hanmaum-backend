@@ -6,13 +6,31 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.hanmaum.backend.ai.client.AiServiceException;
+import com.hanmaum.backend.auth.code.AuthErrorCode;
+import com.hanmaum.backend.careitem.code.CareItemErrorCode;
+import com.hanmaum.backend.global.code.CommonErrorCode;
+import com.hanmaum.backend.global.code.ErrorCode;
+import com.hanmaum.backend.global.exception.ApiException;
+import com.hanmaum.backend.global.response.ApiFieldError;
+import com.hanmaum.backend.global.response.ApiResponse;
+import com.hanmaum.backend.proposal.code.ProposalErrorCode;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
@@ -20,13 +38,23 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.oauth2.client.registration.ClientRegistration;
+import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.registration.InMemoryClientRegistrationRepository;
+import org.springframework.security.oauth2.core.AuthorizationGrantType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultMatcher;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -35,20 +63,22 @@ import org.springframework.web.bind.annotation.RestController;
 class SecurityIntegrationTests {
   @Autowired MockMvc mvc;
   @Autowired JdbcTemplate jdbc;
+  @Autowired ObjectMapper mapper;
 
   @Test
   void rejectsAnonymousApiAccessWithJsonInsteadOfRedirecting() throws Exception {
     mvc.perform(get("/api/test/protected"))
         .andExpect(status().isUnauthorized())
-        .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+        .andExpect(envelope(false, "UNAUTHENTICATED"));
   }
 
   @Test
-  void exposesHealthWithoutDatabaseDetails() throws Exception {
+  void exposesHealthWithoutDatabaseDetailsOrEnvelope() throws Exception {
     mvc.perform(get("/actuator/health"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.status").value("UP"))
-        .andExpect(jsonPath("$.components").doesNotExist());
+        .andExpect(jsonPath("$.components").doesNotExist())
+        .andExpect(jsonPath("$.success").doesNotExist());
   }
 
   @Test
@@ -59,6 +89,7 @@ class SecurityIntegrationTests {
             .andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(jsonPath("$.headerName").value("X-CSRF-TOKEN"))
             .andExpect(jsonPath("$.token").isNotEmpty())
+            .andExpect(jsonPath("$.success").doesNotExist())
             .andReturn()
             .getResponse();
     var cookie = response.getCookie("HANMAUM_SESSION");
@@ -80,7 +111,7 @@ class SecurityIntegrationTests {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"title\":\"소식\"}"))
         .andExpect(status().isForbidden())
-        .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+        .andExpect(envelope(false, "FORBIDDEN"));
   }
 
   @Test
@@ -92,32 +123,189 @@ class SecurityIntegrationTests {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"title\":\"소식\"}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.title").value("소식"));
+        .andExpect(envelope(true, "SUCCESS"))
+        .andExpect(jsonPath("$.message").value("요청이 완료되었습니다."))
+        .andExpect(jsonPath("$.data.title").value("소식"))
+        .andExpect(jsonPath("$.errors").isEmpty());
   }
 
   @Test
-  void returnsFieldErrorsWithoutEchoingSubmittedValues() throws Exception {
+  void supportsCreatedAcceptedAndNullSuccessData() throws Exception {
+    mvc.perform(post("/api/test/created").with(user("member")).with(csrf()))
+        .andExpect(status().isCreated())
+        .andExpect(envelope(true, "SUCCESS"))
+        .andExpect(jsonPath("$.message").value("요청이 완료되었습니다."))
+        .andExpect(jsonPath("$.data.title").value("created"));
+    mvc.perform(post("/api/test/accepted").with(user("member")).with(csrf()))
+        .andExpect(status().isAccepted())
+        .andExpect(envelope(true, "ACCEPTED"))
+        .andExpect(jsonPath("$.message").value("요청이 접수되었습니다."))
+        .andExpect(
+            result ->
+                assertThat(
+                        mapper
+                            .readTree(result.getResponse().getContentAsString())
+                            .get("data")
+                            .isNull())
+                    .isTrue());
+  }
+
+  @Test
+  void preservesNestedFieldPathsWithoutEchoingSubmittedValues() throws Exception {
+    mvc.perform(
+            post("/api/test/batch")
+                .with(user("member"))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"entries\":[{\"title\":\"\"}],\"secret\":\"PRIVATE-RECORD\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(envelope(false, "INVALID_REQUEST"))
+        .andExpect(jsonPath("$.errors[0].field").value("entries[0].title"))
+        .andExpect(jsonPath("$.errors[0].reason").isNotEmpty())
+        .andExpect(jsonPath("$.fieldErrors").doesNotExist())
+        .andExpect(
+            result ->
+                assertThat(result.getResponse().getContentAsString())
+                    .doesNotContain("PRIVATE-RECORD", "rejectedValue", "stackTrace"));
+  }
+
+  @Test
+  void returnsBadRequestForMalformedJsonWithoutEchoingIt() throws Exception {
     mvc.perform(
             post("/api/test/protected")
                 .with(user("member"))
                 .with(csrf())
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{\"title\":\"\"}"))
+                .content("{PRIVATE-RECORD"))
         .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"))
-        .andExpect(jsonPath("$.fieldErrors.title").exists());
+        .andExpect(envelope(false, "INVALID_REQUEST"))
+        .andExpect(jsonPath("$.errors").isEmpty())
+        .andExpect(
+            result ->
+                assertThat(result.getResponse().getContentAsString())
+                    .doesNotContain("PRIVATE-RECORD"));
   }
 
   @Test
-  void returnsBadRequestForMalformedJson() throws Exception {
+  void reportsMissingAndInvalidParametersByPublicFieldName() throws Exception {
+    mvc.perform(get("/api/test/query").with(user("member")))
+        .andExpect(status().isBadRequest())
+        .andExpect(envelope(false, "INVALID_REQUEST"))
+        .andExpect(jsonPath("$.errors[0].field").value("page"));
+    mvc.perform(get("/api/test/query?page=0").with(user("member")))
+        .andExpect(status().isBadRequest())
+        .andExpect(envelope(false, "INVALID_REQUEST"))
+        .andExpect(jsonPath("$.errors[0].field").value("page"));
+    mvc.perform(get("/api/test/ids/PRIVATE-RECORD").with(user("member")))
+        .andExpect(status().isBadRequest())
+        .andExpect(envelope(false, "INVALID_REQUEST"))
+        .andExpect(jsonPath("$.errors[0].field").value("id"))
+        .andExpect(
+            result ->
+                assertThat(result.getResponse().getContentAsString())
+                    .doesNotContain("PRIVATE-RECORD"));
+  }
+
+  @Test
+  void preservesFrameworkStatusAndAllowHeader() throws Exception {
+    mvc.perform(get("/api/test/missing").with(user("member")))
+        .andExpect(status().isNotFound())
+        .andExpect(envelope(false, "RESOURCE_NOT_FOUND"));
+    mvc.perform(put("/api/test/protected").with(user("member")).with(csrf()))
+        .andExpect(status().isMethodNotAllowed())
+        .andExpect(header().exists("Allow"))
+        .andExpect(envelope(false, "HTTP_405"));
     mvc.perform(
             post("/api/test/protected")
                 .with(user("member"))
                 .with(csrf())
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{broken"))
-        .andExpect(status().isBadRequest())
-        .andExpect(jsonPath("$.code").value("HTTP_400"));
+                .contentType(MediaType.TEXT_PLAIN)
+                .content("PRIVATE-RECORD"))
+        .andExpect(status().isUnsupportedMediaType())
+        .andExpect(envelope(false, "HTTP_415"));
+  }
+
+  @Test
+  void mapsKnownFailuresAndSanitizesUnexpectedFailures() throws Exception {
+    mvc.perform(get("/api/test/failure/conflict").with(user("member")))
+        .andExpect(status().isConflict())
+        .andExpect(envelope(false, "VERSION_CONFLICT"));
+    mvc.perform(get("/api/test/failure/forbidden").with(user("member")))
+        .andExpect(status().isForbidden())
+        .andExpect(envelope(false, "FORBIDDEN"));
+    mvc.perform(get("/api/test/failure/ai").with(user("member")))
+        .andExpect(status().isBadGateway())
+        .andExpect(envelope(false, "AI_SERVICE_UNAVAILABLE"));
+    mvc.perform(get("/api/test/failure/unexpected").with(user("member")))
+        .andExpect(status().isInternalServerError())
+        .andExpect(envelope(false, "INTERNAL_ERROR"))
+        .andExpect(
+            result ->
+                assertThat(result.getResponse().getContentAsString())
+                    .doesNotContain("PRIVATE-RECORD"));
+  }
+
+  @Test
+  void treatsInvalidReturnValuesAsServerErrors() throws Exception {
+    mvc.perform(get("/api/test/invalid-return").with(user("member")))
+        .andExpect(status().isInternalServerError())
+        .andExpect(envelope(false, "INTERNAL_ERROR"));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("errorContracts")
+  void preservesExistingCommonAndDomainErrorContracts(ErrorContract expected) throws Exception {
+    mvc.perform(get("/api/test/codes/{code}", expected.code()).with(user("member")))
+        .andExpect(status().is(expected.httpStatus()))
+        .andExpect(envelope(false, expected.code()))
+        .andExpect(jsonPath("$.message").value(expected.message()))
+        .andExpect(jsonPath("$.errors").isEmpty());
+  }
+
+  @Test
+  void preservesFieldErrorsFromDomainExceptions() throws Exception {
+    mvc.perform(get("/api/test/failure/proposal-fields").with(user("member")))
+        .andExpect(status().isConflict())
+        .andExpect(envelope(false, "PROPOSAL_BATCH_CONFLICT"))
+        .andExpect(jsonPath("$.errors[0].field").value("entries[0].proposalId"))
+        .andExpect(jsonPath("$.errors[0].reason").value("선택한 제안을 다시 확인해주세요."));
+  }
+
+  @Test
+  void requiresCsrfForLogoutAndInvalidatesThePersistedSession() throws Exception {
+    mvc.perform(post("/api/auth/logout").with(user("member")))
+        .andExpect(status().isForbidden())
+        .andExpect(envelope(false, "FORBIDDEN"));
+    var issuance = mvc.perform(get("/api/auth/csrf")).andReturn().getResponse();
+    var sessionCookie = issuance.getCookie("HANMAUM_SESSION");
+    var token = mapper.readTree(issuance.getContentAsString()).get("token").asText();
+    var logout =
+        mvc.perform(post("/api/auth/logout").cookie(sessionCookie).header("X-CSRF-TOKEN", token))
+            .andExpect(status().isNoContent())
+            .andExpect(content().string(""))
+            .andReturn()
+            .getResponse();
+    assertThat(logout.getCookie("HANMAUM_SESSION").getMaxAge()).isZero();
+    // Reusing the invalidated session and its token must not authorize another mutation.
+    mvc.perform(post("/api/auth/logout").cookie(sessionCookie).header("X-CSRF-TOKEN", token))
+        .andExpect(status().isForbidden())
+        .andExpect(envelope(false, "FORBIDDEN"));
+  }
+
+  @Test
+  void keepsOAuthRedirectsAndUsesTheCommonFailureEnvelope() throws Exception {
+    mvc.perform(get("/oauth2/authorization/test-provider"))
+        .andExpect(status().is3xxRedirection())
+        .andExpect(
+            result ->
+                assertThat(result.getResponse().getRedirectedUrl())
+                    .startsWith("https://identity.example/authorize?"));
+    mvc.perform(
+            get("/login/oauth2/code/test-provider")
+                .param("code", "unused")
+                .param("state", "unknown-state"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(envelope(false, "OAUTH_LOGIN_FAILED"));
   }
 
   @Test
@@ -139,7 +327,121 @@ class SecurityIntegrationTests {
   void publishesTheConfiguredOpenApiDocument() throws Exception {
     mvc.perform(get("/v3/api-docs"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.info.title").value("한마음 API"));
+        .andExpect(jsonPath("$.info.title").value("한마음 API"))
+        .andExpect(jsonPath("$.security").doesNotExist())
+        .andExpect(jsonPath("$.components.securitySchemes.SessionCookie.in").value("cookie"))
+        .andExpect(
+            jsonPath("$.components.securitySchemes.SessionCookie.name").value("HANMAUM_SESSION"))
+        .andExpect(jsonPath("$.components.securitySchemes.CsrfToken.name").value("X-CSRF-TOKEN"))
+        .andExpect(jsonPath("$.components.schemas.ApiResponse.properties.data").exists())
+        .andExpect(jsonPath("$.components.schemas.ApiResponse.required.length()").value(6))
+        .andExpect(jsonPath("$.components.schemas.ApiFieldError.required.length()").value(2))
+        .andExpect(jsonPath("$.paths['/api/auth/csrf'].get.security").doesNotExist())
+        .andExpect(jsonPath("$.paths['/api/auth/csrf'].get.parameters").doesNotExist())
+        .andExpect(
+            jsonPath(
+                    "$.paths['/api/auth/csrf'].get.responses['200'].content['application/json'].schema['$ref']")
+                .value("#/components/schemas/CsrfResponse"))
+        .andExpect(jsonPath("$.paths['/api/auth/csrf'].get.responses['401']").doesNotExist())
+        .andExpect(
+            jsonPath("$.paths['/api/auth/logout'].post.responses['204'].content").doesNotExist())
+        .andExpect(
+            jsonPath("$.paths['/api/auth/logout'].post.responses['403']['$ref']")
+                .value("#/components/responses/FORBIDDEN"))
+        .andExpect(jsonPath("$.paths['/api/auth/logout'].post.security[0].SessionCookie").isArray())
+        .andExpect(jsonPath("$.paths['/api/auth/logout'].post.security[0].CsrfToken").isArray())
+        .andExpect(
+            result -> {
+              var document = mapper.readTree(result.getResponse().getContentAsString());
+              var example =
+                  document
+                      .path("components")
+                      .path("responses")
+                      .path("INVALID_REQUEST")
+                      .path("content")
+                      .path("application/json")
+                      .path("example");
+              assertThat(example.size()).isEqualTo(6);
+              assertThat(example.get("data").isNull()).isTrue();
+              assertThat(example.path("errors").get(0).path("field").asText())
+                  .isEqualTo("fieldName");
+              errorContracts()
+                  .forEach(
+                      expected -> {
+                        var response =
+                            document.path("components").path("responses").path(expected.code());
+                        assertThat(response.path("description").asText())
+                            .startsWith(expected.httpStatus() + " · ");
+                        var errorExample =
+                            response.path("content").path("application/json").path("example");
+                        assertThat(errorExample.size()).isEqualTo(6);
+                        assertThat(errorExample.path("code").asText()).isEqualTo(expected.code());
+                        assertThat(errorExample.path("message").asText())
+                            .isEqualTo(expected.message());
+                        assertThat(errorExample.path("data").isNull()).isTrue();
+                      });
+            });
+  }
+
+  // Public contract fixtures are kept independent of enum metadata to detect wire changes.
+  static Stream<ErrorContract> errorContracts() {
+    return Stream.of(
+        new ErrorContract(
+            CommonErrorCode.INVALID_REQUEST, "INVALID_REQUEST", 400, "입력 내용을 확인해주세요."),
+        new ErrorContract(CommonErrorCode.UNAUTHENTICATED, "UNAUTHENTICATED", 401, "로그인이 필요합니다."),
+        new ErrorContract(
+            AuthErrorCode.OAUTH_LOGIN_FAILED, "OAUTH_LOGIN_FAILED", 401, "소셜 로그인에 실패했습니다."),
+        new ErrorContract(CommonErrorCode.FORBIDDEN, "FORBIDDEN", 403, "요청 권한 또는 CSRF 토큰을 확인해주세요."),
+        new ErrorContract(
+            CommonErrorCode.RESOURCE_NOT_FOUND, "RESOURCE_NOT_FOUND", 404, "요청한 대상을 찾을 수 없습니다."),
+        new ErrorContract(
+            CommonErrorCode.VERSION_CONFLICT, "VERSION_CONFLICT", 409, "변경된 내용을 다시 확인해주세요."),
+        new ErrorContract(
+            CareItemErrorCode.ITEM_LOCKED, "ITEM_LOCKED", 409, "다른 사용자가 해당 항목을 편집 중입니다."),
+        new ErrorContract(
+            CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
+            "IDEMPOTENCY_KEY_REUSED",
+            409,
+            "같은 요청 ID를 다른 요청에 사용할 수 없습니다."),
+        new ErrorContract(
+            ProposalErrorCode.PROPOSAL_BATCH_CONFLICT,
+            "PROPOSAL_BATCH_CONFLICT",
+            409,
+            "선택한 제안을 함께 반영할 수 없습니다."),
+        new ErrorContract(
+            CommonErrorCode.DELETION_IMPACT_CHANGED,
+            "DELETION_IMPACT_CHANGED",
+            409,
+            "삭제 영향 범위가 변경되었습니다. 다시 확인해주세요."),
+        new ErrorContract(CommonErrorCode.INTERNAL_ERROR, "INTERNAL_ERROR", 500, "서버 오류가 발생했습니다."),
+        new ErrorContract(
+            CommonErrorCode.AI_SERVICE_UNAVAILABLE,
+            "AI_SERVICE_UNAVAILABLE",
+            502,
+            "AI 서비스를 이용할 수 없습니다."));
+  }
+
+  record ErrorContract(ErrorCode definition, String code, int httpStatus, String message) {
+    @Override
+    public String toString() {
+      return code;
+    }
+  }
+
+  private ResultMatcher envelope(boolean success, String code) {
+    return result -> {
+      var body = mapper.readTree(result.getResponse().getContentAsString());
+      assertThat(body.size()).isEqualTo(6);
+      for (String field : List.of("success", "code", "message", "data", "errors", "timestamp")) {
+        assertThat(body.has(field)).as(field).isTrue();
+      }
+      assertThat(body.get("success").asBoolean()).isEqualTo(success);
+      assertThat(body.get("code").asText()).isEqualTo(code);
+      assertThat(body.get("message").asText()).isNotBlank();
+      assertThat(body.get("errors").isArray()).isTrue();
+      assertThat(Instant.parse(body.get("timestamp").asText())).isNotNull();
+      if (!success) assertThat(body.get("data").isNull()).isTrue();
+    };
   }
 
   @TestConfiguration(proxyBeanMethods = false)
@@ -148,20 +450,94 @@ class SecurityIntegrationTests {
     ProbeController probeController() {
       return new ProbeController();
     }
+
+    @Bean
+    ClientRegistrationRepository testClients() {
+      return new InMemoryClientRegistrationRepository(
+          ClientRegistration.withRegistrationId("test-provider")
+              .clientId("test-client")
+              .clientSecret("test-secret")
+              .authorizationGrantType(AuthorizationGrantType.AUTHORIZATION_CODE)
+              .redirectUri("{baseUrl}/login/oauth2/code/{registrationId}")
+              .authorizationUri("https://identity.example/authorize")
+              .tokenUri("https://identity.example/token")
+              .userInfoUri("https://identity.example/user")
+              .userNameAttributeName("sub")
+              .build());
+    }
   }
 
+  // Test-only endpoints exercise the shared HTTP contract without implementing a domain.
   @RestController
   static class ProbeController {
     @GetMapping("/api/test/protected")
-    Input get() {
-      return new Input("ok");
+    ApiResponse<Input> get() {
+      return ApiResponse.success(new Input("ok"));
     }
 
     @PostMapping("/api/test/protected")
-    Input post(@Valid @RequestBody Input input) {
-      return input;
+    ApiResponse<Input> post(@Valid @RequestBody Input input) {
+      return ApiResponse.success(input);
+    }
+
+    @PostMapping("/api/test/created")
+    ResponseEntity<ApiResponse<Input>> created() {
+      return ResponseEntity.status(201).body(ApiResponse.success(new Input("created")));
+    }
+
+    @PostMapping("/api/test/accepted")
+    ResponseEntity<ApiResponse<Void>> accepted() {
+      return ResponseEntity.accepted().body(ApiResponse.accepted(null));
+    }
+
+    @PostMapping("/api/test/batch")
+    ApiResponse<Batch> batch(@Valid @RequestBody Batch input) {
+      return ApiResponse.success(input);
+    }
+
+    @GetMapping("/api/test/query")
+    ApiResponse<Integer> query(@RequestParam("page") @Min(1) int number) {
+      return ApiResponse.success(number);
+    }
+
+    @GetMapping("/api/test/ids/{id}")
+    ApiResponse<UUID> byId(@PathVariable UUID id) {
+      return ApiResponse.success(id);
+    }
+
+    @GetMapping("/api/test/invalid-return")
+    @NotBlank
+    String invalidReturn() {
+      return "";
+    }
+
+    @GetMapping("/api/test/failure/{kind}")
+    ApiResponse<Void> failure(@PathVariable String kind) {
+      throw switch (kind) {
+        case "conflict" -> new ApiException(CommonErrorCode.VERSION_CONFLICT);
+        case "proposal-fields" ->
+            new ApiException(
+                ProposalErrorCode.PROPOSAL_BATCH_CONFLICT,
+                List.of(new ApiFieldError("entries[0].proposalId", "선택한 제안을 다시 확인해주세요.")));
+        case "forbidden" -> new AccessDeniedException("PRIVATE-RECORD");
+        case "ai" -> new AiServiceException();
+        default -> new IllegalStateException("PRIVATE-RECORD");
+      };
+    }
+
+    @GetMapping("/api/test/codes/{code}")
+    ApiResponse<Void> errorCode(@PathVariable String code) {
+      var definition =
+          errorContracts()
+              .filter(contract -> contract.code().equals(code))
+              .findFirst()
+              .orElseThrow()
+              .definition();
+      throw new ApiException(definition);
     }
   }
 
   record Input(@NotBlank String title) {}
+
+  record Batch(List<@Valid Input> entries, String secret) {}
 }

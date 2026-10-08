@@ -8,7 +8,8 @@
 - 배포 기준 브랜치: `main`
 - 작업 브랜치: `타입/이슈번호-기능명`
 - 커밋: `타입: 변경 내용 (#이슈번호)` 및 상세 본문
-- PR: `dev` 대상으로 생성하고 팀원 2명 이상의 승인 후 병합
+- PR: `Type(#이슈번호): 핵심 작업 내용` 형식, `dev` 대상으로 생성하고 팀원 1명 이상의 승인 및 저장소 필수 검사 충족 후 병합
+- `dev`·`main` 직접 커밋·푸시 금지. 상세 개발 규칙은 [AGENTS.md](AGENTS.md) 참고
 
 ## 기술 스택
 
@@ -17,6 +18,55 @@ Java 21 · Spring Boot 4.1.1 · Gradle 9.7.1 · Spring MVC · JPA · PostgreSQL 
 Spring Security OAuth2 Client · Spring Session JDBC · Validation · Springdoc · Actuator · Spotless · Testcontainers
 
 AI 처리는 별도 `hanmaum-ai`의 Python/FastAPI에서 담당합니다. 이 서버는 로그인·권한·원본 기록·사용자 확정·데이터 변경과 이력을 담당합니다.
+
+## 코드 구조
+
+`src/main/java/com/hanmaum/backend` 아래 도메인 중심으로 구성합니다.
+
+```text
+backend/
+├── auth/              로그인·로그아웃·CSRF (기존 기반)
+├── user/              회원·소셜 계정 매핑·탈퇴
+├── carespace/         공간·참여·초대·소유권
+├── record/            원본 소식 작성·조회·삭제
+├── analysis/          분석 실행·상태·재시도
+├── proposal/          AI 제안·구성원 변경 요청·최종 반영
+├── careitem/          관리 항목·잠금·근거·이력
+├── dashboard/         현재 유효한 돌봄 현황 조회
+├── sharing/           공유 링크·접근 권한 확인
+├── ai/                내부 FastAPI 통신 어댑터 (기존 기반)
+│   ├── client/
+│   └── dto/
+└── global/            공통 개발 기반
+    ├── code/          ErrorCode 인터페이스·CommonErrorCode·SuccessCode
+    ├── config/
+    ├── openapi/       공통·도메인 오류의 Swagger 응답 등록
+    ├── security/
+    ├── response/
+    └── exception/
+```
+
+회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 각 폴더의 `package-info.java`에 책임을 기록하며 도메인 기능은 아직 미구현입니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
+
+`auth`와 위 8개 업무 도메인은 아래 공통 하위 구조까지 준비했습니다. 빈 폴더에는 `.gitkeep`을 두어 같은 구조를 Git으로 공유합니다. 실제 파일이 있는 폴더에는 `.gitkeep`을 추가하지 않습니다.
+
+```text
+각 업무 도메인/
+├── code/              해당 도메인의 오류 코드
+├── controller/
+├── service/
+├── repository/
+├── entity/
+└── dto/
+```
+
+담당자는 실제 파일을 추가할 때 해당 폴더의 `.gitkeep`을 제거하고, 기능에 필요 없는 계층은 삭제하거나 조정할 수 있습니다. 예를 들어 `dashboard/entity`는 구조를 맞춰 둔 빈 폴더이며 별도의 현황판 테이블이 필요하다는 의미는 아닙니다. 기존 `ai`와 `global`은 각자의 통신·공통 기반 구조를 유지합니다.
+
+공간 API는 `carespace/controller`, 공간 업무 로직은 `carespace/service`에 둡니다. 초대는 `carespace`에 포함하고, 공개 분석 업무인 `analysis`는 내부 통신을 맡은 `ai`를 사용합니다.
+
+오류 코드의 공통 인터페이스는 `global/code/ErrorCode.java`, 공통 오류 enum은 `CommonErrorCode.java`입니다. 도메인 오류 enum도 같은 인터페이스를 구현하며 `ApiException`과 `ApiResponse`를 함께 사용합니다. 현재 `AuthErrorCode`의 OAuth 실패, `CareItemErrorCode`의 항목 잠금, `ProposalErrorCode`의 제안 묶음 충돌을 분리했습니다. 나머지 도메인의 `code`는 기능 구현 시 확정된 오류를 추가할 수 있도록 비워뒀습니다.
+
+성공은 `SuccessCode`의 `SUCCESS`·`ACCEPTED`를 재사용합니다. HTTP 상태는 Controller에서 지정하고 204는 본문 없이 반환합니다. 오류 코드 추가와 Swagger 문서화 방법은 [공통 규격](docs/api-conventions.md)을 따릅니다.
 
 ## 빠른 시작
 
@@ -112,6 +162,17 @@ const headers = {
 
 로그인 성공·로그아웃 후에는 CSRF 토큰을 다시 받습니다. 로그아웃은 토큰을 포함한 `POST /api/auth/logout`입니다. 운영에서는 Nginx가 프론트와 백엔드를 같은 도메인으로 제공하도록 구성합니다.
 
+## API 공통 규격
+
+공개 JSON 응답은 `success`, `code`, `message`, `data`, `errors`, `timestamp` 여섯 필드를 사용합니다. 오류는 `data: null`, 필드 오류가 없으면 `errors: []`이며 기존 `fieldErrors`는 사용하지 않습니다.
+
+- 200·201은 `SUCCESS`, 비동기 접수 202는 `ACCEPTED`, 204는 본문 없음입니다.
+- MVC·Security·OAuth 실패는 같은 오류 응답을 사용합니다.
+- CSRF 발급 성공은 기존 `{headerName, token}`, OAuth 성공은 리다이렉트, 로그아웃 성공은 204를 유지합니다. 내부 AI 계약·Actuator·OpenAPI는 공통 응답으로 감싸지 않습니다.
+- Controller의 반환 타입, 예외 처리, UUID·버전·시각 표기는 [공통 규격](docs/api-conventions.md)을 따릅니다.
+
+Swagger에는 실제 구현된 CSRF·로그아웃 경로와 공통 스키마를 제공합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다. 미구현 도메인 API는 노션 초안에서 관리합니다.
+
 ## AI 연동
 
 `HanmaumAiClient`는 내부 FastAPI의 `POST /v1/analyses`를 호출합니다. 연결 제한은 3초, 응답 대기는 30초이며 자동 재시도는 하지 않습니다. 외부 오류 본문은 API 오류나 로그에 그대로 노출하지 않습니다.
@@ -130,6 +191,6 @@ Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 �
 
 ## 구현 범위
 
-- 완료: 빌드·포맷·DB 마이그레이션·세션·보안 기반·OAuth 설정·Swagger·상태 확인·AI HTTP 계약·통합 테스트
+- 준비: 빌드·포맷·세션 DB 마이그레이션·보안 기반·OAuth 설정·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
 - 후속: 회원 및 공간 기능, 초대, 기록, 제안 저장·확정, 항목 변경·이력, 현황판, 카카오톡 공유
-- GitHub Actions workflows와 AGENTS.md는 초기 설정 범위에 포함하지 않습니다.
+- 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. GitHub Actions workflows와 운영 배포는 별도 작업입니다.

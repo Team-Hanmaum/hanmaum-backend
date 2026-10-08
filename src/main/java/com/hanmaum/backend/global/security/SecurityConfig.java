@@ -1,6 +1,9 @@
 package com.hanmaum.backend.global.security;
 
-import com.hanmaum.backend.global.response.ApiError;
+import com.hanmaum.backend.auth.code.AuthErrorCode;
+import com.hanmaum.backend.global.code.CommonErrorCode;
+import com.hanmaum.backend.global.code.ErrorCode;
+import com.hanmaum.backend.global.response.ApiResponse;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
@@ -51,11 +54,10 @@ public class SecurityConfig {
                 errors
                     .authenticationEntryPoint(
                         (request, response, exception) ->
-                            writeError(response, mapper, 401, "UNAUTHENTICATED", "로그인이 필요합니다."))
+                            writeError(response, mapper, CommonErrorCode.UNAUTHENTICATED))
                     .accessDeniedHandler(
                         (request, response, exception) ->
-                            writeError(
-                                response, mapper, 403, "FORBIDDEN", "요청 권한 또는 CSRF 토큰을 확인해주세요.")))
+                            writeError(response, mapper, CommonErrorCode.FORBIDDEN)))
         .logout(
             logout ->
                 logout
@@ -75,8 +77,7 @@ public class SecurityConfig {
                           response.sendRedirect(properties.loginSuccessUrl().toString()))
                   .failureHandler(
                       (request, response, exception) ->
-                          writeError(
-                              response, mapper, 401, "OAUTH_LOGIN_FAILED", "소셜 로그인에 실패했습니다.")));
+                          writeError(response, mapper, AuthErrorCode.OAUTH_LOGIN_FAILED)));
     }
     // Keep Spring Security's session-based CSRF protection enabled.
     return http.build();
@@ -93,12 +94,11 @@ public class SecurityConfig {
     return source;
   }
 
-  private static void writeError(
-      HttpServletResponse response, ObjectMapper mapper, int status, String code, String message)
+  private static void writeError(HttpServletResponse response, ObjectMapper mapper, ErrorCode code)
       throws IOException {
-    response.setStatus(status);
+    response.setStatus(code.status().value());
     response.setContentType(MediaType.APPLICATION_JSON_VALUE);
     response.setCharacterEncoding("UTF-8");
-    mapper.writeValue(response.getOutputStream(), ApiError.of(code, message));
+    mapper.writeValue(response.getOutputStream(), ApiResponse.error(code));
   }
 }
