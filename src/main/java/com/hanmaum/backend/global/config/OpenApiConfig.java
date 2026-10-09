@@ -9,6 +9,7 @@ import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.Paths;
 import io.swagger.v3.oas.models.info.Info;
+import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.responses.ApiResponses;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
@@ -41,6 +42,13 @@ public class OpenApiConfig {
                     .in(SecurityScheme.In.HEADER)
                     .name("X-CSRF-TOKEN")
                     .description("GET /api/auth/csrf의 token 값. 로그인·로그아웃 후 재발급합니다."));
+    // The unparameterized envelope accepts any data shape, including null in error responses.
+    // Typed controller responses retain their inferred DTO schema without a conflicting null type.
+    components
+        .getSchemas()
+        .get("ApiResponse")
+        .getProperties()
+        .put("data", new Schema<>().description("성공 결과. 오류 응답에서는 null"));
     ErrorResponseDocumentation.register(components, resourceLoader);
     return new OpenAPI()
         .info(

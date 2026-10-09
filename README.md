@@ -46,7 +46,7 @@ backend/
     └── exception/
 ```
 
-회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 각 폴더의 `package-info.java`에 책임을 기록하며 도메인 기능은 아직 미구현입니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
+회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 회원 도메인은 `app_user`·`social_account` 저장 구조, OAuth 로그인 시 회원 생성·조회, 세션의 서비스 사용자 ID 연결과 내 정보 조회를 구현했습니다. 나머지 도메인은 `package-info.java`에 책임을 기록한 상태입니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
 
 `auth`와 위 8개 업무 도메인은 아래 공통 하위 구조까지 준비했습니다. 빈 폴더에는 `.gitkeep`을 두어 같은 구조를 Git으로 공유합니다. 실제 파일이 있는 폴더에는 `.gitkeep`을 추가하지 않습니다.
 
@@ -163,7 +163,22 @@ Flyway가 세션 테이블을 포함한 스키마 변경을 담당하고, Hibern
 
 로그인 시작 주소는 `/oauth2/authorization/google`, `/oauth2/authorization/kakao`입니다.
 
-현재는 **OAuth 설정과 세션 기반만 준비된 상태**입니다. 한마음 회원 생성, `(provider, providerUserId)` 매핑, 계정 연결, 공간별 권한 검증은 후속 기능에서 구현해야 합니다. 실제 제공자 로그인은 발급받은 키로 별도 검증해야 합니다. 이메일 일치만으로 소셜 계정을 자동 병합하지 않습니다.
+현재는 **OAuth 로그인 시 회원 생성·조회, 회원 세션과 내 정보 조회까지 구현한 상태**입니다. Flyway V2는 `app_user`·`social_account`를 추가하고, `(provider, provider_user_id)` 유일성 및 사용자 외래 키를 검사합니다. ID는 JPA에서 UUID로 생성하고 생성·수정 시각은 서버에서 기록합니다.
+
+- Google은 검증된 ID Token의 `sub`, Kakao는 사용자 정보의 `id`를 제공자와 함께 회원 식별에 사용합니다. 이메일 일치만으로 계정을 병합하지 않습니다.
+- 표시 이름은 최초 가입 때 Google의 `name` 또는 Kakao의 `kakao_account.profile.nickname`으로 저장합니다. 값이 없거나 비어 있으면 null이며 재로그인 때 기존 이름과 프로필 수정 시각을 덮어쓰지 않습니다. 이 동작은 2026-10-09 사용자 합의이며 별도 이름 수정 API의 입력 제한은 미정입니다.
+- 제공자 통신 후 회원·소셜 연결을 하나의 DB 트랜잭션에서 생성합니다. 같은 제공자 식별자의 동시 로그인은 PostgreSQL 트랜잭션 잠금으로 직렬화하며 저장 실패 시 함께 롤백합니다.
+- 기존 콜백 주소·로그인 성공 리다이렉트·`OAUTH_LOGIN_FAILED` 응답을 유지합니다. 자동 검증은 로컬 가짜 제공자와 격리 PostgreSQL을 사용하며 실제 Google·Kakao 회원 매핑은 별도로 확인해야 합니다.
+
+로그인 성공 시 세션 principal에 한마음 사용자 UUID를 연결하며 인증 이름과 JDBC 세션의 `principal_name`도 이 UUID를 사용합니다. Google은 OIDC 사용자 형식을 유지합니다. 이전 버전의 제공자 전용 세션은 자동 변환하지 않으므로 새 버전 적용 후 다시 로그인해야 합니다.
+
+`GET /api/users/me`는 세션의 본인만 조회합니다. 요청 본문·사용자 ID 입력·CSRF 토큰은 필요 없으며 공통 성공 응답의 `data`에 `userId`, `displayName`(null 가능), `providers`(`GOOGLE`/`KAKAO`)를 반환합니다. 표시 이름과 로그인 방식은 현재 DB에서 조회하고 제공자 식별자·이메일·토큰은 응답에 포함하지 않습니다. 세션 없음·만료·이전 형식 또는 회원/소셜 연결 무효는 `401 UNAUTHENTICATED`입니다. 공통 성공 메시지는 `요청이 완료되었습니다.`를 사용합니다.
+
+로컬 확인은 같은 브라우저에서 소셜 로그인 후 `http://localhost:8080/api/users/me`에 접속하거나 Swagger의 **User → GET /api/users/me → Try it out → Execute**로 진행합니다. 로그인한 브라우저 세션의 회원을 현재 서버에 설정된 DB에서 조회합니다. 기본 `local` 설정에서는 Docker PostgreSQL 개발 DB이며 Swagger 주소 자체가 DB를 선택하지는 않습니다.
+
+계정 연결과 회원 탈퇴 업무는 아직 구현하지 않았습니다. 사용자 행 삭제 시 소셜 연결을 제거하는 FK와 내 정보 조회의 유효성 검사가 회원 탈퇴 전체 정책이나 모든 세션의 즉시 종료를 구현한 것은 아닙니다.
+
+로그인 실패 응답은 `401 OAUTH_LOGIN_FAILED`를 유지합니다. 서버의 `OAuth login failed` 로그에는 제공자·허용된 원인 분류·세션/필수 파라미터 존재 여부만 남깁니다. `AUTHORIZATION_REQUEST_MISSING`은 콜백과 대응하는 저장된 요청을 찾지 못한 경우이며, 토큰 교환·ID Token 검증·회원 저장 실패와 구분합니다. 로그에 인증 코드·토큰·쿠키·제공자 원문·예외 메시지를 추가하지 않습니다.
 
 ## 프론트엔드의 세션·CSRF 사용
 
@@ -192,7 +207,7 @@ const headers = {
 - CSRF 발급 성공은 기존 `{headerName, token}`, OAuth 성공은 리다이렉트, 로그아웃 성공은 204를 유지합니다. 내부 AI 계약·Actuator·OpenAPI는 공통 응답으로 감싸지 않습니다.
 - Controller의 반환 타입, 예외 처리, UUID·버전·시각 표기는 [공통 규격](docs/api-conventions.md)을 따릅니다.
 
-Swagger에는 실제 구현된 CSRF·로그아웃 경로와 공통 스키마를 제공합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다. 미구현 도메인 API는 노션 초안에서 관리합니다.
+Swagger에는 실제 구현된 CSRF·로그아웃·내 정보 조회 경로와 공통 스키마를 제공합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다. 미구현 도메인 API는 노션 초안에서 관리합니다.
 
 ## AI 연동
 
@@ -212,6 +227,6 @@ Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 �
 
 ## 구현 범위
 
-- 준비: 빌드·포맷·세션 DB 마이그레이션·보안 기반·OAuth 설정·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
-- 후속: 회원 및 공간 기능, 초대, 기록, 제안 저장·확정, 항목 변경·이력, 현황판, 카카오톡 공유
+- 준비: 빌드·포맷·세션/회원 DB 마이그레이션·회원 엔티티/Repository·OAuth 회원 생성/조회·회원 세션·내 정보 조회·보안 기반·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
+- 후속: 계정 연결·회원 탈퇴 및 공간 기능, 초대, 기록, 제안 저장·확정, 항목 변경·이력, 현황판, 카카오톡 공유
 - 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. GitHub Actions CI 설정을 포함하며 운영 배포는 별도 작업입니다.
