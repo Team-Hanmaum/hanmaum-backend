@@ -4,17 +4,22 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.hanmaum.backend.global.response.ApiResponse;
+import com.hanmaum.backend.global.security.AuthenticatedUser;
+import com.hanmaum.backend.global.security.CurrentUser;
 import com.hanmaum.backend.global.security.oauth.MemberOAuth2User;
 import com.hanmaum.backend.user.entity.SocialAccount;
 import com.hanmaum.backend.user.entity.SocialProvider;
 import com.hanmaum.backend.user.repository.AppUserRepository;
 import com.hanmaum.backend.user.repository.SocialAccountRepository;
+import com.hanmaum.backend.user.service.MemberIdentityService;
 import com.nimbusds.jose.JOSEException;
 import com.nimbusds.jose.JOSEObjectType;
 import com.nimbusds.jose.JWSAlgorithm;
@@ -66,6 +71,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.web.util.UriUtils;
@@ -82,7 +89,9 @@ class OAuthMemberLoginIntegrationTests {
   @Autowired JdbcTemplate jdbc;
   @Autowired ObjectMapper mapper;
   @Autowired JdbcIndexedSessionRepository sessions;
+  @Autowired CurrentUserProbe currentUserProbe;
   @MockitoSpyBean SocialAccountRepository socialAccounts;
+  @MockitoSpyBean MemberIdentityService identities;
 
   @BeforeEach
   void resetIsolatedDataAndProvider() {
@@ -92,6 +101,7 @@ class OAuthMemberLoginIntegrationTests {
     provider.kakaoId = 42L;
     provider.googleUserInfoSubject = "42";
     provider.userInfoFails = false;
+    currentUserProbe.invocations.set(0);
   }
 
   @ParameterizedTest
@@ -111,6 +121,9 @@ class OAuthMemberLoginIntegrationTests {
             .orElseThrow()
             .getUser();
     assertThat(userBefore.getDisplayName()).isEqualTo("첫 이름");
+    mvc.perform(get("/api/test/current-user").cookie(cookie))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.userId").value(userBefore.getId().toString()));
     var response =
         mvc.perform(get("/api/users/me").cookie(cookie))
             .andExpect(status().isOk())
@@ -186,6 +199,17 @@ class OAuthMemberLoginIntegrationTests {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.userId").value(kakao.toString()))
         .andExpect(jsonPath("$.data.providers[0]").value("KAKAO"));
+    mvc.perform(
+            get("/api/test/current-user")
+                .cookie(googleLogin.getResponse().getCookie("HANMAUM_SESSION"))
+                .param("userId", kakao.toString()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.userId").value(google.toString()));
+    mvc.perform(
+            get("/api/test/current-user")
+                .cookie(kakaoLogin.getResponse().getCookie("HANMAUM_SESSION")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.userId").value(kakao.toString()));
   }
 
   @ParameterizedTest
@@ -333,6 +357,78 @@ class OAuthMemberLoginIntegrationTests {
   }
 
   @Test
+  void memberValidationRunsAgainOnTheNextRequest() throws Exception {
+    var result = login("kakao");
+    assertRedirect(result);
+    var cookie = result.getResponse().getCookie("HANMAUM_SESSION");
+    mvc.perform(get("/api/test/current-user").cookie(cookie)).andExpect(status().isOk());
+    assertThat(currentUserProbe.invocations.get()).isEqualTo(1);
+    jdbc.update("DELETE FROM social_account");
+    assertUnauthenticated(cookie);
+  }
+
+  @Test
+  void currentUserMutationStillRequiresCsrfAndRejectsDisconnectedMembersBeforeBusinessWork()
+      throws Exception {
+    var result = login("kakao");
+    assertRedirect(result);
+    var cookie = result.getResponse().getCookie("HANMAUM_SESSION");
+    mvc.perform(post("/api/test/current-user").cookie(cookie)).andExpect(status().isForbidden());
+    assertThat(currentUserProbe.invocations.get()).isZero();
+    var csrf =
+        mapper.readTree(
+            mvc.perform(get("/api/auth/csrf").cookie(cookie))
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    mvc.perform(
+            post("/api/test/current-user")
+                .cookie(cookie)
+                .header(csrf.get("headerName").asText(), csrf.get("token").asText()))
+        .andExpect(status().isOk());
+    assertThat(currentUserProbe.invocations.get()).isEqualTo(1);
+    jdbc.update("DELETE FROM social_account");
+    mvc.perform(
+            post("/api/test/current-user")
+                .cookie(cookie)
+                .header(csrf.get("headerName").asText(), csrf.get("token").asText()))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+    assertThat(currentUserProbe.invocations.get()).isEqualTo(1);
+  }
+
+  @Test
+  void databaseFailureDoesNotCallBusinessWorkOrBecomeAnAuthenticationError() throws Exception {
+    var result = login("kakao");
+    assertRedirect(result);
+    doThrow(new DataAccessResourceFailureException("PRIVATE-DATABASE-DETAIL"))
+        .when(socialAccounts)
+        .existsByUser_IdAndProviderAndProviderUserId(any(), any(), any());
+    var response =
+        mvc.perform(
+                get("/api/test/current-user")
+                    .cookie(result.getResponse().getCookie("HANMAUM_SESSION")))
+            .andExpect(status().isInternalServerError())
+            .andExpect(jsonPath("$.code").value("INTERNAL_ERROR"))
+            .andReturn()
+            .getResponse();
+    assertThat(response.getContentAsString()).doesNotContain("PRIVATE-DATABASE-DETAIL");
+    assertThat(currentUserProbe.invocations.get()).isZero();
+  }
+
+  @Test
+  void publicEndpointsDoNotRequireOrResolveACurrentMember() throws Exception {
+    mvc.perform(get("/actuator/health")).andExpect(status().isOk());
+    mvc.perform(get("/api/auth/csrf")).andExpect(status().isOk());
+    mvc.perform(get("/v3/api-docs")).andExpect(status().isOk());
+    mvc.perform(get("/swagger-ui/index.html")).andExpect(status().isOk());
+    mvc.perform(get("/oauth2/authorization/google")).andExpect(status().is3xxRedirection());
+    mvc.perform(get("/oauth2/authorization/kakao")).andExpect(status().is3xxRedirection());
+    verifyNoInteractions(identities);
+    assertThat(currentUserProbe.invocations.get()).isZero();
+  }
+
+  @Test
   void documentsMeWithSessionSecurityAndItsActualResponseContract() throws Exception {
     var response =
         mvc.perform(get("/v3/api-docs"))
@@ -342,6 +438,9 @@ class OAuthMemberLoginIntegrationTests {
                 jsonPath("$.paths['/api/users/me'].get.security[0].CsrfToken").doesNotExist())
             .andExpect(jsonPath("$.paths['/api/users/me'].get.parameters").doesNotExist())
             .andExpect(jsonPath("$.paths['/api/users/me'].get.requestBody").doesNotExist())
+            .andExpect(jsonPath("$.paths['/api/test/current-user'].get.parameters").doesNotExist())
+            .andExpect(
+                jsonPath("$.paths['/api/test/current-user'].post.requestBody").doesNotExist())
             .andExpect(
                 jsonPath("$.paths['/api/users/me'].get.responses['401']['$ref']")
                     .value("#/components/responses/UNAUTHENTICATED"))
@@ -395,22 +494,26 @@ class OAuthMemberLoginIntegrationTests {
   }
 
   private void assertUnauthenticated(Cookie cookie) throws Exception {
-    var request = get("/api/users/me");
-    if (cookie != null) request.cookie(cookie);
-    var response =
-        mvc.perform(request)
-            .andExpect(status().isUnauthorized())
-            .andExpect(jsonPath("$.success").value(false))
-            .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
-            .andExpect(jsonPath("$.message").value("로그인이 필요합니다."))
-            .andExpect(jsonPath("$.errors").isEmpty())
-            .andExpect(jsonPath("$.timestamp").isString())
-            .andReturn()
-            .getResponse();
-    var body = mapper.readTree(response.getContentAsString());
-    assertThat(body.propertyNames())
-        .containsExactlyInAnyOrder("success", "code", "message", "data", "errors", "timestamp");
-    assertThat(body.get("data").isNull()).isTrue();
+    int callsBefore = currentUserProbe.invocations.get();
+    for (String path : List.of("/api/users/me", "/api/test/current-user")) {
+      var request = get(path);
+      if (cookie != null) request.cookie(cookie);
+      var response =
+          mvc.perform(request)
+              .andExpect(status().isUnauthorized())
+              .andExpect(jsonPath("$.success").value(false))
+              .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
+              .andExpect(jsonPath("$.message").value("로그인이 필요합니다."))
+              .andExpect(jsonPath("$.errors").isEmpty())
+              .andExpect(jsonPath("$.timestamp").isString())
+              .andReturn()
+              .getResponse();
+      var body = mapper.readTree(response.getContentAsString());
+      assertThat(body.propertyNames())
+          .containsExactlyInAnyOrder("success", "code", "message", "data", "errors", "timestamp");
+      assertThat(body.get("data").isNull()).isTrue();
+    }
+    assertThat(currentUserProbe.invocations.get()).isEqualTo(callsBefore);
   }
 
   private MvcResult login(String registration) throws Exception {
@@ -495,6 +598,11 @@ class OAuthMemberLoginIntegrationTests {
     LoginProbe loginProbe() {
       return new LoginProbe();
     }
+
+    @Bean
+    CurrentUserProbe currentUserProbe() {
+      return new CurrentUserProbe();
+    }
   }
 
   @RestController
@@ -502,6 +610,20 @@ class OAuthMemberLoginIntegrationTests {
     @GetMapping("/api/test/login-probe")
     String probe() {
       return "authenticated";
+    }
+  }
+
+  @RestController
+  static class CurrentUserProbe {
+    final AtomicInteger invocations = new AtomicInteger();
+
+    @RequestMapping(
+        value = "/api/test/current-user",
+        method = {RequestMethod.GET, RequestMethod.POST},
+        produces = "application/json")
+    ApiResponse<Map<String, UUID>> current(@CurrentUser AuthenticatedUser user) {
+      invocations.incrementAndGet();
+      return ApiResponse.success(Map.of("userId", user.userId()));
     }
   }
 

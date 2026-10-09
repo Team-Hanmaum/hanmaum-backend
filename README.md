@@ -174,6 +174,8 @@ Flyway가 세션 테이블을 포함한 스키마 변경을 담당하고, Hibern
 
 `GET /api/users/me`는 세션의 본인만 조회합니다. 요청 본문·사용자 ID 입력·CSRF 토큰은 필요 없으며 공통 성공 응답의 `data`에 `userId`, `displayName`(null 가능), `providers`(`GOOGLE`/`KAKAO`)를 반환합니다. 표시 이름과 로그인 방식은 현재 DB에서 조회하고 제공자 식별자·이메일·토큰은 응답에 포함하지 않습니다. 세션 없음·만료·이전 형식 또는 회원/소셜 연결 무효는 `401 UNAUTHENTICATED`입니다. 공통 성공 메시지는 `요청이 완료되었습니다.`를 사용합니다.
 
+다른 도메인의 로그인 필수 업무 API도 `@CurrentUser AuthenticatedUser`로 검증된 현재 회원을 받고 `currentUser.userId()`를 Service에 전달합니다. 회원·소셜 연결의 DB 검증은 공통 처리하며 공간 참여·소유권 검사는 각 업무에서 수행합니다. 사용 예시와 적용 규칙은 [현재 회원 사용](docs/api-conventions.md#controller에서-현재-회원-사용)을 따릅니다.
+
 로컬 확인은 같은 브라우저에서 소셜 로그인 후 `http://localhost:8080/api/users/me`에 접속하거나 Swagger의 **User → GET /api/users/me → Try it out → Execute**로 진행합니다. 로그인한 브라우저 세션의 회원을 현재 서버에 설정된 DB에서 조회합니다. 기본 `local` 설정에서는 Docker PostgreSQL 개발 DB이며 Swagger 주소 자체가 DB를 선택하지는 않습니다.
 
 계정 연결과 회원 탈퇴 업무는 아직 구현하지 않았습니다. 사용자 행 삭제 시 소셜 연결을 제거하는 FK와 내 정보 조회의 유효성 검사가 회원 탈퇴 전체 정책이나 모든 세션의 즉시 종료를 구현한 것은 아닙니다.
@@ -227,6 +229,6 @@ Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 �
 
 ## 구현 범위
 
-- 준비: 빌드·포맷·세션/회원 DB 마이그레이션·회원 엔티티/Repository·OAuth 회원 생성/조회·회원 세션·내 정보 조회·보안 기반·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
+- 준비: 빌드·포맷·세션/회원 DB 마이그레이션·회원 엔티티/Repository·OAuth 회원 생성/조회·회원 세션·현재 회원 공통 처리·내 정보 조회·보안 기반·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
 - 후속: 계정 연결·회원 탈퇴 및 공간 기능, 초대, 기록, 제안 저장·확정, 항목 변경·이력, 현황판, 카카오톡 공유
 - 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. GitHub Actions CI 설정을 포함하며 운영 배포는 별도 작업입니다.
