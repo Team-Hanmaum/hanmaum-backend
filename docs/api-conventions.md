@@ -77,6 +77,27 @@ throw new ApiException(ProposalErrorCode.PROPOSAL_BATCH_CONFLICT);
 - `POST /api/auth/logout` 성공은 204입니다. 기존 필터의 세션·쿠키 무효화를 유지합니다.
 - BE↔AI 내부 응답, Actuator 상태 확인, OpenAPI 문서·Swagger 리소스는 업무 응답으로 감싸지 않습니다. CORS preflight는 별도의 브라우저 접근 검사입니다.
 
+### Controller에서 현재 회원 사용
+
+로그인한 회원이 필요한 업무 API는 `global.security`의 `@CurrentUser`와 `AuthenticatedUser`를 사용합니다. 기존 `GET /api/users/me`의 사용 예시는 다음과 같습니다. 보안 요구·성공 및 오류 응답 주석은 실제 `UserController`를 참고합니다.
+
+```java
+@GetMapping(value = "/api/users/me", produces = MediaType.APPLICATION_JSON_VALUE)
+public ResponseEntity<ApiResponse<MyProfileResponse>> me(
+    @CurrentUser AuthenticatedUser currentUser) {
+  var profile = profiles.getMe(currentUser.userId());
+  return ResponseEntity.ok()
+      .cacheControl(CacheControl.noStore())
+      .body(ApiResponse.success(profile));
+}
+```
+
+- `AuthenticatedUser`에는 한마음 사용자 UUID만 들어갑니다. FE가 보내는 인자가 아니며, `@CurrentUser`는 해당 인자를 Swagger의 요청 파라미터·본문에서 숨깁니다. 이 타입에는 반드시 `@CurrentUser`를 사용하고 요청 바인딩 어노테이션을 함께 붙이지 않습니다.
+- 공통 처리기는 Spring Security가 복원한 인증 정보를 읽고, `MemberIdentityService`가 사용자 UUID·제공자·제공자 사용자 ID에 대응하는 현재 DB 연결을 확인합니다. 검증은 요청마다 수행하며, DB 확인 없이 세션의 사용자 ID만 전달하지 않습니다.
+- 미인증·만료·이전 형식의 세션, 삭제된 회원, 끊어진 소셜 연결, 사용자 ID 불일치는 `401 UNAUTHENTICATED`입니다. 검증에 실패하면 Controller의 업무 메서드를 실행하지 않습니다. DB 장애는 인증 실패로 바꾸지 않고 `500 INTERNAL_ERROR`로 처리합니다.
+- Security 필터 검사는 먼저 적용됩니다. 변경 요청의 CSRF 검증이 실패하면 회원 검사에 앞서 `403 FORBIDDEN`이 반환될 수 있습니다. 이 공통 인자가 경로 접근 설정이나 CSRF를 대신하지 않습니다.
+- 공개 API에는 이 인자를 일괄 추가하지 않습니다. 회원 인증을 통과했어도 공간 참여·소유권·대상별 권한은 해당 Service가 업무 처리 시점에 별도로 검사해야 합니다. 이 인자에 공간 역할을 고정해 저장하지 않습니다.
+
 ## 문서화와 적용 범위
 
 Swagger에 공통 응답·오류 스키마, 재사용 가능한 오류 응답, 세션 쿠키·CSRF 보안 스키마를 둡니다. 공개 경로에 인증을 잘못 표시하지 않도록 전역 보안 요구를 일괄 적용하지 않고 각 API에 필요한 조건과 실제 오류만 명시합니다.

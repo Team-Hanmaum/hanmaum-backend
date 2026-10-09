@@ -32,6 +32,14 @@
 - 엔티티와 내부 AI DTO를 공개 API 응답으로 직접 노출하지 않는다.
 - 클래스는 PascalCase, 메서드·필드는 camelCase, 패키지는 소문자를 사용한다.
 
+## 로그인 사용자 공통 처리
+
+- 로그인한 회원이 필요한 업무 Controller는 `@CurrentUser AuthenticatedUser currentUser`로 현재 회원을 받고, Service에 `currentUser.userId()`를 전달한다. 요청의 `userId`, 제공자 식별자 또는 Controller별 `SecurityContextHolder` 조회로 요청자를 결정하지 않는다.
+- `@CurrentUser`는 `AuthenticatedUser` 타입에만 사용하며 `@RequestBody`, `@RequestParam`, `@ModelAttribute` 등 요청 바인딩 어노테이션과 함께 사용하지 않는다. 이 인자는 서버가 채우며 Swagger 입력 항목에 노출하지 않는다.
+- `global.security.CurrentUserArgumentResolver`는 인증 정보를 연결하고 `user.service.MemberIdentityService`가 현재 DB의 회원·소셜 연결을 검증한다. 검증 로직을 도메인마다 복제하거나 세션 생성 시점의 검증만 신뢰하지 않는다. 엔티티·제공자 정보는 공통 Controller 인자에 포함하지 않는다.
+- `@CurrentUser`는 Security 경로 설정·CSRF 검증을 대체하지 않는다. 공개 API에는 일괄 적용하지 않으며, 새 API의 경로 접근 조건과 Swagger 보안 요구는 별도로 명시한다.
+- 회원 인증은 공간 참여·소유권·대상별 권한을 보장하지 않는다. 해당 업무 Service에서 현재 참여 상태·권한·버전 등을 처리 시점에 검사한다. 공통 회원 검증은 모든 세션의 즉시 종료나 회원 탈퇴 전체 구현을 뜻하지 않는다.
+
 ## 공통 응답과 성공·오류 코드 관리
 
 - 공개 API의 공통 응답은 `ApiResponse<T>`를 사용하고, 응답 필드·코드 문자열·기본 메시지를 Controller나 Service마다 별도로 정의하지 않는다. 상세 형식과 적용 예외는 `docs/api-conventions.md`를 따른다.

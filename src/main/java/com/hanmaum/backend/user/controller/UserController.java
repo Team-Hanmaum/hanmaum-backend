@@ -1,20 +1,17 @@
 package com.hanmaum.backend.user.controller;
 
-import com.hanmaum.backend.global.code.CommonErrorCode;
-import com.hanmaum.backend.global.exception.ApiException;
 import com.hanmaum.backend.global.response.ApiResponse;
-import com.hanmaum.backend.global.security.oauth.MemberPrincipal;
+import com.hanmaum.backend.global.security.AuthenticatedUser;
+import com.hanmaum.backend.global.security.CurrentUser;
 import com.hanmaum.backend.user.dto.MyProfileResponse;
 import com.hanmaum.backend.user.service.UserProfileService;
 import io.swagger.v3.oas.annotations.Operation;
-import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -44,12 +41,8 @@ public class UserController {
   })
   @GetMapping(value = "/api/users/me", produces = MediaType.APPLICATION_JSON_VALUE)
   public ResponseEntity<ApiResponse<MyProfileResponse>> me(
-      @Parameter(hidden = true) @AuthenticationPrincipal MemberPrincipal principal) {
-    // Provider-only sessions issued before member mapping require a fresh login.
-    if (principal == null) throw new ApiException(CommonErrorCode.UNAUTHENTICATED);
-    var profile =
-        profiles.getMe(
-            principal.getUserId(), principal.getProvider(), principal.getProviderUserId());
+      @CurrentUser AuthenticatedUser currentUser) {
+    var profile = profiles.getMe(currentUser.userId());
     return ResponseEntity.ok()
         .cacheControl(CacheControl.noStore())
         .body(ApiResponse.success(profile));
