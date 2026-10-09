@@ -114,6 +114,27 @@ Docker 없이 AI HTTP 계약 테스트만 실행할 때는 다음 명령을 사�
 .\gradlew.bat test --tests '*HanmaumAiClientTests'
 ```
 
+## CI
+
+[Backend CI](.github/workflows/ci.yml)는 GitHub Actions에서 아래 조건으로 실행합니다.
+
+| 이벤트 | 실행 조건 |
+| --- | --- |
+| PR | 대상 브랜치 제한 없이 `opened`, `synchronize`, `reopened` 실행. 스택 PR 포함 |
+| Push | `dev`, `main` 브랜치만 실행. 머지 후 최종 코드 재검증 |
+
+`Build and test` 작업은 Ubuntu 24.04·JDK 21에서 저장소의 Gradle Wrapper로 `./gradlew check bootJar --no-daemon`을 실행합니다. Spotless 포맷, 전체 테스트, 실행 JAR 생성을 검사하며 최대 실행 시간은 20분입니다. 같은 PR이나 브랜치의 새 실행이 시작되면 이전 실행을 취소합니다.
+
+- Testcontainers가 PostgreSQL을 실행하므로 별도 DB 서비스 설정이나 실제 OAuth·AI API 키가 필요하지 않습니다.
+- Gradle 캐시는 PR에서 읽기만 하며, `dev`·`main` push에서 갱신합니다. 공식 Action은 전체 커밋 SHA로 고정합니다.
+- 테스트 보고서가 생성되면 성공·실패 실행 모두 `backend-test-reports` 아티팩트로 7일간 보관합니다. 취소된 실행은 업로드를 생략합니다.
+- 실패 시 GitHub의 **Actions → Backend CI → 해당 실행 → Build and test** 로그와 테스트 보고서를 확인합니다. 로컬에서는 Docker를 실행한 뒤 `.\gradlew.bat check bootJar --no-daemon`으로 확인합니다.
+- 워크플로우 YAML도 Spotless의 공통 파일 포맷 검사 대상에 포함합니다.
+
+CI 파일 추가만으로 머지 제한이 설정되지는 않습니다. 첫 GitHub 실행을 확인한 뒤 `dev`·`main` 대상 Ruleset에서 `Build and test`를 필수 상태 검사로 등록하고 **Require branches to be up to date before merging**을 활성화해야 합니다. 이 저장소 설정은 별도 적용 대상이며, 스택 PR의 중간 대상 브랜치까지 자동으로 보호하지는 않습니다.
+
+CI에는 배포나 머지 자동 취소를 포함하지 않습니다. 머지 후 검사 실패는 로그를 확인해 수정 PR 또는 revert PR로 처리합니다.
+
 ## 환경 설정
 
 | 프로필 | 용도 |
@@ -193,4 +214,4 @@ Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 �
 
 - 준비: 빌드·포맷·세션 DB 마이그레이션·보안 기반·OAuth 설정·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
 - 후속: 회원 및 공간 기능, 초대, 기록, 제안 저장·확정, 항목 변경·이력, 현황판, 카카오톡 공유
-- 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. GitHub Actions workflows와 운영 배포는 별도 작업입니다.
+- 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. GitHub Actions CI 설정을 포함하며 운영 배포는 별도 작업입니다.

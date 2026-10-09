@@ -67,7 +67,8 @@ spotless {
     }
     format 'misc', {
         target '*.gradle', '*.md', '*.yml', '.editorconfig', '.gitignore', '.gitattributes',
-            '.github/**/*.md', '.githooks/*', '.vscode/*.json', 'docs/**/*.md',
+            '.github/**/*.md', '.github/workflows/*.yml', '.github/workflows/*.yaml',
+            '.githooks/*', '.vscode/*.json', 'docs/**/*.md',
             'src/**/*.yml', 'src/**/*.sql'
         leadingTabsToSpaces(4)
         trimTrailingWhitespace()
