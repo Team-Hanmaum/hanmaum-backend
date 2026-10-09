@@ -23,7 +23,7 @@ public class OAuthMemberMapper {
   public void mapGoogle(OidcUser user) {
     Object subject = user.getIdToken().getClaims().get("sub");
     if (!(subject instanceof String providerUserId) || providerUserId.isBlank()) {
-      throw loginFailed();
+      throw loginFailed("hanmaum_invalid_provider_identity");
     }
     map(SocialProvider.GOOGLE, providerUserId, optionalName(user.getClaims().get("name")));
   }
@@ -31,7 +31,7 @@ public class OAuthMemberMapper {
   public void mapKakao(OAuth2User user) {
     Object id = user.getAttributes().get("id");
     if (!(id instanceof Long || id instanceof Integer) || ((Number) id).longValue() <= 0) {
-      throw loginFailed();
+      throw loginFailed("hanmaum_invalid_provider_identity");
     }
     String name = null;
     if (user.getAttributes().get("kakao_account") instanceof Map<?, ?> account
@@ -47,7 +47,7 @@ public class OAuthMemberMapper {
       members.findOrCreate(provider, providerUserId, name);
     } catch (DataAccessException | TransactionException exception) {
       // Do not carry SQL parameters or provider data into authentication errors/logs.
-      throw loginFailed();
+      throw loginFailed("hanmaum_member_mapping_failed");
     }
   }
 
@@ -55,9 +55,8 @@ public class OAuthMemberMapper {
     return value instanceof String name && !name.isBlank() ? name : null;
   }
 
-  static OAuth2AuthenticationException loginFailed() {
+  static OAuth2AuthenticationException loginFailed(String internalCode) {
     return new OAuth2AuthenticationException(
-        new OAuth2Error(AuthErrorCode.OAUTH_LOGIN_FAILED.code()),
-        AuthErrorCode.OAUTH_LOGIN_FAILED.message());
+        new OAuth2Error(internalCode), AuthErrorCode.OAUTH_LOGIN_FAILED.message());
   }
 }

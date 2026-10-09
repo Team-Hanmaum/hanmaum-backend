@@ -1,11 +1,11 @@
 package com.hanmaum.backend.global.security;
 
-import com.hanmaum.backend.auth.code.AuthErrorCode;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.code.ErrorCode;
 import com.hanmaum.backend.global.response.ApiResponse;
 import com.hanmaum.backend.global.security.oauth.HanmaumOAuth2UserService;
 import com.hanmaum.backend.global.security.oauth.HanmaumOidcUserService;
+import com.hanmaum.backend.global.security.oauth.OAuthLoginFailureHandler;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
@@ -33,7 +33,8 @@ public class SecurityConfig {
       ObjectMapper mapper,
       ObjectProvider<ClientRegistrationRepository> clients,
       HanmaumOAuth2UserService oauth2Users,
-      HanmaumOidcUserService oidcUsers)
+      HanmaumOidcUserService oidcUsers,
+      OAuthLoginFailureHandler oauthLoginFailureHandler)
       throws Exception {
     http.cors(cors -> cors.configurationSource(corsConfigurationSource(properties)))
         .formLogin(AbstractHttpConfigurer::disable)
@@ -81,9 +82,7 @@ public class SecurityConfig {
                   .successHandler(
                       (request, response, authentication) ->
                           response.sendRedirect(properties.loginSuccessUrl().toString()))
-                  .failureHandler(
-                      (request, response, exception) ->
-                          writeError(response, mapper, AuthErrorCode.OAUTH_LOGIN_FAILED)));
+                  .failureHandler(oauthLoginFailureHandler));
     }
     // Keep Spring Security's session-based CSRF protection enabled.
     return http.build();

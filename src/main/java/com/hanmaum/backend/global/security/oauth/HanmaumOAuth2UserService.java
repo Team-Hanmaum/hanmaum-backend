@@ -26,7 +26,7 @@ public class HanmaumOAuth2UserService implements OAuth2UserService<OAuth2UserReq
   @Override
   public OAuth2User loadUser(OAuth2UserRequest request) {
     if (!"kakao".equals(request.getClientRegistration().getRegistrationId())) {
-      throw OAuthMemberMapper.loginFailed();
+      throw OAuthMemberMapper.loginFailed("hanmaum_unsupported_provider");
     }
     OAuth2User user = delegate.loadUser(request);
     members.mapKakao(user);

@@ -26,7 +26,7 @@ public class HanmaumOidcUserService implements OAuth2UserService<OidcUserRequest
   @Override
   public OidcUser loadUser(OidcUserRequest request) {
     if (!"google".equals(request.getClientRegistration().getRegistrationId())) {
-      throw OAuthMemberMapper.loginFailed();
+      throw OAuthMemberMapper.loginFailed("hanmaum_unsupported_provider");
     }
     OidcUser user = delegate.loadUser(request);
     members.mapGoogle(user);
