@@ -52,7 +52,7 @@
 | 패키지 | 책임 | 현재 상태 |
 | --- | --- | --- |
 | `auth` | 로그인·로그아웃·CSRF의 HTTP 계약 | CSRF Controller 존재, 로그인·로그아웃은 Security 필터 처리 |
-| `user` | 서비스 회원·소셜 계정 매핑·탈퇴 | 저장 구조 및 OAuth 회원 생성/조회 구현. 세션의 서비스 사용자 ID 연결·내 정보 조회·탈퇴는 후속 구현 |
+| `user` | 서비스 회원·소셜 계정 매핑·탈퇴 | 저장 구조, OAuth 회원 생성/조회, 회원 세션·내 정보 조회 구현. 계정 연결·탈퇴는 후속 구현 |
 | `carespace` | 공간·참여·초대·소유권 | 패키지 준비, 기능 미구현. 초대 포함 |
 | `record` | 원본 소식 작성·조회·삭제 | 패키지 준비, 기능 미구현 |
 | `analysis` | 분석 실행·상태·재시도 관리 | 패키지 준비, 기능 미구현 |
@@ -84,7 +84,9 @@ ERD와 노션 API는 검토 가능한 초안이며 전체 물리 스키마·업�
 - 회원 조회/생성은 `READ_COMMITTED` 트랜잭션에서 제공자 식별자별 `pg_advisory_xact_lock`을 획득한 뒤 수행합니다. 잠금은 같은 DB를 사용하는 여러 서버에서도 적용되고 커밋/롤백 때 해제됩니다. 해시 충돌은 처리 순서에만 영향을 주며 실제 조회·유일성 검사는 전체 `(provider, provider_user_id)`로 수행합니다. 관련 생성 경로는 이 서비스를 사용해야 합니다.
 - 최초 가입에서만 제공자 이름을 저장하고 이름이 없으면 null을 허용합니다. 재로그인은 기존 이름과 `updated_at`을 유지합니다(2026-10-09 사용자 합의). 별도 이름 수정 정책은 미정입니다.
 - 회원과 소셜 연결 생성은 전체 성공 또는 전체 롤백입니다. DB 실패는 기존 로그인 실패 응답으로 변환하며 SQL 파라미터·제공자 원문을 응답에 포함하지 않습니다.
-- 이번 단계는 회원 저장 연결까지이며 세션 principal의 서비스 사용자 ID와 내 정보 API는 다음 단계입니다. 실제 제공자 로그인 검증과 가짜 제공자 기반 자동 검증을 구분합니다.
+- 로그인 성공 시 `MemberPrincipal`에 서비스 사용자 UUID를 연결하고 인증 이름도 UUID로 사용합니다. Google은 `OidcUser` 형식과 검증 결과를 유지하며 두 제공자 모두 JDBC 세션 저장·복원 후 같은 회원을 식별합니다. 기존 제공자 전용 세션은 자동 변환하지 않고 재로그인을 요구합니다.
+- `GET /api/users/me`는 principal의 UUID 및 제공자 식별자와 DB 연결을 대조한 뒤 현재 DB의 이름·연결된 제공자만 공개 DTO로 반환합니다. 사용자 ID를 입력받거나 전역 공간 역할을 반환하지 않습니다. 조회는 회원·연결을 생성하지 않으며 없는 회원·끊어진 연결·UUID 불일치는 `401 UNAUTHENTICATED`입니다.
+- 실제 제공자 로그인 검증과 가짜 제공자 기반 자동 검증을 구분합니다. 회원 탈퇴 시 모든 세션 종료와 소유권 검사는 후속 구현 범위입니다.
 
 구현 참고: [Spring Security 사용자 서비스 확장](https://docs.spring.io/spring-security/reference/servlet/oauth2/login/advanced.html), [PostgreSQL 트랜잭션 advisory lock](https://www.postgresql.org/docs/17/explicit-locking.html#ADVISORY-LOCKS), [Google 식별자](https://developers.google.com/identity/openid-connect/openid-connect), [Kakao 사용자 정보](https://developers.kakao.com/docs/ko/kakaologin/rest-api#req-user-info).
 

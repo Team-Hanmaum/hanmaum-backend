@@ -29,7 +29,6 @@ public class HanmaumOAuth2UserService implements OAuth2UserService<OAuth2UserReq
       throw OAuthMemberMapper.loginFailed("hanmaum_unsupported_provider");
     }
     OAuth2User user = delegate.loadUser(request);
-    members.mapKakao(user);
-    return user;
+    return new MemberOAuth2User(members.mapKakao(user), user);
   }
 }

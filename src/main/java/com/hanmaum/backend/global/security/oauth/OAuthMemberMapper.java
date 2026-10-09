@@ -4,6 +4,7 @@ import com.hanmaum.backend.auth.code.AuthErrorCode;
 import com.hanmaum.backend.user.entity.SocialProvider;
 import com.hanmaum.backend.user.service.SocialLoginMemberService;
 import java.util.Map;
+import java.util.UUID;
 import org.springframework.dao.DataAccessException;
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
@@ -20,15 +21,15 @@ public class OAuthMemberMapper {
     this.members = members;
   }
 
-  public void mapGoogle(OidcUser user) {
+  public UUID mapGoogle(OidcUser user) {
     Object subject = user.getIdToken().getClaims().get("sub");
     if (!(subject instanceof String providerUserId) || providerUserId.isBlank()) {
       throw loginFailed("hanmaum_invalid_provider_identity");
     }
-    map(SocialProvider.GOOGLE, providerUserId, optionalName(user.getClaims().get("name")));
+    return map(SocialProvider.GOOGLE, providerUserId, optionalName(user.getClaims().get("name")));
   }
 
-  public void mapKakao(OAuth2User user) {
+  public UUID mapKakao(OAuth2User user) {
     Object id = user.getAttributes().get("id");
     if (!(id instanceof Long || id instanceof Integer) || ((Number) id).longValue() <= 0) {
       throw loginFailed("hanmaum_invalid_provider_identity");
@@ -38,13 +39,13 @@ public class OAuthMemberMapper {
         && account.get("profile") instanceof Map<?, ?> profile) {
       name = optionalName(profile.get("nickname"));
     }
-    map(SocialProvider.KAKAO, id.toString(), name);
+    return map(SocialProvider.KAKAO, id.toString(), name);
   }
 
-  private void map(SocialProvider provider, String providerUserId, String name) {
+  private UUID map(SocialProvider provider, String providerUserId, String name) {
     try {
       // Provider HTTP calls have already finished before this short database transaction starts.
-      members.findOrCreate(provider, providerUserId, name);
+      return members.findOrCreate(provider, providerUserId, name);
     } catch (DataAccessException | TransactionException exception) {
       // Do not carry SQL parameters or provider data into authentication errors/logs.
       throw loginFailed("hanmaum_member_mapping_failed");

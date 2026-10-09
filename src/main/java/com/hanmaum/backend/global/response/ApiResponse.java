@@ -16,7 +16,8 @@ public record ApiResponse<T>(
     @Schema(requiredMode = Schema.RequiredMode.REQUIRED) boolean success,
     @Schema(requiredMode = Schema.RequiredMode.REQUIRED, example = "SUCCESS") String code,
     @Schema(requiredMode = Schema.RequiredMode.REQUIRED) String message,
-    @Schema(requiredMode = Schema.RequiredMode.REQUIRED, nullable = true) T data,
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED, description = "성공 결과. 오류 응답에서는 null")
+        T data,
     @Schema(requiredMode = Schema.RequiredMode.REQUIRED) List<ApiFieldError> errors,
     @Schema(requiredMode = Schema.RequiredMode.REQUIRED, description = "응답 생성 시각, UTC ISO 8601")
         Instant timestamp) {

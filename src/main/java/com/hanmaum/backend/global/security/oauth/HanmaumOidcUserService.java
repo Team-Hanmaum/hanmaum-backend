@@ -29,7 +29,6 @@ public class HanmaumOidcUserService implements OAuth2UserService<OidcUserRequest
       throw OAuthMemberMapper.loginFailed("hanmaum_unsupported_provider");
     }
     OidcUser user = delegate.loadUser(request);
-    members.mapGoogle(user);
-    return user;
+    return new MemberOidcUser(members.mapGoogle(user), user);
   }
 }

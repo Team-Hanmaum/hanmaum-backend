@@ -5,10 +5,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.hanmaum.backend.global.security.oauth.MemberOAuth2User;
 import com.hanmaum.backend.user.entity.SocialAccount;
 import com.hanmaum.backend.user.entity.SocialProvider;
 import com.hanmaum.backend.user.repository.AppUserRepository;
@@ -30,8 +32,11 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.Date;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,10 +50,17 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.client.registration.ClientRegistration;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
 import org.springframework.security.oauth2.client.registration.InMemoryClientRegistrationRepository;
 import org.springframework.security.oauth2.core.AuthorizationGrantType;
+import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
+import org.springframework.security.oauth2.core.user.OAuth2User;
+import org.springframework.session.Session;
+import org.springframework.session.jdbc.JdbcIndexedSessionRepository;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -68,6 +80,8 @@ class OAuthMemberLoginIntegrationTests {
   @Autowired FakeProvider provider;
   @Autowired AppUserRepository users;
   @Autowired JdbcTemplate jdbc;
+  @Autowired ObjectMapper mapper;
+  @Autowired JdbcIndexedSessionRepository sessions;
   @MockitoSpyBean SocialAccountRepository socialAccounts;
 
   @BeforeEach
@@ -97,8 +111,37 @@ class OAuthMemberLoginIntegrationTests {
             .orElseThrow()
             .getUser();
     assertThat(userBefore.getDisplayName()).isEqualTo("첫 이름");
+    var response =
+        mvc.perform(get("/api/users/me").cookie(cookie))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.success").value(true))
+            .andExpect(jsonPath("$.code").value("SUCCESS"))
+            .andExpect(jsonPath("$.data.userId").value(userBefore.getId().toString()))
+            .andExpect(jsonPath("$.data.displayName").value("첫 이름"))
+            .andExpect(jsonPath("$.data.providers[0]").value(socialProvider.name()))
+            .andExpect(jsonPath("$.data.providers.length()").value(1))
+            .andExpect(jsonPath("$.errors").isEmpty())
+            .andExpect(jsonPath("$.timestamp").isString())
+            .andReturn()
+            .getResponse();
+    assertThat(response.getHeader("Cache-Control")).contains("no-store");
+    var body = mapper.readTree(response.getContentAsString());
+    assertThat(body.propertyNames())
+        .containsExactlyInAnyOrder("success", "code", "message", "data", "errors", "timestamp");
+    assertThat(body.get("data").propertyNames())
+        .containsExactlyInAnyOrder("userId", "displayName", "providers");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT principal_name FROM spring_session WHERE principal_name IS NOT NULL",
+                String.class))
+        .isEqualTo(userBefore.getId().toString());
     provider.name = "제공자에서 바뀐 이름";
-    assertRedirect(login(registration));
+    var repeat = login(registration);
+    assertRedirect(repeat);
+    mvc.perform(get("/api/users/me").cookie(repeat.getResponse().getCookie("HANMAUM_SESSION")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.userId").value(userBefore.getId().toString()))
+        .andExpect(jsonPath("$.data.displayName").value("첫 이름"));
     var userAfter =
         socialAccounts
             .findByProviderAndProviderUserId(socialProvider, "42")
@@ -113,8 +156,10 @@ class OAuthMemberLoginIntegrationTests {
 
   @Test
   void equalProviderIdsAndEmailsDoNotLinkGoogleAndKakaoAccounts() throws Exception {
-    assertRedirect(login("google"));
-    assertRedirect(login("kakao"));
+    var googleLogin = login("google");
+    var kakaoLogin = login("kakao");
+    assertRedirect(googleLogin);
+    assertRedirect(kakaoLogin);
     var google =
         socialAccounts
             .findByProviderAndProviderUserId(SocialProvider.GOOGLE, "42")
@@ -129,13 +174,34 @@ class OAuthMemberLoginIntegrationTests {
             .getId();
     assertThat(google).isNotEqualTo(kakao);
     assertThat(users.count()).isEqualTo(2);
+    // A caller-supplied ID cannot override the identity in the session.
+    mvc.perform(
+            get("/api/users/me")
+                .cookie(googleLogin.getResponse().getCookie("HANMAUM_SESSION"))
+                .param("userId", kakao.toString()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.userId").value(google.toString()))
+        .andExpect(jsonPath("$.data.providers[0]").value("GOOGLE"));
+    mvc.perform(get("/api/users/me").cookie(kakaoLogin.getResponse().getCookie("HANMAUM_SESSION")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.userId").value(kakao.toString()))
+        .andExpect(jsonPath("$.data.providers[0]").value("KAKAO"));
   }
 
   @ParameterizedTest
   @EnumSource(SocialProvider.class)
   void absentProviderNameDoesNotPreventLogin(SocialProvider socialProvider) throws Exception {
     provider.name = null;
-    assertRedirect(login(socialProvider.name().toLowerCase(java.util.Locale.ROOT)));
+    var result = login(socialProvider.name().toLowerCase(java.util.Locale.ROOT));
+    assertRedirect(result);
+    var response =
+        mvc.perform(get("/api/users/me").cookie(result.getResponse().getCookie("HANMAUM_SESSION")))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse();
+    assertThat(
+            mapper.readTree(response.getContentAsString()).get("data").get("displayName").isNull())
+        .isTrue();
     assertThat(users.findAll())
         .singleElement()
         .satisfies(user -> assertThat(user.getDisplayName()).isNull());
@@ -174,6 +240,177 @@ class OAuthMemberLoginIntegrationTests {
     assertThat(result.getResponse().getContentAsString()).doesNotContain("PRIVATE-PROVIDER-DATA");
     assertThat(users.count()).isZero();
     assertThat(socialAccounts.count()).isZero();
+  }
+
+  @Test
+  void meRequiresAnAuthenticatedSession() throws Exception {
+    assertUnauthenticated(null);
+    assertUnauthenticated(new Cookie("HANMAUM_SESSION", "not-a-valid-session"));
+    var anonymous = mvc.perform(get("/api/auth/csrf")).andReturn().getResponse();
+    assertUnauthenticated(anonymous.getCookie("HANMAUM_SESSION"));
+    assertThat(users.count()).isZero();
+  }
+
+  @Test
+  void expiredSessionCannotReadMe() throws Exception {
+    var result = login("kakao");
+    assertRedirect(result);
+    jdbc.update("UPDATE spring_session SET last_access_time = 0, expiry_time = 0");
+    assertUnauthenticated(result.getResponse().getCookie("HANMAUM_SESSION"));
+  }
+
+  @Test
+  void legacyProviderOnlySessionRequiresLoginAndDoesNotCreateMembers() throws Exception {
+    assertUnauthenticated(storedSession(kakaoPrincipal()));
+    assertThat(users.count()).isZero();
+    assertThat(socialAccounts.count()).isZero();
+  }
+
+  @Test
+  void deletedMemberCannotBeRevivedByMe() throws Exception {
+    var result = login("kakao");
+    assertRedirect(result);
+    jdbc.update("DELETE FROM app_user");
+    assertUnauthenticated(result.getResponse().getCookie("HANMAUM_SESSION"));
+    assertThat(users.count()).isZero();
+    assertThat(socialAccounts.count()).isZero();
+  }
+
+  @Test
+  void disconnectedLoginMappingIsRejectedEvenIfUserStillExists() throws Exception {
+    var result = login("kakao");
+    assertRedirect(result);
+    jdbc.update("DELETE FROM social_account");
+    assertUnauthenticated(result.getResponse().getCookie("HANMAUM_SESSION"));
+    assertThat(users.count()).isEqualTo(1);
+    assertThat(socialAccounts.count()).isZero();
+  }
+
+  @Test
+  void mismatchedServiceUserIdCannotReadAnotherMembersProfile() throws Exception {
+    assertRedirect(login("kakao"));
+    assertRedirect(login("google"));
+    UUID googleId =
+        socialAccounts
+            .findByProviderAndProviderUserId(SocialProvider.GOOGLE, "42")
+            .orElseThrow()
+            .getUser()
+            .getId();
+    assertUnauthenticated(storedSession(new MemberOAuth2User(googleId, kakaoPrincipal())));
+  }
+
+  @Test
+  void meReadsTheCurrentDatabaseNameInsteadOfTheLoginAttributes() throws Exception {
+    var result = login("kakao");
+    assertRedirect(result);
+    jdbc.update("UPDATE app_user SET display_name = ?", "DB의 현재 이름");
+    mvc.perform(get("/api/users/me").cookie(result.getResponse().getCookie("HANMAUM_SESSION")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.displayName").value("DB의 현재 이름"));
+  }
+
+  @Test
+  void logoutRequiresCsrfAndInvalidatesTheMemberSession() throws Exception {
+    var result = login("google");
+    assertRedirect(result);
+    var cookie = result.getResponse().getCookie("HANMAUM_SESSION");
+    mvc.perform(post("/api/auth/logout").cookie(cookie)).andExpect(status().isForbidden());
+    mvc.perform(get("/api/users/me").cookie(cookie)).andExpect(status().isOk());
+    var csrf =
+        mapper.readTree(
+            mvc.perform(get("/api/auth/csrf").cookie(cookie))
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    mvc.perform(
+            post("/api/auth/logout")
+                .cookie(cookie)
+                .header(csrf.get("headerName").asText(), csrf.get("token").asText()))
+        .andExpect(status().isNoContent());
+    assertUnauthenticated(cookie);
+    assertThat(users.count()).isEqualTo(1);
+    assertThat(socialAccounts.count()).isEqualTo(1);
+  }
+
+  @Test
+  void documentsMeWithSessionSecurityAndItsActualResponseContract() throws Exception {
+    var response =
+        mvc.perform(get("/v3/api-docs"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.paths['/api/users/me'].get.security[0].SessionCookie").isArray())
+            .andExpect(
+                jsonPath("$.paths['/api/users/me'].get.security[0].CsrfToken").doesNotExist())
+            .andExpect(jsonPath("$.paths['/api/users/me'].get.parameters").doesNotExist())
+            .andExpect(jsonPath("$.paths['/api/users/me'].get.requestBody").doesNotExist())
+            .andExpect(
+                jsonPath("$.paths['/api/users/me'].get.responses['401']['$ref']")
+                    .value("#/components/responses/UNAUTHENTICATED"))
+            .andExpect(
+                jsonPath("$.paths['/api/users/me'].get.responses['500']['$ref']")
+                    .value("#/components/responses/INTERNAL_ERROR"))
+            .andReturn()
+            .getResponse();
+    var document = mapper.readTree(response.getContentAsString());
+    var responseSchema =
+        document
+            .at("/paths/~1api~1users~1me/get/responses/200/content/application~1json/schema/$ref")
+            .asText();
+    var envelope = document.at(responseSchema.substring(1));
+    assertThat(envelope.at("/properties/data/type").asText()).isNotEqualTo("null");
+    assertThat(envelope.at("/properties/data/$ref").asText())
+        .isEqualTo("#/components/schemas/MyProfileResponse");
+    var profile = document.at("/components/schemas/MyProfileResponse");
+    assertThat(profile.get("properties").propertyNames())
+        .containsExactlyInAnyOrder("userId", "displayName", "providers");
+    assertThat(profile.at("/properties/userId/format").asText()).isEqualTo("uuid");
+    assertThat(profile.at("/properties/displayName/type").toString()).contains("string", "null");
+    assertThat(profile.at("/properties/providers/items/enum").toString())
+        .contains("GOOGLE", "KAKAO");
+    assertThat(document.at("/components/schemas/ApiResponse/properties/data").has("type"))
+        .isFalse();
+    assertThat(
+            document
+                .at("/components/responses/UNAUTHENTICATED/content/application~1json/example/data")
+                .isNull())
+        .isTrue();
+  }
+
+  private DefaultOAuth2User kakaoPrincipal() {
+    return new DefaultOAuth2User(
+        List.of(new SimpleGrantedAuthority("OAUTH2_USER")), Map.of("id", 42L), "id");
+  }
+
+  private Cookie storedSession(OAuth2User principal) {
+    var authentication =
+        new OAuth2AuthenticationToken(principal, principal.getAuthorities(), "kakao");
+    var context = SecurityContextHolder.createEmptyContext();
+    context.setAuthentication(authentication);
+    var session = sessions.createSession();
+    Session sessionData = session;
+    sessionData.setAttribute("SPRING_SECURITY_CONTEXT", context);
+    sessions.save(session);
+    return new Cookie(
+        "HANMAUM_SESSION",
+        Base64.getEncoder().encodeToString(sessionData.getId().getBytes(StandardCharsets.UTF_8)));
+  }
+
+  private void assertUnauthenticated(Cookie cookie) throws Exception {
+    var request = get("/api/users/me");
+    if (cookie != null) request.cookie(cookie);
+    var response =
+        mvc.perform(request)
+            .andExpect(status().isUnauthorized())
+            .andExpect(jsonPath("$.success").value(false))
+            .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"))
+            .andExpect(jsonPath("$.message").value("로그인이 필요합니다."))
+            .andExpect(jsonPath("$.errors").isEmpty())
+            .andExpect(jsonPath("$.timestamp").isString())
+            .andReturn()
+            .getResponse();
+    var body = mapper.readTree(response.getContentAsString());
+    assertThat(body.propertyNames())
+        .containsExactlyInAnyOrder("success", "code", "message", "data", "errors", "timestamp");
+    assertThat(body.get("data").isNull()).isTrue();
   }
 
   private MvcResult login(String registration) throws Exception {
