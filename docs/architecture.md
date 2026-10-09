@@ -52,7 +52,7 @@
 | 패키지 | 책임 | 현재 상태 |
 | --- | --- | --- |
 | `auth` | 로그인·로그아웃·CSRF의 HTTP 계약 | CSRF Controller 존재, 로그인·로그아웃은 Security 필터 처리 |
-| `user` | 서비스 회원·소셜 계정 매핑·탈퇴 | 회원·소셜 계정 엔티티/Repository 준비. OAuth 회원 매핑·내 정보 조회·탈퇴는 후속 구현 |
+| `user` | 서비스 회원·소셜 계정 매핑·탈퇴 | 저장 구조 및 OAuth 회원 생성/조회 구현. 세션의 서비스 사용자 ID 연결·내 정보 조회·탈퇴는 후속 구현 |
 | `carespace` | 공간·참여·초대·소유권 | 패키지 준비, 기능 미구현. 초대 포함 |
 | `record` | 원본 소식 작성·조회·삭제 | 패키지 준비, 기능 미구현 |
 | `analysis` | 분석 실행·상태·재시도 관리 | 패키지 준비, 기능 미구현 |
@@ -76,6 +76,17 @@
 - 공개 응답은 [API 공통 규격](api-conventions.md), 내부 계약은 [AI 계약](ai-contract.md)을 따릅니다.
 
 ERD와 노션 API는 검토 가능한 초안이며 전체 물리 스키마·업무 구현 완료를 뜻하지 않습니다. Flyway V1은 세션 테이블, V2는 `app_user`·`social_account` 저장 구조를 담당합니다. V2는 `(provider, provider_user_id)` 유일성과 사용자 FK를 검사하며 사용자 행 삭제 시 해당 소셜 연결만 제거합니다. 회원 탈퇴 전 공간 소유권 검사·공동 기록 보존·세션 종료는 후속 업무 구현 범위입니다. 입력 제한·페이지네이션·잠금 TTL·검토/삭제 확인값 구현은 해당 기능 전에 합의합니다.
+
+### OAuth 회원 매핑
+
+- `global.security.oauth`는 Spring Security의 기본 Google OIDC·Kakao OAuth2 사용자 조회/검증을 위임하고, 검증된 제공자 식별자를 `user.service.SocialLoginMemberService`로 전달합니다. 제공자 HTTP 통신 동안 회원 DB 트랜잭션을 열어두지 않습니다.
+- 식별 기준은 Google ID Token의 `sub`, Kakao의 정수 `id`와 제공자 구분입니다. 이메일·표시 이름으로 계정을 연결하지 않습니다.
+- 회원 조회/생성은 `READ_COMMITTED` 트랜잭션에서 제공자 식별자별 `pg_advisory_xact_lock`을 획득한 뒤 수행합니다. 잠금은 같은 DB를 사용하는 여러 서버에서도 적용되고 커밋/롤백 때 해제됩니다. 해시 충돌은 처리 순서에만 영향을 주며 실제 조회·유일성 검사는 전체 `(provider, provider_user_id)`로 수행합니다. 관련 생성 경로는 이 서비스를 사용해야 합니다.
+- 최초 가입에서만 제공자 이름을 저장하고 이름이 없으면 null을 허용합니다. 재로그인은 기존 이름과 `updated_at`을 유지합니다(2026-10-09 사용자 합의). 별도 이름 수정 정책은 미정입니다.
+- 회원과 소셜 연결 생성은 전체 성공 또는 전체 롤백입니다. DB 실패는 기존 로그인 실패 응답으로 변환하며 SQL 파라미터·제공자 원문을 응답에 포함하지 않습니다.
+- 이번 단계는 회원 저장 연결까지이며 세션 principal의 서비스 사용자 ID와 내 정보 API는 다음 단계입니다. 실제 제공자 로그인 검증과 가짜 제공자 기반 자동 검증을 구분합니다.
+
+구현 참고: [Spring Security 사용자 서비스 확장](https://docs.spring.io/spring-security/reference/servlet/oauth2/login/advanced.html), [PostgreSQL 트랜잭션 advisory lock](https://www.postgresql.org/docs/17/explicit-locking.html#ADVISORY-LOCKS), [Google 식별자](https://developers.google.com/identity/openid-connect/openid-connect), [Kakao 사용자 정보](https://developers.kakao.com/docs/ko/kakaologin/rest-api#req-user-info).
 
 ## 운영 기준
 
