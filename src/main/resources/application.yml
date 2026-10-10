@@ -49,6 +49,8 @@ springdoc:
     enabled: false
 
 app:
+  commands:
+    digest-key: ${COMMAND_DIGEST_KEY:}
   security:
     allowed-origins: []
     login-success-url: /

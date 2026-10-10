@@ -9,6 +9,8 @@ server:
   forward-headers-strategy: framework
 
 app:
+  commands:
+    digest-key: ${COMMAND_DIGEST_KEY}
   security:
     login-success-url: ${FRONTEND_URL}
   ai:

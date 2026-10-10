@@ -34,6 +34,7 @@
 | --- | --- |
 | `global/code/CommonErrorCode` | 입력·인증 필요·권한·대상 없음·버전·반복 요청·삭제 영향·서버·AI 서비스 오류 |
 | `auth/code/AuthErrorCode` | `OAUTH_LOGIN_FAILED` |
+| `carespace/code/CareSpaceErrorCode` | `SPACE_LABEL_DUPLICATED` |
 | `careitem/code/CareItemErrorCode` | `ITEM_LOCKED` |
 | `proposal/code/ProposalErrorCode` | `PROPOSAL_BATCH_CONFLICT` |
 
@@ -58,7 +59,7 @@ throw new ApiException(ProposalErrorCode.PROPOSAL_BATCH_CONFLICT);
 | 401 | `UNAUTHENTICATED`, `OAUTH_LOGIN_FAILED` |
 | 403 | `FORBIDDEN` |
 | 404 | `RESOURCE_NOT_FOUND` |
-| 409 | `VERSION_CONFLICT`, `ITEM_LOCKED`, `IDEMPOTENCY_KEY_REUSED`, `PROPOSAL_BATCH_CONFLICT`, `DELETION_IMPACT_CHANGED` |
+| 409 | `VERSION_CONFLICT`, `ITEM_LOCKED`, `IDEMPOTENCY_KEY_REUSED`, `REQUEST_IN_PROGRESS`, `SPACE_LABEL_DUPLICATED`, `PROPOSAL_BATCH_CONFLICT`, `DELETION_IMPACT_CHANGED` |
 | 500 | `INTERNAL_ERROR` |
 | 502 | `AI_SERVICE_UNAVAILABLE` |
 
@@ -97,6 +98,46 @@ public ResponseEntity<ApiResponse<MyProfileResponse>> me(
 - 미인증·만료·이전 형식의 세션, 삭제된 회원, 끊어진 소셜 연결, 사용자 ID 불일치는 `401 UNAUTHENTICATED`입니다. 검증에 실패하면 Controller의 업무 메서드를 실행하지 않습니다. DB 장애는 인증 실패로 바꾸지 않고 `500 INTERNAL_ERROR`로 처리합니다.
 - Security 필터 검사는 먼저 적용됩니다. 변경 요청의 CSRF 검증이 실패하면 회원 검사에 앞서 `403 FORBIDDEN`이 반환될 수 있습니다. 이 공통 인자가 경로 접근 설정이나 CSRF를 대신하지 않습니다.
 - 공개 API에는 이 인자를 일괄 추가하지 않습니다. 회원 인증을 통과했어도 공간 참여·소유권·대상별 권한은 해당 Service가 업무 처리 시점에 별도로 검사해야 합니다. 이 인자에 공간 역할을 고정해 저장하지 않습니다.
+
+## 돌봄 공간 API
+
+2026-10-10 합의에 따른 구현 계약입니다. 세 API 모두 로그인 세션을 사용하며 POST에는 CSRF가 추가로 필요합니다. 요청자 ID는 입력받지 않고 `@CurrentUser`를 사용합니다.
+
+| API | 요청 | 성공 data |
+| --- | --- | --- |
+| `POST /api/spaces` | JSON `subjectLabel`, `clientRequestId` 모두 필수 | 201 `spaceId`, `membershipId` |
+| `GET /api/spaces` | 없음, 페이지네이션 없음 | 200 `items` 배열 |
+| `GET /api/spaces/{spaceId}` | UUID path parameter | 200 공간 상세 |
+
+- 생성은 최초 참여자를 소유자로 연결합니다. 호칭은 앞뒤 Unicode 공백 제거 후 1~30 Unicode code point, 한 줄이며 내부 공백을 유지합니다. FE는 UTF-16 `string.length` 대신 정규화한 값의 `Array.from(value).length`와 일치시키고, 줄바꿈은 trim 전에 거부합니다. 대소문자/Unicode 정규화로 호칭을 임의로 합치지 않습니다. 저장할 수 없는 NUL·깨진 surrogate는 400입니다.
+- 현재 같은 소유자의 같은 호칭은 금지합니다. 다른 사람이 소유한 같은 호칭의 공간에 참여하는 것은 가능하며 소유권 이전 후에는 이전 소유자가 같은 호칭으로 새 공간을 만들 수 있습니다. 사용자 전체에 대한 호칭 유일성이 아닙니다.
+- 목록 항목은 `spaceId`, `subjectLabel`, `membershipId`, `role`(OWNER/MEMBER), `memberCount`입니다. 상세는 여기에 `version`(문자열), `createdAt`, `updatedAt`을 포함합니다. 호칭은 null이 아니며 참여 ID와 역할은 요청자 기준입니다. 개별 응답용 성공 코드를 추가하지 않습니다.
+- 목록은 현재 참여하는 ACTIVE 공간만 포함하고 참여 시각 → 공간 ID 오름차순입니다. 결과가 없으면 `items: []`입니다. 인원수는 소유자·본인을 포함한 현재 참여자 수이며 종료/탈퇴 이력이나 참여하지 않은 돌봄 대상은 세지 않습니다.
+- 초기 버전은 `"1"`, 생성·수정 시각은 서버가 기록한 동일한 UTC 시각입니다. 성공 응답은 `Cache-Control: no-store`, 생성은 `Location: /api/spaces/{spaceId}`도 제공합니다.
+
+```json
+{
+  "subjectLabel": "엄마",
+  "clientRequestId": "92a91504-7765-4266-a006-ad7a37b4c192"
+}
+```
+
+| HTTP | Code | 조건 / FE 처리 |
+| --- | --- | --- |
+| 400 | `INVALID_REQUEST` | 필수값, UUID 형식, 호칭 길이·한 줄 검증 실패. errors의 field/reason으로 안내 |
+| 401 | `UNAUTHENTICATED` | 세션 또는 현재 회원 연결 무효 |
+| 403 | `FORBIDDEN` | 현재 참여자가 아니거나 CSRF 실패. 성공 재요청에서 원래 참여가 종료된 경우 포함 |
+| 404 | `RESOURCE_NOT_FOUND` | 공간 없음/삭제 진행 중. 성공 요청의 재응답에서 대상이 없어진 경우 포함 |
+| 409 | `SPACE_LABEL_DUPLICATED` | 현재 소유한 공간과 호칭 중복. 호칭 수정 후 새 생성 시도로 요청 |
+| 409 | `IDEMPOTENCY_KEY_REUSED` | 이미 성공한 요청 ID를 다른 정규화된 내용·업무·범위에 사용 |
+| 409 | `REQUEST_IN_PROGRESS` | 동일 요청 처리 중. 원래 요청이 실패했다는 뜻이 아님. 같은 ID/내용으로 재시도 |
+| 500 | `INTERNAL_ERROR` | 예상하지 못한 서버 처리 실패 |
+
+- 같은 사용자·같은 요청 ID·같은 내용의 성공 재전송은 기존 ID로 `201 SUCCESS`를 반환합니다. timestamp는 새 응답 시각이므로 응답 전체 바이트까지 동일한 것은 아닙니다. 새 요청 ID + 같은 호칭은 반복 요청이 아닌 호칭 중복입니다.
+- 타임아웃·응답 유실·결과 불명일 때 자동으로 새 ID를 발급하지 않습니다. 한 생성 시도에 같은 UUID를 유지하고, 사용자가 내용을 바꿔 새 작업을 시작하면 새 UUID를 사용합니다.
+- 생성·참여·성공 영수증은 전체 커밋 또는 전체 롤백입니다. 현재 동기 생성에서는 성공 결과만 보관하고 실패/롤백은 공간과 영수증을 남기지 않습니다. 실패한 ID라도 FE는 다른 내용의 새 시도에 재사용하지 않습니다.
+- 이번 동기 생성은 202나 `/api/commands` 폴링을 사용하지 않습니다. 영수증 자동 만료 정책은 추가하지 않습니다. 저장 구조·잠금·비밀키와 다른 도메인의 Service 사용법은 [공간 설계](architecture.md#돌봄-공간-생성조회)를 따릅니다.
+- Swagger 409에는 세 코드의 예시를 모두 제공합니다. 생성 재요청의 권한/대상 오류도 실제 발생 조건으로 문서화합니다. GET 목록에는 400·403·404를 임의로 붙이지 않습니다.
 
 ## 문서화와 적용 범위
 
