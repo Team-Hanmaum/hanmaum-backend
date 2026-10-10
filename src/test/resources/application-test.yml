@@ -4,6 +4,8 @@ spring:
       maximum-pool-size: 2
 
 app:
+  commands:
+    digest-key: test-only-command-digest-key-not-for-production
   security:
     public-docs: true
     allowed-origins:

@@ -19,6 +19,8 @@ springdoc:
     enabled: true
 
 app:
+  commands:
+    digest-key: ${COMMAND_DIGEST_KEY:local-development-only-command-digest-key}
   security:
     allowed-origins:
       - http://localhost:5173

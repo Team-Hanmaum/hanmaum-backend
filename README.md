@@ -144,7 +144,9 @@ CI에는 배포나 머지 자동 취소를 포함하지 않습니다. 머지 후
 | `prod` | 환경변수 필수, HTTPS 쿠키, Swagger 비활성화 |
 | `oauth` | 구글·카카오 OAuth 제공자 설정 추가 |
 
-운영 필수 환경변수는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `FRONTEND_URL`, `AI_BASE_URL`, `AI_INTERNAL_API_KEY`입니다. 예를 들어 DB URL은 `jdbc:postgresql://postgres:5432/hanmaum` 형태입니다.
+운영 필수 환경변수는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `FRONTEND_URL`, `AI_BASE_URL`, `AI_INTERNAL_API_KEY`, `COMMAND_DIGEST_KEY`입니다. 예를 들어 DB URL은 `jdbc:postgresql://postgres:5432/hanmaum` 형태입니다.
+
+`COMMAND_DIGEST_KEY`는 반복 요청 본문 비교용 HMAC 비밀키입니다. 운영에서는 충분한 난수로 생성한 32바이트 이상의 값을 주입하고 서버 재시작·여러 인스턴스에서 유지합니다. 키를 단순 교체하면 기존 요청 영수증과 비교할 수 없으므로 이관 계획이 필요합니다. local/test에는 개발 전용 기본값이 있어 기존 `.env`로도 실행할 수 있으며, 이를 운영에서 사용하지 않습니다.
 
 Flyway가 세션 테이블을 포함한 스키마 변경을 담당하고, Hibernate는 `validate`로 검증합니다. 적용된 마이그레이션은 수정하지 않고 다음 버전의 SQL을 추가합니다. 운영 세션에는 `HttpOnly`, `Secure`, `SameSite=Lax`를 적용합니다.
 
@@ -209,7 +211,15 @@ const headers = {
 - CSRF 발급 성공은 기존 `{headerName, token}`, OAuth 성공은 리다이렉트, 로그아웃 성공은 204를 유지합니다. 내부 AI 계약·Actuator·OpenAPI는 공통 응답으로 감싸지 않습니다.
 - Controller의 반환 타입, 예외 처리, UUID·버전·시각 표기는 [공통 규격](docs/api-conventions.md)을 따릅니다.
 
-Swagger에는 실제 구현된 CSRF·로그아웃·내 정보 조회 경로와 공통 스키마를 제공합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다. 미구현 도메인 API는 노션 초안에서 관리합니다.
+Swagger에는 실제 구현된 CSRF·로그아웃·내 정보·돌봄 공간 생성/조회 경로와 공통 스키마를 제공합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다. 미구현 도메인 API는 노션 초안에서 관리합니다.
+
+## 돌봄 공간 생성·조회
+
+로그인 후 `POST /api/spaces`, `GET /api/spaces`, `GET /api/spaces/{spaceId}`를 사용할 수 있습니다. 생성 본문은 `subjectLabel`과 `clientRequestId`(UUID)이며 생성 요청에는 CSRF가 필요합니다. 호칭은 앞뒤 공백 제거 후 한 줄·최대 30자로 제한하고, 현재 소유한 공간끼리 같은 호칭을 금지합니다.
+
+같은 생성 시도를 재전송할 때는 같은 요청 ID와 내용을 유지합니다. 이미 성공했다면 기존 공간/참여 ID를 201로 반환하며, 새 ID로 같은 호칭을 생성하면 `SPACE_LABEL_DUPLICATED`입니다. 처리 중은 `REQUEST_IN_PROGRESS`, 기존 ID의 다른 내용 재사용은 `IDEMPOTENCY_KEY_REUSED`입니다. 입력·응답·오류는 [공간 API 계약](docs/api-conventions.md#돌봄-공간-api)을 참고합니다.
+
+새 코드를 실행하면 Flyway V3가 공간·참여·성공 요청 기록 테이블을 추가합니다. 소유자가 같은 공간의 현재 참여자인지 DB 제약으로 검사하고 생성 전체를 하나의 트랜잭션에서 처리합니다. 다른 도메인의 쓰기 작업은 [공간 접근 Service 계약](docs/architecture.md#다른-도메인의-권한-확인)을 따릅니다. 초대·소유권 이전·공간 수정/삭제 API는 후속 작업입니다.
 
 ## AI 연동
 
@@ -229,6 +239,6 @@ Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 �
 
 ## 구현 범위
 
-- 준비: 빌드·포맷·세션/회원 DB 마이그레이션·회원 엔티티/Repository·OAuth 회원 생성/조회·회원 세션·현재 회원 공통 처리·내 정보 조회·보안 기반·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
-- 후속: 계정 연결·회원 탈퇴 및 공간 기능, 초대, 기록, 제안 저장·확정, 항목 변경·이력, 현황판, 카카오톡 공유
+- 준비: 빌드·포맷·세션/회원/공간 DB 마이그레이션·회원 엔티티/Repository·OAuth 회원 생성/조회·회원 세션·현재 회원 공통 처리·내 정보 조회·공간 생성/조회·참여/소유자 권한 기반·반복 생성 방지·보안 기반·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
+- 후속: 계정 연결·회원 탈퇴, 공간 수정/삭제·초대·참여 종료·소유권 이전, 기록, 제안 저장·확정, 항목 변경·이력, 현황판, 카카오톡 공유
 - 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. GitHub Actions CI 설정을 포함하며 운영 배포는 별도 작업입니다.
