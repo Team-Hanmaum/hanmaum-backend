@@ -429,6 +429,48 @@ class OAuthMemberLoginIntegrationTests {
   }
 
   @Test
+  void documentsOAuthStartAsAPublicBrowserRedirectForConfiguredProviders() throws Exception {
+    var document =
+        mapper.readTree(
+            mvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    var operation = document.at("/paths/~1oauth2~1authorization~1{provider}/get");
+    assertThat(operation.at("/tags/0").asText()).isEqualTo("Auth");
+    assertThat(operation.at("/security").isArray()).isTrue();
+    assertThat(operation.at("/security").size()).isZero();
+    assertThat(operation.has("requestBody")).isFalse();
+    assertThat(operation.at("/parameters").size()).isEqualTo(1);
+    assertThat(operation.at("/parameters/0/name").asText()).isEqualTo("provider");
+    assertThat(operation.at("/parameters/0/in").asText()).isEqualTo("path");
+    assertThat(operation.at("/parameters/0/required").asBoolean()).isTrue();
+    assertThat(operation.at("/parameters/0/schema/enum").toString())
+        .isEqualTo("[\"google\",\"kakao\"]");
+    assertThat(operation.at("/description").asText())
+        .contains(
+            "[Google 로그인 시작](/oauth2/authorization/google)",
+            "[Kakao 로그인 시작](/oauth2/authorization/kakao)",
+            "Try it out",
+            "/api/users/me");
+    assertThat(operation.at("/responses/302/headers/Location/schema/format").asText())
+        .isEqualTo("uri");
+    assertThat(operation.at("/responses/302").has("content")).isFalse();
+    assertThat(operation.at("/responses").has("200")).isFalse();
+    for (var providerId : List.of("google", "kakao")) {
+      var response =
+          mvc.perform(get("/oauth2/authorization/" + providerId))
+              .andExpect(status().isFound())
+              .andReturn()
+              .getResponse();
+      assertThat(response.getHeader("Location")).isNotBlank();
+      assertThat(response.getContentAsString()).isEmpty();
+    }
+    verifyNoInteractions(identities);
+  }
+
+  @Test
   void documentsMeWithSessionSecurityAndItsActualResponseContract() throws Exception {
     var response =
         mvc.perform(get("/v3/api-docs"))

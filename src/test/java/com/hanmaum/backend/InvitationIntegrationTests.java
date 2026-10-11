@@ -594,6 +594,8 @@ class InvitationIntegrationTests {
                 .andReturn()
                 .getResponse()
                 .getContentAsString());
+    // This context has no OAuth client registration, so it must not advertise a login route.
+    assertThat(doc.at("/paths/~1oauth2~1authorization~1{provider}").isMissingNode()).isTrue();
     for (var path :
         List.of(
             "~1api~1spaces~1{spaceId}~1invitations",

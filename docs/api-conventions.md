@@ -79,6 +79,13 @@ throw new ApiException(ProposalErrorCode.PROPOSAL_BATCH_CONFLICT);
 - `POST /api/auth/logout` 성공은 204입니다. 기존 필터의 세션·쿠키 무효화를 유지합니다.
 - BE↔AI 내부 응답, Actuator 상태 확인, OpenAPI 문서·Swagger 리소스는 업무 응답으로 감싸지 않습니다. CORS preflight는 별도의 브라우저 접근 검사입니다.
 
+### OAuth 로그인 시작 문서
+
+- `GET /oauth2/authorization/{provider}`는 Spring Security가 처리하는 공개 경로이며 세션 인증·CSRF 토큰·요청 본문이 필요하지 않습니다. Swagger에서는 `Auth`로 분류하고 현재 등록된 `google`·`kakao`만 provider 선택값으로 제공합니다. 제공자가 설정되지 않은 환경에서는 이 경로를 표시하지 않습니다.
+- 정상 응답은 `302`와 제공자 인증 URL인 `Location` 헤더입니다. 공통 성공 JSON은 반환하지 않습니다. 설명의 로그인 링크는 현재 BE 호스트를 기준으로 하며 localhost 주소를 고정하지 않습니다.
+- 실제 로그인은 링크를 통한 브라우저 이동으로 진행합니다. Swagger의 Try it out은 브라우저 페이지 이동을 대신하지 않습니다. 제공자가 호출하는 `/login/oauth2/code/{provider}` 콜백과 기존 성공 FE 리다이렉트는 그대로 유지합니다. 콜백 실패의 `401 OAUTH_LOGIN_FAILED`를 로그인 시작의 응답으로 혼동하지 않습니다.
+- 로그인 후 같은 브라우저의 Swagger에서 `/api/users/me`를 확인할 수 있습니다. 변경 API를 호출하기 전 CSRF를 다시 발급하고 Authorize에 설정합니다. 이 문서 등록은 OAuth 처리 Controller나 새로운 인증 방식을 추가하지 않습니다.
+
 ### Controller에서 현재 회원 사용
 
 로그인한 회원이 필요한 업무 API는 `global.security`의 `@CurrentUser`와 `AuthenticatedUser`를 사용합니다. 기존 `GET /api/users/me`의 사용 예시는 다음과 같습니다. 보안 요구·성공 및 오류 응답 주석은 실제 `UserController`를 참고합니다.
