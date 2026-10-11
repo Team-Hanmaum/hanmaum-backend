@@ -46,7 +46,7 @@ backend/
     └── exception/
 ```
 
-회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 회원 도메인은 `app_user`·`social_account` 저장 구조, OAuth 로그인 시 회원 생성·조회, 세션의 서비스 사용자 ID 연결과 내 정보 조회를 구현했습니다. 나머지 도메인은 `package-info.java`에 책임을 기록한 상태입니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
+회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 회원 도메인은 OAuth 회원 매핑·내 정보 조회를, 공간 도메인은 공간 생성·조회·가족 초대·참여·구성원 목록을 구현했습니다. 나머지 도메인은 `package-info.java`에 책임을 기록한 상태입니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
 
 `auth`와 위 8개 업무 도메인은 아래 공통 하위 구조까지 준비했습니다. 빈 폴더에는 `.gitkeep`을 두어 같은 구조를 Git으로 공유합니다. 실제 파일이 있는 폴더에는 `.gitkeep`을 추가하지 않습니다.
 
@@ -64,7 +64,7 @@ backend/
 
 공간 API는 `carespace/controller`, 공간 업무 로직은 `carespace/service`에 둡니다. 초대는 `carespace`에 포함하고, 공개 분석 업무인 `analysis`는 내부 통신을 맡은 `ai`를 사용합니다.
 
-오류 코드의 공통 인터페이스는 `global/code/ErrorCode.java`, 공통 오류 enum은 `CommonErrorCode.java`입니다. 도메인 오류 enum도 같은 인터페이스를 구현하며 `ApiException`과 `ApiResponse`를 함께 사용합니다. 현재 `AuthErrorCode`의 OAuth 실패, `CareItemErrorCode`의 항목 잠금, `ProposalErrorCode`의 제안 묶음 충돌을 분리했습니다. 나머지 도메인의 `code`는 기능 구현 시 확정된 오류를 추가할 수 있도록 비워뒀습니다.
+오류 코드의 공통 인터페이스는 `global/code/ErrorCode.java`, 공통 오류 enum은 `CommonErrorCode.java`입니다. 도메인 오류 enum도 같은 인터페이스를 구현하며 `ApiException`과 `ApiResponse`를 함께 사용합니다. 현재 `AuthErrorCode`의 OAuth 실패, `CareSpaceErrorCode`의 호칭 중복·초대 사용 불가·만료, `CareItemErrorCode`의 항목 잠금, `ProposalErrorCode`의 제안 묶음 충돌을 분리했습니다. 나머지 도메인의 `code`는 기능 구현 시 확정된 오류를 추가할 수 있도록 비워뒀습니다.
 
 성공은 `SuccessCode`의 `SUCCESS`·`ACCEPTED`를 재사용합니다. HTTP 상태는 Controller에서 지정하고 204는 본문 없이 반환합니다. 오류 코드 추가와 Swagger 문서화 방법은 [공통 규격](docs/api-conventions.md)을 따릅니다.
 
@@ -144,9 +144,13 @@ CI에는 배포나 머지 자동 취소를 포함하지 않습니다. 머지 후
 | `prod` | 환경변수 필수, HTTPS 쿠키, Swagger 비활성화 |
 | `oauth` | 구글·카카오 OAuth 제공자 설정 추가 |
 
-운영 필수 환경변수는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `FRONTEND_URL`, `AI_BASE_URL`, `AI_INTERNAL_API_KEY`, `COMMAND_DIGEST_KEY`입니다. 예를 들어 DB URL은 `jdbc:postgresql://postgres:5432/hanmaum` 형태입니다.
+운영 필수 환경변수는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `FRONTEND_URL`, `AI_BASE_URL`, `AI_INTERNAL_API_KEY`, `COMMAND_DIGEST_KEY`, `INVITATION_ENCRYPTION_KEY`, `INVITATION_URL_PREFIX`입니다. 예를 들어 DB URL은 `jdbc:postgresql://postgres:5432/hanmaum` 형태입니다.
 
 `COMMAND_DIGEST_KEY`는 반복 요청 본문 비교용 HMAC 비밀키입니다. 운영에서는 충분한 난수로 생성한 32바이트 이상의 값을 주입하고 서버 재시작·여러 인스턴스에서 유지합니다. 키를 단순 교체하면 기존 요청 영수증과 비교할 수 없으므로 이관 계획이 필요합니다. local/test에는 개발 전용 기본값이 있어 기존 `.env`로도 실행할 수 있으며, 이를 운영에서 사용하지 않습니다.
+
+`INVITATION_ENCRYPTION_KEY`는 같은 발급 요청에 원래 초대 URL을 다시 반환하기 위한 암호화 키입니다. 운영에서는 암호학적 난수 32바이트를 Base64로 인코딩한 값을 비밀 관리 환경에서 주입합니다. `COMMAND_DIGEST_KEY`와 별개이며 모든 인스턴스·재시작에서 유지합니다. 단순 교체하면 이전 발급 URL을 복원할 수 없으므로 키 이관이 필요합니다. local/test는 개발 전용 기본값을 사용하여 기존 `.env`로 실행할 수 있습니다.
+
+`INVITATION_URL_PREFIX`는 토큰 앞에 붙일 FE 주소이며 `/`로 끝나고 query·fragment·인증 정보를 포함하지 않는 절대 HTTP(S) URL입니다. local 기본값은 `http://localhost:5173/invitations/`이고 운영은 실제 HTTPS 주소를 설정합니다. FE 경로와 로그인 후 초대로 돌아오는 흐름은 아직 합의 전입니다. 이 기본값은 로컬 검증용이며 해당 FE 화면 구현을 뜻하지 않습니다. 기존 로그인 성공 URL은 유지합니다.
 
 Flyway가 세션 테이블을 포함한 스키마 변경을 담당하고, Hibernate는 `validate`로 검증합니다. 적용된 마이그레이션은 수정하지 않고 다음 버전의 SQL을 추가합니다. 운영 세션에는 `HttpOnly`, `Secure`, `SameSite=Lax`를 적용합니다.
 

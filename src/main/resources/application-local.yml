@@ -19,6 +19,10 @@ springdoc:
     enabled: true
 
 app:
+  invitations:
+    # Public local-only key. Never use this value outside local development.
+    encryption-key: ${INVITATION_ENCRYPTION_KEY:bG9jYWwtaW52aXRhdGlvbi1rZXktMzItYnl0ZXMhISE=}
+    url-prefix: ${INVITATION_URL_PREFIX:http://localhost:5173/invitations/}
   commands:
     digest-key: ${COMMAND_DIGEST_KEY:local-development-only-command-digest-key}
   security:

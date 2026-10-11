@@ -49,6 +49,9 @@ springdoc:
     enabled: false
 
 app:
+  invitations:
+    encryption-key: ${INVITATION_ENCRYPTION_KEY:}
+    url-prefix: ${INVITATION_URL_PREFIX:}
   commands:
     digest-key: ${COMMAND_DIGEST_KEY:}
   security:

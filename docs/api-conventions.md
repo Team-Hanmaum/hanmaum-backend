@@ -34,7 +34,7 @@
 | --- | --- |
 | `global/code/CommonErrorCode` | 입력·인증 필요·권한·대상 없음·버전·반복 요청·삭제 영향·서버·AI 서비스 오류 |
 | `auth/code/AuthErrorCode` | `OAUTH_LOGIN_FAILED` |
-| `carespace/code/CareSpaceErrorCode` | `SPACE_LABEL_DUPLICATED` |
+| `carespace/code/CareSpaceErrorCode` | `SPACE_LABEL_DUPLICATED`, `INVITATION_UNAVAILABLE`, `INVITATION_EXPIRED` |
 | `careitem/code/CareItemErrorCode` | `ITEM_LOCKED` |
 | `proposal/code/ProposalErrorCode` | `PROPOSAL_BATCH_CONFLICT` |
 
@@ -58,8 +58,9 @@ throw new ApiException(ProposalErrorCode.PROPOSAL_BATCH_CONFLICT);
 | 400 | `INVALID_REQUEST` |
 | 401 | `UNAUTHENTICATED`, `OAUTH_LOGIN_FAILED` |
 | 403 | `FORBIDDEN` |
-| 404 | `RESOURCE_NOT_FOUND` |
+| 404 | `RESOURCE_NOT_FOUND`, `INVITATION_UNAVAILABLE` |
 | 409 | `VERSION_CONFLICT`, `ITEM_LOCKED`, `IDEMPOTENCY_KEY_REUSED`, `REQUEST_IN_PROGRESS`, `SPACE_LABEL_DUPLICATED`, `PROPOSAL_BATCH_CONFLICT`, `DELETION_IMPACT_CHANGED` |
+| 410 | `INVITATION_EXPIRED` |
 | 500 | `INTERNAL_ERROR` |
 | 502 | `AI_SERVICE_UNAVAILABLE` |
 
@@ -138,6 +139,42 @@ public ResponseEntity<ApiResponse<MyProfileResponse>> me(
 - 생성·참여·성공 영수증은 전체 커밋 또는 전체 롤백입니다. 현재 동기 생성에서는 성공 결과만 보관하고 실패/롤백은 공간과 영수증을 남기지 않습니다. 실패한 ID라도 FE는 다른 내용의 새 시도에 재사용하지 않습니다.
 - 이번 동기 생성은 202나 `/api/commands` 폴링을 사용하지 않습니다. 영수증 자동 만료 정책은 추가하지 않습니다. 저장 구조·잠금·비밀키와 다른 도메인의 Service 사용법은 [공간 설계](architecture.md#돌봄-공간-생성조회)를 따릅니다.
 - Swagger 409에는 세 코드의 예시를 모두 제공합니다. 생성 재요청의 권한/대상 오류도 실제 발생 조건으로 문서화합니다. GET 목록에는 400·403·404를 임의로 붙이지 않습니다.
+
+## 가족 초대·참여·구성원 API
+
+2026-10-11 합의에 따른 구현 계약입니다. 네 API 모두 로그인 세션이 필요하며 POST는 CSRF와 필수 UUID `clientRequestId`를 JSON 본문으로 받습니다. 경로의 `spaceId`는 UUID, `invitationToken`은 발급 URL의 마지막 토큰입니다. 공통 응답 형식과 `Cache-Control: no-store`를 사용합니다.
+
+| API | 성공 HTTP | 성공 data |
+| --- | --- | --- |
+| `POST /api/spaces/{spaceId}/invitations` | 201 | `invitationId`, `spaceId`, `invitationUrl`, `issuedAt`, `expiresAt` |
+| `GET /api/invitations/{invitationToken}` | 200 | `invitationId`, `spaceId`, `expiresAt`, `isMember` |
+| `POST /api/invitations/{invitationToken}/join` | 신규 201 / 기존 참여 200 | `spaceId`, `membershipId`, `role`, `joinedAt` |
+| `GET /api/spaces/{spaceId}/members` | 200 | `items: [{membershipId, displayName, role, isMe}]` |
+
+- 소유자와 현재 구성원 모두 초대 링크를 발급할 수 있습니다. 링크는 발급 시각부터 24시간 동안 여러 사람이 사용할 수 있고 별도 인원·사용 횟수 제한은 추가하지 않습니다. 현재 시각이 `expiresAt` 이상이면 만료입니다.
+- 같은 발급 요청은 원래 링크·시각을 201로 반환하며 만료를 연장하지 않습니다. 새 요청 ID로 발급하면 새 링크를 만들고 기존 링크도 원래 만료까지 유지합니다. 설정 주소를 바꾸어도 과거 발급의 재응답 URL은 그대로입니다.
+- 링크 확인은 가입 전 이름·호칭·돌봄 내용을 노출하지 않으며 참여를 생성하지 않습니다. 없는 토큰, 삭제 중인 공간, 발급 당시 참여가 종료된 링크는 사용할 수 없습니다. 발급자가 재참여해도 예전 링크는 복구되지 않습니다.
+- 첫 참여 시 현재 유효한 링크를 검증하고 새 참여·공간 버전 증가·수정 시각·성공 기록을 하나의 트랜잭션으로 저장합니다. 이미 참여 중이면 같은 참여 ID를 200으로 반환하며 소유자의 OWNER 역할도 유지합니다. **새 요청은 기존 참여자여도 링크 유효성을 검사합니다.**
+- 성공한 참여 요청의 같은 ID 재전송은 최초 201/200을 유지합니다. 이후 링크가 만료되거나 발급자가 나갔어도 동일한 현재 참여가 유지되면 응답할 수 있습니다. 역할은 현재 기준입니다. 요청자의 원래 참여가 끝났다면 403이며 재참여해도 과거 요청이 새 참여를 대신하지 않습니다.
+- 나가기·내보내기 이력이 있는 사용자는 가장 최근 `endedAt`보다 **엄격히 나중에 발급된 링크**와 새 요청 ID로 재참여합니다. 새 참여 ID를 만들고 이전 이력을 복원하지 않습니다. 나가기·내보내기 자체의 API는 후속 구현입니다.
+- 구성원 목록은 현재 참여자 전체이며 소유자 우선 → 참여 시각 → 참여 UUID 오름차순입니다. `displayName`은 null 가능, 역할은 OWNER/MEMBER, `isMe`는 본인 여부입니다. 페이지네이션과 아직 구현하지 않은 담당 할 일 개수는 포함하지 않습니다.
+- 초대 발급·확인·목록·기존 참여 확인·성공 재전송은 공간 버전과 수정 시각을 바꾸지 않습니다. 새 참여만 한 번 증가시킵니다. 클라이언트가 `expectedVersion`을 보내는 API는 아닙니다.
+
+| HTTP | Code | 발생 조건 |
+| --- | --- | --- |
+| 400 | `INVALID_REQUEST` | 요청 ID 누락/UUID 형식, spaceId 형식, 잘못된 JSON |
+| 401 | `UNAUTHENTICATED` | 세션 또는 현재 회원 연결 무효 |
+| 403 | `FORBIDDEN` | CSRF 실패, 발급·구성원 조회의 현재 참여 없음, 성공 재요청의 원래 참여 종료 |
+| 404 | `RESOURCE_NOT_FOUND` | 발급·구성원 조회 대상 공간 없음/DELETING |
+| 404 | `INVITATION_UNAVAILABLE` | 토큰 형식/존재, 공간 상태, 발급 참여 유효성 또는 재참여 링크 조건 실패 |
+| 409 | `IDEMPOTENCY_KEY_REUSED` | 같은 사용자·요청 ID를 다른 업무/공간/초대에 재사용 |
+| 409 | `REQUEST_IN_PROGRESS` | 동일 사용자·요청 ID를 처리하는 트랜잭션 진행 중 |
+| 410 | `INVITATION_EXPIRED` | 유효성을 확인한 링크의 만료 시각 도달 |
+| 500 | `INTERNAL_ERROR` | 예상하지 못한 서버 처리 실패 |
+
+오류는 각 API에 실제 해당하는 경우만 적용합니다. 링크 자체가 무효이면 만료보다 404를 우선합니다. 자동 재시도는 원래 ID·내용을 유지하고 409 처리 중을 최종 실패로 취급하지 않습니다. 성공 기록에 TTL은 추가하지 않습니다.
+
+FE는 초대 경로·비로그인 사용자의 로그인 후 복귀를 합의해야 합니다. 현재 URL은 `INVITATION_URL_PREFIX`로 분리했고 기존 OAuth 리다이렉트는 변경하지 않았습니다. FE는 발급 URL을 그대로 복사하고 토큰을 추출해 확인/참여 API를 호출하며, 세션·CSRF 및 404/410 안내를 연결합니다. URL 토큰을 분석 이벤트·로그에 남기지 않습니다. AI 의존성은 없습니다.
 
 ## 문서화와 적용 범위
 
