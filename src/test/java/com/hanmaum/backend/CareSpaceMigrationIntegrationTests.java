@@ -51,7 +51,12 @@ class CareSpaceMigrationIntegrationTests {
         UUID.randomUUID().toString(),
         user.toString());
     var upgraded =
-        Flyway.configure().dataSource(dataSource).schemas(schema).defaultSchema(schema).load();
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .target("3")
+            .load();
     upgraded.migrate();
     upgraded.validate();
     assertThat(upgraded.info().current().getVersion().getVersion()).isEqualTo("3");

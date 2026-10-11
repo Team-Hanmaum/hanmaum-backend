@@ -46,7 +46,7 @@ backend/
     └── exception/
 ```
 
-회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 회원 도메인은 `app_user`·`social_account` 저장 구조, OAuth 로그인 시 회원 생성·조회, 세션의 서비스 사용자 ID 연결과 내 정보 조회를 구현했습니다. 나머지 도메인은 `package-info.java`에 책임을 기록한 상태입니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
+회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 회원 도메인은 OAuth 회원 매핑·내 정보 조회를, 공간 도메인은 공간 생성·조회·가족 초대·참여·구성원 목록을 구현했습니다. 나머지 도메인은 `package-info.java`에 책임을 기록한 상태입니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
 
 `auth`와 위 8개 업무 도메인은 아래 공통 하위 구조까지 준비했습니다. 빈 폴더에는 `.gitkeep`을 두어 같은 구조를 Git으로 공유합니다. 실제 파일이 있는 폴더에는 `.gitkeep`을 추가하지 않습니다.
 
@@ -64,7 +64,7 @@ backend/
 
 공간 API는 `carespace/controller`, 공간 업무 로직은 `carespace/service`에 둡니다. 초대는 `carespace`에 포함하고, 공개 분석 업무인 `analysis`는 내부 통신을 맡은 `ai`를 사용합니다.
 
-오류 코드의 공통 인터페이스는 `global/code/ErrorCode.java`, 공통 오류 enum은 `CommonErrorCode.java`입니다. 도메인 오류 enum도 같은 인터페이스를 구현하며 `ApiException`과 `ApiResponse`를 함께 사용합니다. 현재 `AuthErrorCode`의 OAuth 실패, `CareItemErrorCode`의 항목 잠금, `ProposalErrorCode`의 제안 묶음 충돌을 분리했습니다. 나머지 도메인의 `code`는 기능 구현 시 확정된 오류를 추가할 수 있도록 비워뒀습니다.
+오류 코드의 공통 인터페이스는 `global/code/ErrorCode.java`, 공통 오류 enum은 `CommonErrorCode.java`입니다. 도메인 오류 enum도 같은 인터페이스를 구현하며 `ApiException`과 `ApiResponse`를 함께 사용합니다. 현재 `AuthErrorCode`의 OAuth 실패, `CareSpaceErrorCode`의 호칭 중복·초대 사용 불가·만료, `CareItemErrorCode`의 항목 잠금, `ProposalErrorCode`의 제안 묶음 충돌을 분리했습니다. 나머지 도메인의 `code`는 기능 구현 시 확정된 오류를 추가할 수 있도록 비워뒀습니다.
 
 성공은 `SuccessCode`의 `SUCCESS`·`ACCEPTED`를 재사용합니다. HTTP 상태는 Controller에서 지정하고 204는 본문 없이 반환합니다. 오류 코드 추가와 Swagger 문서화 방법은 [공통 규격](docs/api-conventions.md)을 따릅니다.
 
@@ -144,9 +144,13 @@ CI에는 배포나 머지 자동 취소를 포함하지 않습니다. 머지 후
 | `prod` | 환경변수 필수, HTTPS 쿠키, Swagger 비활성화 |
 | `oauth` | 구글·카카오 OAuth 제공자 설정 추가 |
 
-운영 필수 환경변수는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `FRONTEND_URL`, `AI_BASE_URL`, `AI_INTERNAL_API_KEY`, `COMMAND_DIGEST_KEY`입니다. 예를 들어 DB URL은 `jdbc:postgresql://postgres:5432/hanmaum` 형태입니다.
+운영 필수 환경변수는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `FRONTEND_URL`, `AI_BASE_URL`, `AI_INTERNAL_API_KEY`, `COMMAND_DIGEST_KEY`, `INVITATION_ENCRYPTION_KEY`, `INVITATION_URL_PREFIX`입니다. 예를 들어 DB URL은 `jdbc:postgresql://postgres:5432/hanmaum` 형태입니다.
 
 `COMMAND_DIGEST_KEY`는 반복 요청 본문 비교용 HMAC 비밀키입니다. 운영에서는 충분한 난수로 생성한 32바이트 이상의 값을 주입하고 서버 재시작·여러 인스턴스에서 유지합니다. 키를 단순 교체하면 기존 요청 영수증과 비교할 수 없으므로 이관 계획이 필요합니다. local/test에는 개발 전용 기본값이 있어 기존 `.env`로도 실행할 수 있으며, 이를 운영에서 사용하지 않습니다.
+
+`INVITATION_ENCRYPTION_KEY`는 같은 발급 요청에 원래 초대 URL을 다시 반환하기 위한 암호화 키입니다. 운영에서는 암호학적 난수 32바이트를 Base64로 인코딩한 값을 비밀 관리 환경에서 주입합니다. `COMMAND_DIGEST_KEY`와 별개이며 모든 인스턴스·재시작에서 유지합니다. 단순 교체하면 이전 발급 URL을 복원할 수 없으므로 키 이관이 필요합니다. local/test는 개발 전용 기본값을 사용하여 기존 `.env`로 실행할 수 있습니다.
+
+`INVITATION_URL_PREFIX`는 토큰 앞에 붙일 FE 주소이며 `/`로 끝나고 query·fragment·인증 정보를 포함하지 않는 절대 HTTP(S) URL입니다. local 기본값은 `http://localhost:5173/invitations/`이고 운영은 실제 HTTPS 주소를 설정합니다. FE 경로와 로그인 후 초대로 돌아오는 흐름은 아직 합의 전입니다. 이 기본값은 로컬 검증용이며 해당 FE 화면 구현을 뜻하지 않습니다. 기존 로그인 성공 URL은 유지합니다.
 
 Flyway가 세션 테이블을 포함한 스키마 변경을 담당하고, Hibernate는 `validate`로 검증합니다. 적용된 마이그레이션은 수정하지 않고 다음 버전의 SQL을 추가합니다. 운영 세션에는 `HttpOnly`, `Secure`, `SameSite=Lax`를 적용합니다.
 
@@ -164,6 +168,8 @@ Flyway가 세션 테이블을 포함한 스키마 변경을 담당하고, Hibern
 ```
 
 로그인 시작 주소는 `/oauth2/authorization/google`, `/oauth2/authorization/kakao`입니다.
+
+OAuth 제공자가 설정된 환경에서는 Swagger **Auth → GET /oauth2/authorization/{provider}**에도 로그인 시작 경로를 표시합니다. `provider`는 현재 설정된 `google`·`kakao` 중 선택하며 로그인 세션·CSRF 토큰은 필요하지 않습니다. 실제 로그인은 설명의 **Google/Kakao 로그인 시작** 링크를 브라우저에서 열어 진행합니다. 정상 응답은 JSON 대신 `302 Location`으로 제공자 화면을 안내합니다. Swagger의 Try it out으로 로그인 화면 이동을 테스트하지 않습니다.
 
 현재는 **OAuth 로그인 시 회원 생성·조회, 회원 세션과 내 정보 조회까지 구현한 상태**입니다. Flyway V2는 `app_user`·`social_account`를 추가하고, `(provider, provider_user_id)` 유일성 및 사용자 외래 키를 검사합니다. ID는 JPA에서 UUID로 생성하고 생성·수정 시각은 서버에서 기록합니다.
 
@@ -211,7 +217,7 @@ const headers = {
 - CSRF 발급 성공은 기존 `{headerName, token}`, OAuth 성공은 리다이렉트, 로그아웃 성공은 204를 유지합니다. 내부 AI 계약·Actuator·OpenAPI는 공통 응답으로 감싸지 않습니다.
 - Controller의 반환 타입, 예외 처리, UUID·버전·시각 표기는 [공통 규격](docs/api-conventions.md)을 따릅니다.
 
-Swagger에는 실제 구현된 CSRF·로그아웃·내 정보·돌봄 공간 생성/조회 경로와 공통 스키마를 제공합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다. 미구현 도메인 API는 노션 초안에서 관리합니다.
+Swagger에는 실제 구현된 OAuth 로그인 시작·CSRF·로그아웃·내 정보·돌봄 공간 생성/조회·초대·참여·구성원 목록 경로와 공통 스키마를 제공합니다. OAuth 시작 경로는 제공자가 설정된 환경에서만 표시합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다. 미구현 도메인 API는 노션 초안에서 관리합니다.
 
 ## 돌봄 공간 생성·조회
 
@@ -219,7 +225,7 @@ Swagger에는 실제 구현된 CSRF·로그아웃·내 정보·돌봄 공간 생
 
 같은 생성 시도를 재전송할 때는 같은 요청 ID와 내용을 유지합니다. 이미 성공했다면 기존 공간/참여 ID를 201로 반환하며, 새 ID로 같은 호칭을 생성하면 `SPACE_LABEL_DUPLICATED`입니다. 처리 중은 `REQUEST_IN_PROGRESS`, 기존 ID의 다른 내용 재사용은 `IDEMPOTENCY_KEY_REUSED`입니다. 입력·응답·오류는 [공간 API 계약](docs/api-conventions.md#돌봄-공간-api)을 참고합니다.
 
-새 코드를 실행하면 Flyway V3가 공간·참여·성공 요청 기록 테이블을 추가합니다. 소유자가 같은 공간의 현재 참여자인지 DB 제약으로 검사하고 생성 전체를 하나의 트랜잭션에서 처리합니다. 다른 도메인의 쓰기 작업은 [공간 접근 Service 계약](docs/architecture.md#다른-도메인의-권한-확인)을 따릅니다. 초대·소유권 이전·공간 수정/삭제 API는 후속 작업입니다.
+Flyway V3는 공간·참여·성공 요청 기록을, V4는 초대와 참여의 초대 연결을 추가합니다. 소유자가 같은 공간의 현재 참여자인지 DB 제약으로 검사하고 생성 전체를 하나의 트랜잭션에서 처리합니다. 다른 도메인의 쓰기 작업은 [공간 접근 Service 계약](docs/architecture.md#다른-도메인의-권한-확인)을 따릅니다. 초대 발급·확인·공간 참여·구성원 목록도 구현되어 있으며, 참여 종료·소유권 이전·공간 수정/삭제 API는 후속 작업입니다.
 
 ## AI 연동
 
@@ -239,6 +245,6 @@ Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 �
 
 ## 구현 범위
 
-- 준비: 빌드·포맷·세션/회원/공간 DB 마이그레이션·회원 엔티티/Repository·OAuth 회원 생성/조회·회원 세션·현재 회원 공통 처리·내 정보 조회·공간 생성/조회·참여/소유자 권한 기반·반복 생성 방지·보안 기반·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
-- 후속: 계정 연결·회원 탈퇴, 공간 수정/삭제·초대·참여 종료·소유권 이전, 기록, 제안 저장·확정, 항목 변경·이력, 현황판, 카카오톡 공유
+- 준비: 빌드·포맷·세션/회원/공간/초대 DB 마이그레이션·회원 엔티티/Repository·OAuth 회원 생성/조회·회원 세션·현재 회원 공통 처리·내 정보 조회·공간 생성/조회·초대 발급/확인·공간 참여·구성원 목록·참여/소유자 권한 기반·반복 요청 처리·보안 기반·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
+- 후속: 계정 연결·회원 탈퇴, 공간 수정/삭제·참여 종료·소유권 이전, 기록, 제안 저장·확정, 항목 변경·이력, 현황판, 카카오톡 공유
 - 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. GitHub Actions CI 설정을 포함하며 운영 배포는 별도 작업입니다.
