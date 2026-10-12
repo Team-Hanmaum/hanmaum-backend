@@ -242,6 +242,55 @@ FE는 초대 경로·비로그인 사용자의 로그인 후 복귀를 합의해
 - Proposal은 미구현입니다. 합의한 후속 계약은 소유권 이전 후 새 소유자가 대기 요청을 검토하고, 종료된 참여자가 제출한 미처리 요청은 반영을 막되 이력을 보존하는 것입니다. 최종 반영 시 현재 소유권·요청자의 원래 참여 상태를 다시 검사해야 합니다.
 - 공유 링크의 접근 종료도 Sharing 구현 시 현재 참여를 검사해야 합니다. 이번 세 API를 구현한 것이 CareItem·Proposal·Sharing까지 포함한 전체 제품 정책 완료를 뜻하지 않습니다. AI 호출은 없습니다.
 
+## 소식 원본 저장·조회 API
+
+2026-10-12 합의 기준입니다. 현재 저장·조회만 구현하며 기존 노션 초안의 최초 AI 자동 분석은 다음 Analysis 작업에서 연결합니다. 이 절은 BE 구현 계약이며 노션의 기존 상세 페이지 템플릿을 변경하지 않습니다.
+
+| API | 입력 | 성공 |
+| --- | --- | --- |
+| `POST /api/spaces/{spaceId}/source-records` | 본문 `content`, `clientRequestId` | `201 SUCCESS`, `recordId`, `version`, `recordedAt`, `analysis` |
+| `GET /api/spaces/{spaceId}/source-records` | 선택 query `cursor`, `size` | `200 SUCCESS`, `items`, `nextCursor`, `hasNext` |
+| `GET /api/spaces/{spaceId}/source-records/{recordId}` | 공간·소식 UUID | `200 SUCCESS`, 원본 상세 |
+
+### 입력·저장 계약
+
+```json
+{
+  "content": "오늘 병원에서 다음 달 15일에 다시 오라고 했어요.\n약은 그대로 복용합니다.",
+  "clientRequestId": "4880377e-81b6-4ab2-bcff-5dfb804583dd"
+}
+```
+
+- 소유자와 현재 구성원 모두 작성·조회할 수 있습니다. 세션이 필요하며 POST에는 CSRF가 필요합니다. 응답은 공통 여섯 필드와 `Cache-Control: no-store`를 사용합니다. POST `Location`은 생성한 소식의 상세 경로입니다.
+- `content`는 문자열 필수이며 빈 문자열·Unicode 공백만 있는 값은 거절합니다. 최대 10,000 UTF-16 코드 단위로 Java String.length 및 FE JavaScript 문자열 length와 같습니다. 일반 한글은 1, 보충 평면의 이모지 등은 2입니다. NUL·짝이 맞지 않는 surrogate는 저장할 수 없어 400으로 거절합니다.
+- 유효 원문의 앞뒤 공백·줄바꿈(CRLF 포함)·Unicode 표현을 그대로 저장합니다. FE는 일반 텍스트로 표시하고 HTML로 해석하지 않습니다. 이 길이는 이번 Record 공개 입력 합의이며 기존 AI 내부 제한과 맞춥니다.
+- 작성자 참여·UTC 등록 시각은 서버가 정합니다. 사용자 지정 작성 시각·제목·분류·수정 기능은 추가하지 않습니다. 기록 시각은 마이크로초 정밀도로 고정하고 향후 AI 상대 날짜 해석에서 `Asia/Seoul`과 함께 사용합니다.
+- 초기 원본 `version`은 문자열 `"1"`입니다. 원본 작성에는 `expectedSpaceVersion`을 요구하지 않고 공간 버전·수정 시각을 변경하지 않습니다. 실제 권한은 트랜잭션 안에서 현재 상태로 검사합니다.
+- 같은 사용자·요청 ID·업무·공간·원문의 성공 재전송은 최초 원본 ID·시각을 201로 반환합니다. 원문이 공백/줄바꿈 하나라도 달라지면 다른 내용입니다. 같은 원문이라도 새 요청 ID면 별도 소식입니다. 성공 기록에는 원문·전체 응답을 저장하지 않습니다.
+- 재전송에서도 원래 참여가 현재까지 유지되어야 합니다. 나갔다가 재참여한 경우 과거 요청은 403이며 새 요청 ID로 작성합니다. 공간이 없거나 삭제 중이거나 원본이 삭제됐으면 404이고 원본을 복구하지 않습니다. 보관 TTL은 추가하지 않습니다.
+
+### 목록·상세 계약
+
+- 목록은 `recordedAt DESC, recordId DESC`입니다. `size`는 기본 20, 1~50이며 첫 조회에는 cursor를 생략합니다. 빈 커서·형식 오류·다른 공간 커서는 400입니다.
+- `data.items` 원소는 `recordId`, `content`(원문 전체), `author`, `recordedAt`, `isMine`, `latestAnalysis`입니다. 마지막 페이지 또는 빈 목록은 `nextCursor: null`, `hasNext: false`입니다. 나머지는 반환된 커서를 그대로 다음 요청에 전달합니다.
+- 커서는 마지막 반환 원본의 시각·ID 위치이며 당시 전체 목록을 동결하지 않습니다. 이후 새로 들어온 최신 소식은 첫 목록 재조회로 확인합니다. 중간 삭제를 반영하며 커서 기준 원본이 삭제돼도 다음 위치를 조회할 수 있습니다. 매 페이지 현재 권한을 다시 검사하고 총 개수·검색·필터는 추가하지 않습니다.
+- 상세는 `recordId`, `spaceId`, `content`, `author`, `recordedAt`, `version`, `isMine`, `latestAnalysis`, `proposalIds`, `canDelete`입니다. 다른 공간의 소식 ID·삭제 원본은 404입니다.
+- `author`는 작성 당시 `membershipId`, 현재 표시 이름 `displayName`, `withdrawn`입니다. 이름 미설정은 null이며 회원 연결이 제거된 경우 ID·이름도 null, withdrawn=true입니다. 공간에서 나가기/내보내기만으로 withdrawn=true가 되거나 원본이 삭제되지 않습니다. 실제 회원 탈퇴 처리는 별도 후속 작업입니다.
+- `isMine`은 같은 회원 기준으로 재참여 후에도 true일 수 있습니다. `canDelete`는 현재 소유자 또는 본인 원본의 권한 안내입니다. 삭제 API는 아직 없으며 FE 삭제 버튼 연결은 후속 삭제 구현 때 진행합니다.
+- 분석 실행이 없어 저장의 `analysis`, 조회의 `latestAnalysis`는 null입니다. `proposalIds`는 빈 배열입니다. 가짜 분석 ID·RUNNING 상태를 만들지 않습니다. AI 자동 시작·재시도와 원본 삭제/파생 내용 제거는 필수 후속 작업이며 기존 원본을 자동 일괄 분석하지 않습니다.
+
+| HTTP | Code | 발생 조건 |
+| --- | --- | --- |
+| 400 | `INVALID_REQUEST` | 본문·UUID·요청 ID·size·cursor 검증 실패 |
+| 401 | `UNAUTHENTICATED` | 세션 또는 현재 회원 연결 무효 |
+| 403 | `FORBIDDEN` | 현재 참여 없음, POST CSRF 실패, 재전송의 원래 참여 종료 |
+| 404 | `RESOURCE_NOT_FOUND` | 공간 없음/DELETING, 원본 없음/ERASED/다른 공간 |
+| 409 | `IDEMPOTENCY_KEY_REUSED` | 동일 사용자·요청 ID를 다른 업무·공간·본문에 사용 |
+| 409 | `REQUEST_IN_PROGRESS` | 동일 사용자·요청 ID 트랜잭션 처리 중 |
+| 500 | `INTERNAL_ERROR` | 예상하지 못한 서버 오류 |
+
+별도 Record 오류 enum은 만들지 않습니다. FE는 POST마다 새 의도에 UUID를 발급하고 네트워크 재전송에는 같은 값을 유지합니다. AI는 후속 연결에서 고정된 원문·recordedAt·Asia/Seoul을 사용하며 HTTP 호출 동안 DB 트랜잭션을 유지하지 않습니다.
+
 ## 문서화와 적용 범위
 
 Swagger에 공통 응답·오류 스키마, 재사용 가능한 오류 응답, 세션 쿠키·CSRF 보안 스키마를 둡니다. 공개 경로에 인증을 잘못 표시하지 않도록 전역 보안 요구를 일괄 적용하지 않고 각 API에 필요한 조건과 실제 오류만 명시합니다.

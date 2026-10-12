@@ -23,7 +23,7 @@ class HanmaumBackendApplicationTests {
 
   @Test
   void appliesAndValidatesMigrationsOnPostgresql() {
-    assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("4");
+    assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("5");
     flyway.validate();
     assertThat(jdbcTemplate.queryForObject("SELECT version()", String.class))
         .contains("PostgreSQL 17.11");
