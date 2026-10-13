@@ -33,7 +33,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping(
     value = "/api/spaces/{spaceId}/source-records",
     produces = MediaType.APPLICATION_JSON_VALUE)
-@Tag(name = "Record", description = "소식 원본 저장·목록·상세 조회. 분석 실행·원본 삭제는 후속 구현")
+@Tag(name = "Record", description = "소식 저장·분석 접수·목록·상세 조회. 원본 삭제 API는 후속 구현")
 public class SourceRecordController {
   private final SourceRecordCreationService creation;
   private final SourceRecordQueryService queries;
@@ -48,7 +48,7 @@ public class SourceRecordController {
       summary = "소식 원본 저장",
       description =
           "현재 참여자는 소식을 작성할 수 있습니다. 원문·작성자·등록 시각을 함께 저장하며 공간 버전은 바꾸지 않습니다. "
-              + "동일 clientRequestId의 동일 요청은 기존 결과를 201로 반환합니다. 현재 분석 미연결로 analysis는 null입니다.",
+              + "최초 분석 작업을 함께 QUEUED로 접수합니다. 동일 clientRequestId의 동일 요청은 기존 접수 결과를 201로 반환합니다. 최신 분석 상태는 조회 API에서 확인합니다.",
       security = @SecurityRequirement(name = "SessionCookie"))
   @ApiResponses({
     @io.swagger.v3.oas.annotations.responses.ApiResponse(
@@ -90,7 +90,7 @@ public class SourceRecordController {
       description =
           "현재 참여자만 조회할 수 있습니다. 등록 시각·ID 내림차순이며 기본 20개, 최대 50개입니다. "
               + "nextCursor를 다음 요청의 cursor에 그대로 전달하세요. 새 소식은 목록을 새로 조회하여 확인합니다. "
-              + "원문 전체를 반환하며 현재 latestAnalysis는 null입니다.",
+              + "원문 전체와 최신 분석 상태를 반환합니다. 분석 도입 전 원본의 latestAnalysis는 null입니다.",
       security = @SecurityRequirement(name = "SessionCookie"))
   @ApiResponses({
     @io.swagger.v3.oas.annotations.responses.ApiResponse(
@@ -130,7 +130,7 @@ public class SourceRecordController {
       summary = "소식 상세 조회",
       description =
           "같은 공간의 삭제되지 않은 원본만 조회합니다. 작성자의 참여 종료는 원본 삭제가 아닙니다. "
-              + "canDelete는 현재 삭제 권한 안내이며 삭제 API는 아직 없습니다. latestAnalysis=null, proposalIds=[]를 반환합니다.",
+              + "canDelete는 현재 삭제 권한 안내이며 삭제 API는 아직 없습니다. 최신 분석 상태와 완료된 실행의 유효 proposalIds를 반환합니다.",
       security = @SecurityRequirement(name = "SessionCookie"))
   @ApiResponses({
     @io.swagger.v3.oas.annotations.responses.ApiResponse(

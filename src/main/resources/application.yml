@@ -49,6 +49,13 @@ springdoc:
     enabled: false
 
 app:
+  analysis:
+    worker:
+      # Opt-in only. Concurrency, poll interval and lease duration have no policy defaults.
+      enabled: ${ANALYSIS_WORKER_ENABLED:false}
+      concurrency: ${ANALYSIS_WORKER_CONCURRENCY:}
+      poll-interval: ${ANALYSIS_WORKER_POLL_INTERVAL:}
+      lease-duration: ${ANALYSIS_WORKER_LEASE_DURATION:}
   invitations:
     encryption-key: ${INVITATION_ENCRYPTION_KEY:}
     url-prefix: ${INVITATION_URL_PREFIX:}

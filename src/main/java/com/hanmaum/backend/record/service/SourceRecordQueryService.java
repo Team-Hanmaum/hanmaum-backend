@@ -47,7 +47,7 @@ public class SourceRecordQueryService {
             .map(
                 r ->
                     new SourceRecordSummary(
-                        r.id(), r.content(), r.author(), r.recordedAt(), r.isMine(), null))
+                        r.id(), r.content(), r.author(), r.recordedAt(), r.isMine(), r.analysis()))
             .toList();
     return new SourceRecordListResponse(items, next, hasNext);
   }
@@ -64,8 +64,8 @@ public class SourceRecordQueryService {
         r.recordedAt(),
         Long.toString(r.version()),
         r.isMine(),
-        null,
-        List.of(),
+        r.analysis(),
+        r.proposalIds(),
         result.owner() || r.isMine());
   }
 

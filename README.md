@@ -46,7 +46,7 @@ backend/
     └── exception/
 ```
 
-회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 회원 도메인은 OAuth 회원 매핑·내 정보 조회를, 공간 도메인은 공간 생성·조회·가족 초대·참여·구성원 목록·소유권 이전·참여 종료를 구현했습니다. 기록 도메인은 원본 저장·커서 목록·상세 조회를 구현했으며 분석 실행과 원본 삭제는 후속 작업입니다. 나머지 도메인은 `package-info.java`에 책임을 기록한 상태입니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
+회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 회원 도메인은 OAuth 회원 매핑·내 정보 조회를, 공간 도메인은 공간 생성·조회·가족 초대·참여·구성원 목록·소유권 이전·참여 종료를 구현했습니다. 기록 도메인은 원본 저장·커서 목록·상세 조회, 분석 도메인은 DB 작업 접수·실행·상태 조회·실패 재시도를 구현했습니다. 제안 도메인은 CREATE 제안과 근거 저장까지 구현했으며 검토·최종 반영과 원본 삭제 API는 후속 작업입니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
 
 `auth`와 위 8개 업무 도메인은 아래 공통 하위 구조까지 준비했습니다. 빈 폴더에는 `.gitkeep`을 두어 같은 구조를 Git으로 공유합니다. 실제 파일이 있는 폴더에는 `.gitkeep`을 추가하지 않습니다.
 
@@ -64,7 +64,7 @@ backend/
 
 공간 API는 `carespace/controller`, 공간 업무 로직은 `carespace/service`에 둡니다. 초대는 `carespace`에 포함하고, 공개 분석 업무인 `analysis`는 내부 통신을 맡은 `ai`를 사용합니다.
 
-오류 코드의 공통 인터페이스는 `global/code/ErrorCode.java`, 공통 오류 enum은 `CommonErrorCode.java`입니다. 도메인 오류 enum도 같은 인터페이스를 구현하며 `ApiException`과 `ApiResponse`를 함께 사용합니다. 현재 `AuthErrorCode`의 OAuth 실패, `CareSpaceErrorCode`의 호칭 중복·초대 사용 불가·만료, `CareItemErrorCode`의 항목 잠금, `ProposalErrorCode`의 제안 묶음 충돌을 분리했습니다. 나머지 도메인의 `code`는 기능 구현 시 확정된 오류를 추가할 수 있도록 비워뒀습니다.
+오류 코드의 공통 인터페이스는 `global/code/ErrorCode.java`, 공통 오류 enum은 `CommonErrorCode.java`입니다. 도메인 오류 enum도 같은 인터페이스를 구현하며 `ApiException`과 `ApiResponse`를 함께 사용합니다. 현재 `AuthErrorCode`의 OAuth 실패, `CareSpaceErrorCode`의 호칭 중복·초대 사용 불가·만료, `AnalysisErrorCode`의 재시도 상태 충돌, `CareItemErrorCode`의 항목 잠금, `ProposalErrorCode`의 제안 묶음 충돌을 분리했습니다. `AnalysisFailureCode`는 비동기 작업의 실패 사유로 HTTP 오류와 구분합니다.
 
 성공은 `SuccessCode`의 `SUCCESS`·`ACCEPTED`를 재사용합니다. HTTP 상태는 Controller에서 지정하고 204는 본문 없이 반환합니다. 오류 코드 추가와 Swagger 문서화 방법은 [공통 규격](docs/api-conventions.md)을 따릅니다.
 
@@ -217,7 +217,7 @@ const headers = {
 - CSRF 발급 성공은 기존 `{headerName, token}`, OAuth 성공은 리다이렉트, 로그아웃 성공은 204를 유지합니다. 내부 AI 계약·Actuator·OpenAPI는 공통 응답으로 감싸지 않습니다.
 - Controller의 반환 타입, 예외 처리, UUID·버전·시각 표기는 [공통 규격](docs/api-conventions.md)을 따릅니다.
 
-Swagger에는 실제 구현된 OAuth 로그인 시작·CSRF·로그아웃·내 정보·돌봄 공간 생성/조회·초대·참여·구성원 목록·소유권 이전·나가기/내보내기 경로와 공통 스키마를 제공합니다. OAuth 시작 경로는 제공자가 설정된 환경에서만 표시합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다. 미구현 도메인 API는 노션 초안에서 관리합니다.
+Swagger에는 실제 구현된 OAuth 로그인 시작·CSRF·로그아웃·내 정보·돌봄 공간 생성/조회·초대·참여·구성원 목록·소유권 이전·나가기/내보내기·소식 저장/조회·분석 상태/재시도 경로와 공통 스키마를 제공합니다. OAuth 시작 경로는 제공자가 설정된 환경에서만 표시합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다. 미구현 도메인 API는 노션 초안에서 관리합니다.
 
 ## 돌봄 공간 생성·조회
 
@@ -243,6 +243,30 @@ Flyway V3는 공간·참여·성공 요청 기록을, V4는 초대와 참여의 
 
 [AI 계약](docs/ai-contract.md)과 [설계 기준](docs/architecture.md)을 참고합니다. 실제 FastAPI 구현과 모델 품질 평가는 별도 레포에서 진행합니다.
 
+## 소식 분석 실행
+
+새 소식 저장 시 원본·최초 `QUEUED` 분석·성공 요청 기록을 함께 저장하고 `201 SUCCESS`를 반환합니다. 이후 실행기가 DB에서 작업을 가져와 AI를 호출합니다. 기존 V5 소식은 자동 일괄 분석하지 않습니다.
+
+- 상태: `GET /api/spaces/{spaceId}/source-records/{recordId}/analyses/{analysisId}`
+- 실패 재시도: `POST /api/spaces/{spaceId}/source-records/{recordId}/analyses` → `202 ACCEPTED`
+- 재시도 입력: `failedAnalysisId`, `expectedRecordVersion`(문자열), `clientRequestId`. 현재 참여자만 최신 FAILED 분석을 재시도할 수 있습니다.
+- 상태 조회는 분석이 FAILED여도 `200 SUCCESS`이며 `data.failure`로 실패 사유를 제공합니다. 상세 계약은 [API 규격](docs/api-conventions.md#소식-분석-상태·실패-재시도)을 참고합니다.
+
+실행기는 기본적으로 꺼져 있습니다. 이 상태에서는 **소식 저장·분석 접수·조회는 가능하지만 분석은 QUEUED에 머뭅니다.** 실제 자동 분석을 켜려면 접근 가능한 AI 서버와 내부 키를 준비하고 다음 외부 설정을 모두 지정합니다. 숫자 기본값은 없으며 로컬 검증값도 운영 정책과 구분해 정합니다.
+
+| 설정 | 의미 |
+| --- | --- |
+| `ANALYSIS_WORKER_ENABLED` | `true`일 때 DB의 대기 작업 처리 시작 |
+| `ANALYSIS_WORKER_CONCURRENCY` | BE 인스턴스당 동시 실행 수, 양의 정수 |
+| `ANALYSIS_WORKER_POLL_INTERVAL` | 대기·중단 작업 확인 간격, 예: Duration의 `s` 단위 사용 |
+| `ANALYSIS_WORKER_LEASE_DURATION` | 실행기의 생존 갱신이 끊겼을 때 작업 소유권을 만료시키는 기간 |
+
+lease는 기존 AI 연결·응답 타임아웃 합보다 길어야 하며 실행 중 주기적으로 갱신합니다. 설정이 빠지거나 유효하지 않으면 enabled 실행은 시작하지 않습니다. lease 만료 작업은 `FAILED / ANALYSIS_INTERRUPTED`로 정리하고 자동으로 다시 AI를 호출하지 않습니다. 실행기를 나중에 켜면 이미 접수된 QUEUED 작업도 처리합니다.
+
+V6가 분석 실행·입력 원본 의존성·제안 문서·근거·CREATE 제안 테이블을 추가합니다. 제안은 저장만 하며 관리 항목을 자동으로 변경하지 않습니다. 현재 CareItem 저장소가 없을 때만 빈 후보를 사용하고, 해당 테이블이 도입되면 실제 후보 조회 연동 전까지 분석을 실패 처리합니다. UPDATE/RESOLVE와 제안 검토·반영은 CareItem 후속 작업에서 연결합니다.
+
+AI 레포의 stub과 가짜 응답 테스트는 통신·처리 흐름을 검증하는 수단입니다. 실제 LLM 품질·비용·처리량 검증을 완료했다는 의미는 아닙니다. 동시 실행 수·확인 간격·lease·재시도 제한·사용량 제한·FE 조회 간격은 운영 미정입니다.
+
 ## 컨테이너
 
 ```powershell
@@ -256,5 +280,6 @@ Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 �
 ## 구현 범위
 
 - 준비: 빌드·포맷·세션/회원/공간/초대 DB 마이그레이션·회원 엔티티/Repository·OAuth 회원 생성/조회·회원 세션·현재 회원 공통 처리·내 정보 조회·공간 생성/조회·초대 발급/확인·공간 참여·구성원 목록·소유권 이전·나가기/내보내기·참여/소유자 권한 기반·반복 요청 처리·보안 기반·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
-- 후속: 계정 연결·회원 탈퇴, 공간 수정/삭제, 참여 종료의 담당 할 일·잠금·대기 요청 연동, 기록, 제안 저장·확정, 항목 변경·이력, 현황판, 카카오톡 공유
+- 추가 구현: 원본 소식 저장·커서 목록·상세 조회, 분석 접수·실행·상태 조회·실패 재시도, CREATE 제안·근거 저장 및 삭제 전파 연결점
+- 후속: 계정 연결·회원 탈퇴, 공간 수정/삭제, 참여 종료의 담당 할 일·잠금·대기 요청 연동, 원본 삭제 API와 전체 파생 내용 제거, CareItem 후보·UPDATE/RESOLVE, 제안 검토·확정, 항목 변경·이력, 현황판, 카카오톡 공유
 - 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. GitHub Actions CI 설정을 포함하며 운영 배포는 별도 작업입니다.
