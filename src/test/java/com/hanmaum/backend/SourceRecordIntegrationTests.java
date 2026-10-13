@@ -107,7 +107,7 @@ class SourceRecordIntegrationTests {
     var body = mapper.readTree(response.getContentAsString());
     assertThat(body.size()).isEqualTo(6);
     assertThat(body.at("/data").size()).isEqualTo(4);
-    assertThat(body.at("/data/analysis").isNull()).isTrue();
+    assertThat(body.at("/data/analysis/status").asText()).isEqualTo("QUEUED");
     UUID id = UUID.fromString(body.at("/data/recordId").asText());
     assertThat(response.getHeader("Location")).isEqualTo(path() + "/" + id);
     var detail = queries.detail(member, space.spaceId(), id);
@@ -119,7 +119,8 @@ class SourceRecordIntegrationTests {
     assertThat(detail.recordedAt()).isEqualTo(Instant.parse(body.at("/data/recordedAt").asText()));
     assertThat(detail.isMine()).isTrue();
     assertThat(detail.canDelete()).isTrue();
-    assertThat(detail.latestAnalysis()).isNull();
+    assertThat(detail.latestAnalysis().analysisId().toString())
+        .isEqualTo(body.at("/data/analysis/analysisId").asText());
     assertThat(detail.proposalIds()).isEmpty();
     assertThat(
             jdbc.queryForMap(
@@ -585,7 +586,7 @@ class SourceRecordIntegrationTests {
     var analysisSchema =
         doc.at("/components/schemas/CreateSourceRecordResponse/properties/analysis");
     assertThat(analysisSchema.isMissingNode()).isFalse();
-    assertThat(analysisSchema.path("type").asText()).isEqualTo("null");
+    assertThat(analysisSchema.toString()).contains("AnalysisSummary");
     assertThat(analysisSchema.path("writeOnly").asBoolean()).isFalse();
     assertThat(
             doc.at("/components/schemas/SourceRecordSummary/properties/latestAnalysis")

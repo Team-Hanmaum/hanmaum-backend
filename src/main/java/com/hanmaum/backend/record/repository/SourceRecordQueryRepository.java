@@ -1,11 +1,14 @@
 package com.hanmaum.backend.record.repository;
 
+import com.hanmaum.backend.analysis.dto.AnalysisSummary;
+import com.hanmaum.backend.analysis.entity.AnalysisStatus;
 import com.hanmaum.backend.record.dto.SourceRecordAuthor;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -37,7 +40,10 @@ public class SourceRecordQueryRepository {
             """
         SELECT viewer.id AS viewer_id, viewer.id = s.owner_membership_id AS viewer_owner,
                r.id, r.body, r.recorded_at, r.version, r.author_membership_id,
-               author.user_id AS author_user_id, u.display_name, author.user_id = ? AS is_mine
+               author.user_id AS author_user_id, u.display_name, author.user_id = ? AS is_mine,
+               a.id AS analysis_id, a.status AS analysis_status,
+               ARRAY(SELECT p.id FROM ai_proposal p WHERE p.run_id = a.id AND a.status = 'COMPLETED'
+                 AND p.invalidated_at IS NULL ORDER BY p.ordinal_no) AS proposal_ids
         FROM care_space s
         LEFT JOIN space_membership viewer ON viewer.space_id = s.id AND viewer.user_id = ? AND viewer.is_active
         LEFT JOIN LATERAL (
@@ -50,6 +56,8 @@ public class SourceRecordQueryRepository {
         ) r ON true
         LEFT JOIN space_membership author ON author.space_id = s.id AND author.id = r.author_membership_id
         LEFT JOIN app_user u ON u.id = author.user_id
+        LEFT JOIN LATERAL (SELECT id, status FROM analysis_run WHERE record_id = r.id
+          ORDER BY attempt_no DESC LIMIT 1) a ON true
         WHERE s.id = ? AND s.lifecycle = 'ACTIVE'
         ORDER BY r.recorded_at DESC, r.id DESC
         """,
@@ -63,12 +71,17 @@ public class SourceRecordQueryRepository {
             """
         SELECT viewer.id AS viewer_id, viewer.id = s.owner_membership_id AS viewer_owner,
                r.id, r.body, r.recorded_at, r.version, r.author_membership_id,
-               author.user_id AS author_user_id, u.display_name, author.user_id = ? AS is_mine
+               author.user_id AS author_user_id, u.display_name, author.user_id = ? AS is_mine,
+               a.id AS analysis_id, a.status AS analysis_status,
+               ARRAY(SELECT p.id FROM ai_proposal p WHERE p.run_id = a.id AND a.status = 'COMPLETED'
+                 AND p.invalidated_at IS NULL ORDER BY p.ordinal_no) AS proposal_ids
         FROM care_space s
         LEFT JOIN space_membership viewer ON viewer.space_id = s.id AND viewer.user_id = ? AND viewer.is_active
         LEFT JOIN source_record r ON r.space_id = s.id AND r.id = ? AND r.lifecycle = 'ACTIVE' AND viewer.id IS NOT NULL
         LEFT JOIN space_membership author ON author.space_id = s.id AND author.id = r.author_membership_id
         LEFT JOIN app_user u ON u.id = author.user_id
+        LEFT JOIN LATERAL (SELECT id, status FROM analysis_run WHERE record_id = r.id
+          ORDER BY attempt_no DESC LIMIT 1) a ON true
         WHERE s.id = ? AND s.lifecycle = 'ACTIVE'
         """,
             this::map,
@@ -93,7 +106,13 @@ public class SourceRecordQueryRepository {
                     withdrawn),
                 rs.getTimestamp("recorded_at").toInstant(),
                 rs.getLong("version"),
-                rs.getBoolean("is_mine"));
+                rs.getBoolean("is_mine"),
+                rs.getObject("analysis_id") == null
+                    ? null
+                    : new AnalysisSummary(
+                        rs.getObject("analysis_id", UUID.class),
+                        AnalysisStatus.valueOf(rs.getString("analysis_status"))),
+                Arrays.asList((UUID[]) rs.getArray("proposal_ids").getArray()));
     return new Row(rs.getObject("viewer_id") != null, rs.getBoolean("viewer_owner"), record);
   }
 
@@ -116,5 +135,7 @@ public class SourceRecordQueryRepository {
       SourceRecordAuthor author,
       Instant recordedAt,
       long version,
-      boolean isMine) {}
+      boolean isMine,
+      AnalysisSummary analysis,
+      List<UUID> proposalIds) {}
 }

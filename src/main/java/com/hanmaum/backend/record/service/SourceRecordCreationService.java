@@ -1,5 +1,7 @@
 package com.hanmaum.backend.record.service;
 
+import com.hanmaum.backend.analysis.dto.AnalysisSummary;
+import com.hanmaum.backend.analysis.service.AnalysisSubmissionService;
 import com.hanmaum.backend.carespace.service.CareSpaceAccessService;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.command.CommandDigest;
@@ -28,18 +30,21 @@ public class SourceRecordCreationService {
   private final CommandDigest digests;
   private final CareSpaceAccessService access;
   private final Clock clock;
+  private final AnalysisSubmissionService analyses;
 
   public SourceRecordCreationService(
       SourceRecordRepository records,
       CommandReceiptRepository receipts,
       CommandDigest digests,
       CareSpaceAccessService access,
-      Clock clock) {
+      Clock clock,
+      AnalysisSubmissionService analyses) {
     this.records = records;
     this.receipts = receipts;
     this.digests = digests;
     this.access = access;
     this.clock = clock;
+    this.analyses = analyses;
   }
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -71,7 +76,7 @@ public class SourceRecordCreationService {
           records
               .findActive(spaceId, UUID.fromString(receipt.resultRefs().get("recordId")))
               .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND));
-      return response(record);
+      return response(record, analyses.initialAcceptance(spaceId, record.id()));
     }
     var current = access.requireActiveMember(userId, spaceId);
     var now = clock.instant().truncatedTo(ChronoUnit.MICROS);
@@ -91,11 +96,12 @@ public class SourceRecordCreationService {
                 current.membershipId().toString())),
         now);
     records.insert(record, userId, requestId);
-    return response(record);
+    var analysis = analyses.enqueueInitial(record, userId, requestId);
+    return response(record, analysis);
   }
 
-  private CreateSourceRecordResponse response(SourceRecord record) {
+  private CreateSourceRecordResponse response(SourceRecord record, AnalysisSummary analysis) {
     return new CreateSourceRecordResponse(
-        record.id(), Long.toString(record.version()), record.recordedAt(), null);
+        record.id(), Long.toString(record.version()), record.recordedAt(), analysis);
   }
 }

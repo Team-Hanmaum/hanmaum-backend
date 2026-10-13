@@ -239,12 +239,12 @@ FE는 초대 경로·비로그인 사용자의 로그인 후 복귀를 합의해
 - 이전·내보내기 성공 시 역할·구성원·공간 상세를 재조회합니다. 나가기 성공 시 해당 공간 캐시를 제거하고 참여 공간 목록으로 이동합니다. 대상 사용자의 다른 브라우저는 다음 API의 403/404에서 캐시·화면을 정리해야 하며, 서버가 이미 표시된 내용을 회수하거나 실시간 알림을 보내지는 않습니다.
 - VERSION_CONFLICT는 최신 내용 조회 후 사용자 재확인이 필요합니다. 버전만 자동 교체해 재실행하지 않습니다. 재전송 결과의 과거 버전·역할로 현재 캐시를 덮어쓰지 않습니다.
 - CareItem은 미구현입니다. **미완료 할 일 담당 해제·종료된 참여의 편집 잠금 무효화는 아직 동작하지 않습니다.** 실제 담당 해제 집계가 없어 `unassignedTaskCount`를 응답에서 제외합니다. 할 일 기능 도입 전에 참여 종료와 같은 트랜잭션으로 해당 Service를 연결하고 영향 항목 버전·이력을 갱신해야 합니다. 다른 편집 잠금이 권한 종료를 지연시키면 안 됩니다. 완료 상태·기존 공동 기록은 보존합니다.
-- Proposal은 미구현입니다. 합의한 후속 계약은 소유권 이전 후 새 소유자가 대기 요청을 검토하고, 종료된 참여자가 제출한 미처리 요청은 반영을 막되 이력을 보존하는 것입니다. 최종 반영 시 현재 소유권·요청자의 원래 참여 상태를 다시 검사해야 합니다.
+- Proposal의 변경 요청·최종 반영은 미구현입니다. 합의한 후속 계약은 소유권 이전 후 새 소유자가 대기 요청을 검토하고, 종료된 참여자가 제출한 미처리 요청은 반영을 막되 이력을 보존하는 것입니다. 최종 반영 시 현재 소유권·요청자의 원래 참여 상태를 다시 검사해야 합니다.
 - 공유 링크의 접근 종료도 Sharing 구현 시 현재 참여를 검사해야 합니다. 이번 세 API를 구현한 것이 CareItem·Proposal·Sharing까지 포함한 전체 제품 정책 완료를 뜻하지 않습니다. AI 호출은 없습니다.
 
 ## 소식 원본 저장·조회 API
 
-2026-10-12 합의 기준입니다. 현재 저장·조회만 구현하며 기존 노션 초안의 최초 AI 자동 분석은 다음 Analysis 작업에서 연결합니다. 이 절은 BE 구현 계약이며 노션의 기존 상세 페이지 템플릿을 변경하지 않습니다.
+2026-10-12 합의 기준입니다. 저장·조회 및 최초 분석 접수를 구현합니다. 실제 분석은 외부 설정으로 활성화한 실행기가 처리합니다. 이 절은 BE 구현 계약이며 노션의 기존 상세 페이지 템플릿을 변경하지 않습니다.
 
 | API | 입력 | 성공 |
 | --- | --- | --- |
@@ -277,7 +277,8 @@ FE는 초대 경로·비로그인 사용자의 로그인 후 복귀를 합의해
 - 상세는 `recordId`, `spaceId`, `content`, `author`, `recordedAt`, `version`, `isMine`, `latestAnalysis`, `proposalIds`, `canDelete`입니다. 다른 공간의 소식 ID·삭제 원본은 404입니다.
 - `author`는 작성 당시 `membershipId`, 현재 표시 이름 `displayName`, `withdrawn`입니다. 이름 미설정은 null이며 회원 연결이 제거된 경우 ID·이름도 null, withdrawn=true입니다. 공간에서 나가기/내보내기만으로 withdrawn=true가 되거나 원본이 삭제되지 않습니다. 실제 회원 탈퇴 처리는 별도 후속 작업입니다.
 - `isMine`은 같은 회원 기준으로 재참여 후에도 true일 수 있습니다. `canDelete`는 현재 소유자 또는 본인 원본의 권한 안내입니다. 삭제 API는 아직 없으며 FE 삭제 버튼 연결은 후속 삭제 구현 때 진행합니다.
-- 분석 실행이 없어 저장의 `analysis`, 조회의 `latestAnalysis`는 null입니다. `proposalIds`는 빈 배열입니다. 가짜 분석 ID·RUNNING 상태를 만들지 않습니다. AI 자동 시작·재시도와 원본 삭제/파생 내용 제거는 필수 후속 작업이며 기존 원본을 자동 일괄 분석하지 않습니다.
+- 새 소식 저장의 `analysis`는 `{analysisId, status: "QUEUED"}`이며 원본과 같은 트랜잭션에서 생성한 실제 접수 정보입니다. 생성 재전송에도 최초 ID·QUEUED를 반환합니다. 조회의 `latestAnalysis`는 `{analysisId, status}`로 최신 실행의 현재 상태입니다. 분석 도입 전 원본에는 null을 유지하고 자동 일괄 분석하지 않습니다.
+- 상세의 `proposalIds`는 최신 실행이 COMPLETED인 경우의 유효한 저장 제안 ID이며 나머지는 빈 배열입니다. 원본 삭제 API와 전체 파생 내용 제거는 후속 작업입니다.
 
 | HTTP | Code | 발생 조건 |
 | --- | --- | --- |
@@ -289,7 +290,70 @@ FE는 초대 경로·비로그인 사용자의 로그인 후 복귀를 합의해
 | 409 | `REQUEST_IN_PROGRESS` | 동일 사용자·요청 ID 트랜잭션 처리 중 |
 | 500 | `INTERNAL_ERROR` | 예상하지 못한 서버 오류 |
 
-별도 Record 오류 enum은 만들지 않습니다. FE는 POST마다 새 의도에 UUID를 발급하고 네트워크 재전송에는 같은 값을 유지합니다. AI는 후속 연결에서 고정된 원문·recordedAt·Asia/Seoul을 사용하며 HTTP 호출 동안 DB 트랜잭션을 유지하지 않습니다.
+별도 Record 오류 enum은 만들지 않습니다. FE는 POST마다 새 의도에 UUID를 발급하고 네트워크 재전송에는 같은 값을 유지합니다. AI는 고정된 원문·recordedAt·Asia/Seoul을 사용하며 HTTP 호출 동안 DB 트랜잭션을 유지하지 않습니다.
+
+## 소식 분석 상태·실패 재시도
+
+현재 공간 참여자(소유자·구성원)가 사용합니다. 공통 세션 인증과 여섯 필드 응답·no-store를 사용하고 POST에는 CSRF가 필요합니다. 다른 공간의 원본·분석 ID를 사용할 수 없습니다.
+
+| API | 입력 | 성공 |
+| --- | --- | --- |
+| `GET /api/spaces/{spaceId}/source-records/{recordId}/analyses/{analysisId}` | 경로 UUID | `200 SUCCESS`, 분석 상태 |
+| `POST /api/spaces/{spaceId}/source-records/{recordId}/analyses` | 아래 JSON | `202 ACCEPTED`, `{recordId, analysisId, status: "QUEUED"}` |
+
+```json
+{
+  "failedAnalysisId": "183c05e8-03f3-4692-9d9c-30f1c6ea6772",
+  "expectedRecordVersion": "1",
+  "clientRequestId": "e371364c-5681-46ef-bd89-4e1a23f6c06d"
+}
+```
+
+세 필드 모두 필수입니다. 버전은 양의 정수를 담은 문자열이며 JSON 숫자는 거절합니다. POST Location은 접수한 분석의 GET 경로입니다. 재시도는 최신 FAILED 실행만 가능하며 성공 재분석·QUEUED/RUNNING의 중복 접수·서버 자동 재시도는 지원하지 않습니다. 원본·공간 버전은 분석 실행으로 증가하지 않습니다.
+
+GET의 `data`:
+
+| 필드 | 타입 | 의미 |
+| --- | --- | --- |
+| `analysisId`, `recordId` | UUID 문자열 | 분석과 원본 식별자 |
+| `status` | 문자열 | QUEUED / RUNNING / COMPLETED / FAILED / DISCARDED |
+| `proposalIds` | UUID 배열 | 완료한 실행의 유효 제안 ID, 없으면 빈 배열 |
+| `failure` | 객체 또는 null | FAILED일 때 `{code, message}`, 그 외 null |
+| `createdAt` | UTC 시각 | 분석 접수 시각 |
+| `startedAt` | UTC 시각 또는 null | 실제 AI 실행을 시작한 시각. 시작 전 실패·폐기도 null 가능 |
+| `finishedAt` | UTC 시각 또는 null | 완료·실패·폐기 시각, 대기·진행 중에는 null |
+| `canRetry` | Boolean | 현재 조회자가 접근 가능하고 이 실행이 최신 FAILED일 때 true |
+
+기존 초안에서 등록 시각으로 표현했던 startedAt은 실제 실행 시작 시각으로 구분하고 createdAt을 제공합니다. COMPLETED는 제안 저장 완료이며 소유자의 최종 반영이나 관리 항목 생성 완료를 뜻하지 않습니다. 제안 0개도 완료입니다.
+
+| HTTP | Code | 발생 조건 |
+| --- | --- | --- |
+| 400 | `INVALID_REQUEST` | UUID·필수 입력·버전 문자열 검증 실패 |
+| 401 | `UNAUTHENTICATED` | 세션 또는 현재 회원 무효 |
+| 403 | `FORBIDDEN` | 현재 참여 없음, POST CSRF 실패, 재전송의 원래 참여 종료 |
+| 404 | `RESOURCE_NOT_FOUND` | 공간/원본/분석 없음·다른 공간, 삭제 중 공간·삭제 원본, 폐기된 재시도 접수 재전송 |
+| 409 | `VERSION_CONFLICT` | 요청 버전과 현재 원본 버전 불일치 |
+| 409 | `ANALYSIS_STATE_CONFLICT` | 지정 실행이 최신 FAILED가 아님 |
+| 409 | `IDEMPOTENCY_KEY_REUSED` | 같은 사용자·요청 ID를 다른 업무/원본/실패 실행/버전에 재사용 |
+| 409 | `REQUEST_IN_PROGRESS` | 같은 사용자·요청 ID의 접수 트랜잭션 처리 중 |
+| 500 | `INTERNAL_ERROR` | 예상하지 못한 API 처리 오류 |
+
+GET에는 재시도 전용 409를 적용하지 않습니다. 비동기 실행 실패는 HTTP 오류가 아닙니다. GET `200 SUCCESS`의 `data.failure`에는 다음 안전한 코드·메시지만 노출하며 AI 응답 원문·내부 오류를 저장하거나 반환하지 않습니다.
+
+| 작업 실패 코드 | 의미 |
+| --- | --- |
+| `AI_SERVICE_UNAVAILABLE` | AI 연결·응답 실패 또는 계약에 맞지 않는 결과 |
+| `ANALYSIS_INTERRUPTED` | 실행기의 생존 갱신 중단·lease 만료 등 실행 중단 |
+| `ANALYSIS_REQUESTER_INACTIVE` | 분석을 요청한 당시 참여가 종료됨 |
+| `ANALYSIS_DEPENDENCY_UNAVAILABLE` | CareItem 후보·결과 저장 연결이 준비되지 않음 |
+| `ANALYSIS_STORAGE_FAILED` | 결과 저장 트랜잭션 실패 |
+
+- 동일 사용자·clientRequestId·내용의 성공 접수 재전송은 원래 analysisId와 접수 당시 QUEUED를 반환합니다. 이후 작업 상태는 GET으로 확인합니다. 완료·실패 후 재전송해도 재실행하지 않습니다. 나갔다가 재참여하면 과거 요청 재전송은 403입니다.
+- 같은 실패를 다른 요청 ID로 동시에 재시도하면 하나만 접수됩니다. 이미 후속 실행이 있다면 409입니다. 새 재시도마다 새 analysisId/requestId를 사용하지만 최초 원본 recordedAt과 Asia/Seoul은 유지합니다.
+- 소식·분석 접수는 원자적이며 결과 제안·문서·근거·COMPLETED도 원자적입니다. 분석 실패로 원본을 제거하지 않습니다. 원본이 삭제되거나 입력 버전이 달라지면 결과를 폐기합니다. 전체 삭제 API는 후속이며 삭제 연결점은 관련 원본과 같은 트랜잭션에서 호출해야 합니다.
+- FE는 저장 응답의 analysisId 또는 최신 상태를 사용해 진행 상황을 조회하고 canRetry일 때 명시적인 재시도 요청을 보냅니다. FE 조회 간격·횟수·사용량 제한은 미정이며 임의의 자동 재시도 루프를 추가하지 않습니다.
+- 실행기 기본 비활성 환경에서는 QUEUED에 머뭅니다. 활성화와 필수 외부 설정은 README를 따릅니다. 실행기 수치는 운영 미정이며 자동 테스트의 수치를 운영 기본값으로 사용하지 않습니다.
+- AI는 현재 CREATE 제안 저장까지 연결합니다. CareItem 도입 시 실제 후보·입력 의존성과 UPDATE/RESOLVE를 함께 확장해야 합니다. 현재 stub/가짜 응답 검증이 실제 모델 품질 검증을 대신하지 않습니다.
 
 ## 문서화와 적용 범위
 
