@@ -158,7 +158,7 @@ class AnalysisIntegrationTests {
                 Integer.class,
                 created.recordId()))
         .isEqualTo(2);
-    assertThat(jdbc.queryForObject("SELECT to_regclass('care_item') IS NULL", Boolean.class))
+    assertThat(jdbc.queryForObject("SELECT to_regclass('care_item') IS NOT NULL", Boolean.class))
         .isTrue();
     assertThat(execution.complete(work, response(work, 2))).isFalse();
     assertThat(detail(created).proposalIds()).hasSize(2);
@@ -607,17 +607,13 @@ class AnalysisIntegrationTests {
   }
 
   @Test
-  void careItemStorageCannotBeSilentlyIgnoredWhenThatDomainArrives() {
+  void careItemStorageIsConnectedAndEmptySpaceStillCompletes() {
     var created = create();
-    jdbc.execute("CREATE TABLE care_item (id uuid PRIMARY KEY)");
-    try {
-      assertThat(execution.claim(space.spaceId(), created.analysis().analysisId(), TEST_LEASE))
-          .isEmpty();
-      assertThat(detail(created).failure().code()).isEqualTo("ANALYSIS_DEPENDENCY_UNAVAILABLE");
-      verifyNoInteractions(client);
-    } finally {
-      jdbc.execute("DROP TABLE care_item");
-    }
+    var work =
+        execution.claim(space.spaceId(), created.analysis().analysisId(), TEST_LEASE).orElseThrow();
+    assertThat(work.request().candidates()).isEmpty();
+    processor.process(work);
+    assertThat(detail(created).status()).isEqualTo(AnalysisStatus.COMPLETED);
   }
 
   @Test
