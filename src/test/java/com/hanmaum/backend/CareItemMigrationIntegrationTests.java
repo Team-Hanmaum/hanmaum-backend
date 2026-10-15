@@ -23,7 +23,7 @@ class CareItemMigrationIntegrationTests {
   @Autowired PlatformTransactionManager transactions;
 
   @Test
-  void upgradesV6WithoutLosingDocumentsAndEnforcesSameSpaceReferences() {
+  void upgradesV6ThroughV8AndV9WithoutLosingDataOrInventingEvidenceSnapshots() {
     String schema = "care_upgrade_" + UUID.randomUUID().toString().replace("-", "");
     Flyway.configure()
         .dataSource(dataSource)
@@ -119,5 +119,74 @@ class CareItemMigrationIntegrationTests {
             + ".content_document (id,space_id,kind,body,created_at) VALUES (?,?,'DIRECT_INPUT','{}',now())",
         UUID.randomUUID(),
         space);
+
+    UUID source = UUID.randomUUID(), run = UUID.randomUUID();
+    tx.executeWithoutResult(
+        status -> {
+          jdbc.execute("SET LOCAL search_path TO " + schema);
+          jdbc.update(
+              "INSERT INTO source_record (id,space_id,author_membership_id,body,recorded_at) VALUES (?,?,?,'기존 원본',now())",
+              source,
+              space,
+              member);
+          jdbc.update(
+              """
+          INSERT INTO analysis_run (id,space_id,record_id,record_version,attempt_no,request_id,
+            input_recorded_at,timezone,requested_by_membership_id,status,created_at,started_at,worker_token,lease_until)
+          VALUES (?,?,?,1,1,?,now(),'Asia/Seoul',?,'RUNNING',now(),now(),?,now()+interval '2 minutes')
+          """,
+              run,
+              space,
+              source,
+              UUID.randomUUID(),
+              member,
+              UUID.randomUUID());
+          jdbc.update("INSERT INTO analysis_input_source VALUES (?,?,?,1)", space, run, source);
+          jdbc.update(
+              "INSERT INTO analysis_input_item (space_id,run_id,item_id,item_version,document_id) VALUES (?,?,?,1,?)",
+              space,
+              run,
+              item,
+              document);
+        });
+    var oldRun = jdbc.queryForMap("SELECT * FROM " + schema + ".analysis_run WHERE id=?", run);
+    var oldItem = jdbc.queryForMap("SELECT * FROM " + schema + ".care_item WHERE id=?", item);
+    var v8Checksum =
+        jdbc.queryForObject(
+            "SELECT checksum FROM " + schema + ".flyway_schema_history WHERE version='8'",
+            Integer.class);
+    var upgraded =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .target("9")
+            .load();
+    upgraded.migrate();
+    upgraded.validate();
+    assertThat(upgraded.info().current().getVersion().getVersion()).isEqualTo("9");
+    assertThat(jdbc.queryForMap("SELECT * FROM " + schema + ".analysis_run WHERE id=?", run))
+        .isEqualTo(oldRun);
+    assertThat(jdbc.queryForMap("SELECT * FROM " + schema + ".care_item WHERE id=?", item))
+        .isEqualTo(oldItem);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT source_evidence_ids IS NULL FROM "
+                    + schema
+                    + ".analysis_input_item WHERE run_id=?",
+                Boolean.class,
+                run))
+        .isTrue();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT body::text FROM " + schema + ".content_document WHERE id=?",
+                String.class,
+                document))
+        .contains("기존 제안");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT checksum FROM " + schema + ".flyway_schema_history WHERE version='8'",
+                Integer.class))
+        .isEqualTo(v8Checksum);
   }
 }

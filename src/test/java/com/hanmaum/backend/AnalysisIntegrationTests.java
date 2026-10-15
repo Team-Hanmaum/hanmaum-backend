@@ -158,8 +158,10 @@ class AnalysisIntegrationTests {
                 Integer.class,
                 created.recordId()))
         .isEqualTo(2);
-    assertThat(jdbc.queryForObject("SELECT to_regclass('care_item') IS NOT NULL", Boolean.class))
-        .isTrue();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM care_item WHERE space_id=?", Long.class, space.spaceId()))
+        .isZero();
     assertThat(execution.complete(work, response(work, 2))).isFalse();
     assertThat(detail(created).proposalIds()).hasSize(2);
   }

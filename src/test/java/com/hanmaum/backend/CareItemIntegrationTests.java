@@ -28,6 +28,7 @@ import java.util.stream.Stream;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -297,11 +298,18 @@ class CareItemIntegrationTests {
 
   @Test
   void erasedDocumentAndDeletedItemCannotBeReplayedOrLeakTheirContent() {
-    var request = request("민감한 일정", new ScheduleFields("2026-10-15", "10:00", "병원"));
+    var request =
+        new CreateCareItemRequest(
+            "SCHEDULE",
+            "민감한 일정",
+            "민감한 설명",
+            new ScheduleFields("2026-10-15", "10:00", "병원"),
+            UUID.randomUUID());
     var item = creation.create(owner, space.spaceId(), request);
     redact(item.itemId());
     var detail = queries.detail(member, space.spaceId(), item.itemId());
     assertThat(detail.title()).isNull();
+    assertThat(detail.description()).isNull();
     assertThat(detail.fields().isEmpty()).isTrue();
     assertThat(detail.needsReconfirmation()).isTrue();
     assertThat(detail.redactedFields()).contains("title", "description", "fields");
@@ -310,6 +318,42 @@ class CareItemIntegrationTests {
     jdbc.update("UPDATE care_item SET visibility='DELETED' WHERE id=?", item.itemId());
     assertThat(queries.list(member, space.spaceId(), null, null, null).items()).isEmpty();
     assertThat(queries.detail(member, space.spaceId(), item.itemId()).status()).isNull();
+  }
+
+  @Test
+  void deletedItemHidesContentEvenWhenItsDocumentHasNotBeenRedacted() throws Exception {
+    var request =
+        new CreateCareItemRequest(
+            "SCHEDULE",
+            "삭제할 일정",
+            "남아 있는 설명",
+            new ScheduleFields("2026-10-15", "10:00", "병원"),
+            UUID.randomUUID());
+    var item = creation.create(owner, space.spaceId(), request);
+    jdbc.update("UPDATE care_item SET visibility='DELETED' WHERE id=?", item.itemId());
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT d.body::text FROM content_document d JOIN care_item i ON i.current_document_id=d.id WHERE i.id=?",
+                String.class,
+                item.itemId()))
+        .contains("삭제할 일정", "남아 있는 설명", "병원");
+
+    var detail = queries.detail(member, space.spaceId(), item.itemId());
+    assertThat(detail.visibility()).isEqualTo("DELETED");
+    assertThat(detail.title()).isNull();
+    assertThat(detail.description()).isNull();
+    assertThat(detail.fields().isEmpty()).isTrue();
+    assertThat(detail.status()).isNull();
+    assertThat(queries.list(member, space.spaceId(), null, null, null).items()).isEmpty();
+    assertCode(
+        () -> creation.create(owner, space.spaceId(), request), CommonErrorCode.RESOURCE_NOT_FOUND);
+    var response =
+        mvc.perform(get(path() + "/" + item.itemId()).with(authentication(login(member))))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    assertThat(response).doesNotContain("삭제할 일정", "남아 있는 설명", "병원");
   }
 
   @Test
@@ -440,6 +484,120 @@ class CareItemIntegrationTests {
         .isEqualTo(AnalysisStatus.DISCARDED);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"UNCHANGED", "REDACTED", "REMOVED", "LEGACY"})
+  void completionRevalidatesCapturedEvidenceWithoutRelyingOnSourceOrItemChanges(String change) {
+    var candidate = create("근거 연결 일정");
+    var basis =
+        records.create(
+            owner, space.spaceId(), new CreateSourceRecordRequest("근거 소식", UUID.randomUUID()));
+    UUID evidence = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO evidence (id,space_id,record_id,record_version,quote,created_at) VALUES (?,?,?,1,'근거 소식',now())",
+        evidence,
+        space.spaceId(),
+        basis.recordId());
+    jdbc.update(
+        "INSERT INTO care_item_basis (id,space_id,item_id,source_evidence_id,created_at) VALUES (?,?,?,?,now())",
+        UUID.randomUUID(),
+        space.spaceId(),
+        candidate.itemId(),
+        evidence);
+    var source =
+        records.create(
+            owner, space.spaceId(), new CreateSourceRecordRequest("새 소식", UUID.randomUUID()));
+    var work =
+        execution
+            .claim(space.spaceId(), source.analysis().analysisId(), Duration.ofMinutes(2))
+            .orElseThrow();
+    assertThat(work.request().candidates())
+        .extracting(AiAnalysisRequest.CandidateItem::itemId)
+        .containsExactly(candidate.itemId());
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT source_evidence_ids = ARRAY[?]::uuid[] FROM analysis_input_item WHERE run_id=? AND item_id=?",
+                Boolean.class,
+                evidence,
+                work.run().id(),
+                candidate.itemId()))
+        .isTrue();
+    var beforeItem =
+        jdbc.queryForMap(
+            "SELECT version,current_document_id FROM care_item WHERE id=?", candidate.itemId());
+    var beforeSource =
+        jdbc.queryForMap(
+            "SELECT version,lifecycle,body FROM source_record WHERE id=?", basis.recordId());
+    switch (change) {
+      case "REDACTED" ->
+          jdbc.update("UPDATE evidence SET quote=NULL,redacted_at=now() WHERE id=?", evidence);
+      case "REMOVED" -> {
+        jdbc.update("DELETE FROM care_item_basis WHERE source_evidence_id=?", evidence);
+        jdbc.update("DELETE FROM evidence WHERE id=?", evidence);
+      }
+      case "LEGACY" ->
+          jdbc.update(
+              "UPDATE analysis_input_item SET source_evidence_ids=NULL WHERE run_id=?",
+              work.run().id());
+      default -> {}
+    }
+    assertThat(
+            jdbc.queryForMap(
+                "SELECT version,current_document_id FROM care_item WHERE id=?", candidate.itemId()))
+        .isEqualTo(beforeItem);
+    assertThat(
+            jdbc.queryForMap(
+                "SELECT version,lifecycle,body FROM source_record WHERE id=?", basis.recordId()))
+        .isEqualTo(beforeSource);
+    var response =
+        new AiAnalysisResponse(
+            work.request().requestId(),
+            List.of(
+                new AiAnalysisResponse.Suggestion(
+                    AiAnalysisResponse.Operation.CREATE,
+                    CareItemType.OBSERVATION,
+                    null,
+                    null,
+                    List.of(),
+                    "분석 결과",
+                    "새 소식",
+                    Map.of("content", "새 소식"))));
+    boolean valid = change.equals("UNCHANGED");
+    assertThat(execution.complete(work, response)).isEqualTo(valid);
+    var result = analyses.find(owner, space.spaceId(), source.recordId(), work.run().id());
+    assertThat(result.status())
+        .isEqualTo(valid ? AnalysisStatus.COMPLETED : AnalysisStatus.DISCARDED);
+    assertThat(result.proposalIds()).hasSize(valid ? 1 : 0);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM ai_proposal WHERE run_id=?", Long.class, work.run().id()))
+        .isEqualTo(valid ? 1L : 0L);
+    assertThat(count()).isEqualTo(1);
+  }
+
+  @Test
+  void directInputCandidateCapturesEmptyEvidenceAndCompletesNormally() {
+    var candidate = create("직접 등록 일정");
+    var source =
+        records.create(
+            owner, space.spaceId(), new CreateSourceRecordRequest("새 소식", UUID.randomUUID()));
+    var work =
+        execution
+            .claim(space.spaceId(), source.analysis().analysisId(), Duration.ofMinutes(2))
+            .orElseThrow();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT source_evidence_ids = '{}'::uuid[] FROM analysis_input_item WHERE run_id=? AND item_id=?",
+                Boolean.class,
+                work.run().id(),
+                candidate.itemId()))
+        .isTrue();
+    assertThat(
+            execution.complete(work, new AiAnalysisResponse(work.request().requestId(), List.of())))
+        .isTrue();
+    assertThat(analyses.find(owner, space.spaceId(), source.recordId(), work.run().id()).status())
+        .isEqualTo(AnalysisStatus.COMPLETED);
+  }
+
   @Test
   void longPublicInputIsStoredButInternalCandidateTransportFailsClosedWithoutTruncation() {
     create("긴".repeat(2100));
@@ -466,8 +624,20 @@ class CareItemIntegrationTests {
             .getResponse()
             .getContentAsString();
     var doc = mapper.readTree(json);
-    assertThat(doc.at("/paths/~1api~1spaces~1{spaceId}~1items/post/security").toString())
-        .contains("SessionCookie", "CsrfToken");
+    var security = doc.at("/paths/~1api~1spaces~1{spaceId}~1items/post/security");
+    assertThat(security.isArray()).isTrue();
+    assertThat(security.size()).isEqualTo(1);
+    assertThat(security.get(0).size()).isEqualTo(2);
+    assertThat(security.at("/0/SessionCookie").isArray()).isTrue();
+    assertThat(security.at("/0/CsrfToken").isArray()).isTrue();
+    for (String field : List.of("title", "status", "assigneeDisplayName")) {
+      var types = doc.at("/components/schemas/CareItemSummary/properties/" + field + "/type");
+      assertThat(types.isArray()).as(field).isTrue();
+      assertThat(types.size()).as(field).isEqualTo(2);
+      assertThat(List.of(types.get(0).asText(), types.get(1).asText()))
+          .as(field)
+          .containsExactlyInAnyOrder("string", "null");
+    }
     assertThat(
             doc.at("/components/schemas/CreateCareItemRequest/properties/itemType/enum").toString())
         .contains("SCHEDULE")

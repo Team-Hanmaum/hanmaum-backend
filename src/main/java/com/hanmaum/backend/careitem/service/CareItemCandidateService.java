@@ -9,7 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Captures the exact item/document and source dependencies in the claim transaction. */
+/** Captures the exact item/document, evidence and source dependencies in the claim transaction. */
 @Service
 @Transactional(
     propagation = Propagation.MANDATORY,
@@ -25,7 +25,10 @@ public class CareItemCandidateService {
     var rows =
         jdbc.query(
             """
-        SELECT i.id, i.version, i.item_type, i.current_document_id, d.body::text AS summary
+        SELECT i.id, i.version, i.item_type, i.current_document_id, d.body::text AS summary,
+          ARRAY(SELECT b.source_evidence_id FROM care_item_basis b
+            WHERE b.space_id=i.space_id AND b.item_id=i.id AND b.source_evidence_id IS NOT NULL
+            ORDER BY b.source_evidence_id) AS source_evidence_ids
         FROM care_item i JOIN content_document d ON d.space_id = i.space_id AND d.id = i.current_document_id
         WHERE i.space_id = ? AND i.visibility = 'VISIBLE' AND NOT i.needs_reconfirmation
           AND d.body IS NOT NULL AND d.redacted_at IS NULL
@@ -48,22 +51,30 @@ public class CareItemCandidateService {
                     rs.getLong("version"),
                     CareItemType.valueOf(rs.getString("item_type")),
                     rs.getObject("current_document_id", UUID.class),
-                    rs.getString("summary")),
+                    rs.getString("summary"),
+                    (UUID[]) rs.getArray("source_evidence_ids").getArray()),
             space);
     // These are existing internal transport limits, not new public input/space limits.
     if (rows.size() > 50 || rows.stream().anyMatch(r -> r.summary().length() > 2000))
       throw new CandidateIntegrationRequiredException();
     for (var row : rows) {
       jdbc.update(
-          """
-          INSERT INTO analysis_input_item (space_id, run_id, item_id, item_version, document_id)
-          VALUES (?, ?, ?, ?, ?)
-          """,
-          space,
-          run,
-          row.id(),
-          row.version(),
-          row.document());
+          connection -> {
+            var statement =
+                connection.prepareStatement(
+                    """
+                INSERT INTO analysis_input_item
+                  (space_id, run_id, item_id, item_version, document_id, source_evidence_ids)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """);
+            statement.setObject(1, space);
+            statement.setObject(2, run);
+            statement.setObject(3, row.id());
+            statement.setLong(4, row.version());
+            statement.setObject(5, row.document());
+            statement.setArray(6, connection.createArrayOf("uuid", row.evidenceIds()));
+            return statement;
+          });
       jdbc.update(
           """
           INSERT INTO analysis_input_source (space_id, run_id, source_record_id, source_version)
@@ -81,5 +92,10 @@ public class CareItemCandidateService {
   }
 
   private record Captured(
-      UUID id, long version, CareItemType type, UUID document, String summary) {}
+      UUID id,
+      long version,
+      CareItemType type,
+      UUID document,
+      String summary,
+      UUID[] evidenceIds) {}
 }
