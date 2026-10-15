@@ -70,7 +70,10 @@ public class ProposalQueryRepository {
             AND author.id = r.author_membership_id
           LEFT JOIN app_user u ON u.id = author.user_id
           LEFT JOIN space_membership assignee ON assignee.space_id = p.space_id
-            AND assignee.is_active AND assignee.id::text = d.body #>> '{changes,assigneeMembershipId}'
+            AND assignee.is_active AND assignee.id = CASE
+              WHEN (d.body #>> '{changes,assigneeMembershipId}')
+                ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+              THEN (d.body #>> '{changes,assigneeMembershipId}')::uuid END
           CROSS JOIN LATERAL (
             SELECT p.invalidated_at IS NULL AND p.resolution = 'OPEN'
               AND a.status = 'COMPLETED' AND a.invalidated_at IS NULL
@@ -104,6 +107,10 @@ public class ProposalQueryRepository {
                       AND input_evidence.id = captured.evidence_id
                     WHERE input_evidence.id IS NULL OR input_evidence.quote IS NULL
                       OR input_evidence.redacted_at IS NOT NULL
+                      OR NOT EXISTS (
+                        SELECT 1 FROM care_item_basis basis
+                        WHERE basis.space_id = dep.space_id AND basis.item_id = dep.item_id
+                          AND basis.source_evidence_id = captured.evidence_id)
                       OR NOT EXISTS (
                         SELECT 1 FROM analysis_input_source source
                         WHERE source.space_id = dep.space_id AND source.run_id = dep.run_id

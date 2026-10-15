@@ -365,6 +365,8 @@ class ProposalQueryIntegrationTests {
         "reconfirmation",
         "evidence-redacted",
         "evidence-removed",
+        "evidence-detached",
+        "evidence-reassigned",
         "source-erased",
         "source-version",
         "legacy"
@@ -435,6 +437,36 @@ class ProposalQueryIntegrationTests {
       case "evidence-removed" -> {
         jdbc.update("DELETE FROM care_item_basis WHERE source_evidence_id=?", evidence);
         jdbc.update("DELETE FROM evidence WHERE id=?", evidence);
+      }
+      case "evidence-detached", "evidence-reassigned" -> {
+        jdbc.update(
+            "DELETE FROM care_item_basis WHERE item_id=? AND source_evidence_id=?",
+            item.itemId(),
+            evidence);
+        if (change.equals("evidence-reassigned")) {
+          var other =
+              careItems.create(
+                  owner,
+                  space.spaceId(),
+                  new CreateCareItemRequest(
+                      "SCHEDULE",
+                      "다른 일정",
+                      null,
+                      new ScheduleFields(null, null, null),
+                      UUID.randomUUID()));
+          jdbc.update(
+              "INSERT INTO care_item_basis (id,space_id,item_id,source_evidence_id,created_at) VALUES (?,?,?,?,now())",
+              UUID.randomUUID(),
+              space.spaceId(),
+              other.itemId(),
+              evidence);
+        }
+        assertThat(
+                jdbc.queryForObject(
+                    "SELECT e.quote IS NOT NULL AND e.redacted_at IS NULL AND r.lifecycle='ACTIVE' AND r.version=e.record_version FROM evidence e JOIN source_record r ON r.id=e.record_id WHERE e.id=?",
+                    Boolean.class,
+                    evidence))
+            .isTrue();
       }
       case "source-erased" -> erase(basisSource);
       case "source-version" ->
@@ -521,6 +553,66 @@ class ProposalQueryIntegrationTests {
                     queries.detail(owner, space.spaceId(), latest.proposalId()).proposedValues())
                 .assigneeMembershipId())
         .isNull();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "lower",
+        "upper",
+        "mixed",
+        "missing",
+        "empty",
+        "malformed",
+        "noncanonical",
+        "foreign",
+        "ended",
+        "unknown"
+      })
+  void assigneeLookupUsesUuidValuesAndSafelyIgnoresInvalidOrIneligibleValues(String mode)
+      throws Exception {
+    String value = membership.toString();
+    switch (mode) {
+      case "upper", "ended" -> value = value.toUpperCase(Locale.ROOT);
+      case "mixed" -> value = value.substring(0, 18).toUpperCase(Locale.ROOT) + value.substring(18);
+      case "missing" -> value = null;
+      case "empty" -> value = "";
+      case "malformed" -> value = "not-a-uuid";
+      case "noncanonical" -> value = "1-1-1-1-1";
+      case "unknown" -> value = UUID.randomUUID().toString();
+      case "foreign" -> {
+        var other = spaces.create(outsider, new CreateCareSpaceRequest("다른 공간", UUID.randomUUID()));
+        value =
+            jdbc.queryForObject(
+                    "SELECT owner_membership_id::text FROM care_space WHERE id=?",
+                    String.class,
+                    other.spaceId())
+                .toUpperCase(Locale.ROOT);
+      }
+      default -> {}
+    }
+    complete(
+        List.of(
+            suggestion(
+                CareItemType.TASK,
+                value == null ? Map.of() : Map.of("assigneeMembershipId", value))));
+    UUID proposal = list(owner).items().getFirst().proposalId();
+    if (mode.equals("ended")) end();
+    boolean valid = List.of("lower", "upper", "mixed").contains(mode);
+    var before = snapshot();
+    var detail = queries.detail(owner, space.spaceId(), proposal);
+    assertThat(((ProposalValues.Task) detail.proposedValues()).assigneeMembershipId())
+        .isEqualTo(valid ? membership : null);
+    var response =
+        mvc.perform(get(path() + "/" + proposal).with(authentication(login(owner))))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    var assignee = mapper.readTree(response).at("/data/proposedValues/assigneeMembershipId");
+    if (valid) assertThat(assignee.asText()).isEqualTo(membership.toString());
+    else assertThat(assignee.isNull()).isTrue();
+    assertThat(snapshot()).isEqualTo(before);
   }
 
   @Test
