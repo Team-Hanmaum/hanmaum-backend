@@ -485,7 +485,7 @@ class CareItemIntegrationTests {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"UNCHANGED", "REDACTED", "REMOVED", "LEGACY"})
+  @ValueSource(strings = {"UNCHANGED", "REDACTED", "REMOVED", "DETACHED", "LEGACY"})
   void completionRevalidatesCapturedEvidenceWithoutRelyingOnSourceOrItemChanges(String change) {
     var candidate = create("근거 연결 일정");
     var basis =
@@ -533,6 +533,18 @@ class CareItemIntegrationTests {
       case "REMOVED" -> {
         jdbc.update("DELETE FROM care_item_basis WHERE source_evidence_id=?", evidence);
         jdbc.update("DELETE FROM evidence WHERE id=?", evidence);
+      }
+      case "DETACHED" -> {
+        jdbc.update(
+            "DELETE FROM care_item_basis WHERE item_id=? AND source_evidence_id=?",
+            candidate.itemId(),
+            evidence);
+        assertThat(
+                jdbc.queryForObject(
+                    "SELECT quote IS NOT NULL AND redacted_at IS NULL FROM evidence WHERE id=?",
+                    Boolean.class,
+                    evidence))
+            .isTrue();
       }
       case "LEGACY" ->
           jdbc.update(

@@ -238,7 +238,7 @@ FE는 초대 경로·비로그인 사용자의 로그인 후 복귀를 합의해
 
 - 이전·내보내기 성공 시 역할·구성원·공간 상세를 재조회합니다. 나가기 성공 시 해당 공간 캐시를 제거하고 참여 공간 목록으로 이동합니다. 대상 사용자의 다른 브라우저는 다음 API의 403/404에서 캐시·화면을 정리해야 하며, 서버가 이미 표시된 내용을 회수하거나 실시간 알림을 보내지는 않습니다.
 - VERSION_CONFLICT는 최신 내용 조회 후 사용자 재확인이 필요합니다. 버전만 자동 교체해 재실행하지 않습니다. 재전송 결과의 과거 버전·역할로 현재 캐시를 덮어쓰지 않습니다.
-- CareItem은 미구현입니다. **미완료 할 일 담당 해제·종료된 참여의 편집 잠금 무효화는 아직 동작하지 않습니다.** 실제 담당 해제 집계가 없어 `unassignedTaskCount`를 응답에서 제외합니다. 할 일 기능 도입 전에 참여 종료와 같은 트랜잭션으로 해당 Service를 연결하고 영향 항목 버전·이력을 갱신해야 합니다. 다른 편집 잠금이 권한 종료를 지연시키면 안 됩니다. 완료 상태·기존 공동 기록은 보존합니다.
+- CareItem의 일정 등록·조회는 구현됐으며, 할 일 담당·편집 잠금 연동은 후속입니다. **미완료 할 일 담당 해제·종료된 참여의 편집 잠금 무효화는 아직 동작하지 않습니다.** 실제 담당 해제 집계가 없어 `unassignedTaskCount`를 응답에서 제외합니다. 할 일 기능 도입 전에 참여 종료와 같은 트랜잭션으로 해당 Service를 연결하고 영향 항목 버전·이력을 갱신해야 합니다. 다른 편집 잠금이 권한 종료를 지연시키면 안 됩니다. 완료 상태·기존 공동 기록은 보존합니다.
 - Proposal의 변경 요청·최종 반영은 미구현입니다. 합의한 후속 계약은 소유권 이전 후 새 소유자가 대기 요청을 검토하고, 종료된 참여자가 제출한 미처리 요청은 반영을 막되 이력을 보존하는 것입니다. 최종 반영 시 현재 소유권·요청자의 원래 참여 상태를 다시 검사해야 합니다.
 - 공유 링크의 접근 종료도 Sharing 구현 시 현재 참여를 검사해야 합니다. 이번 세 API를 구현한 것이 CareItem·Proposal·Sharing까지 포함한 전체 제품 정책 완료를 뜻하지 않습니다. AI 호출은 없습니다.
 
@@ -355,6 +355,78 @@ GET에는 재시도 전용 409를 적용하지 않습니다. 비동기 실행 �
 - 실행기 기본 비활성 환경에서는 QUEUED에 머뭅니다. 활성화와 필수 외부 설정은 README를 따릅니다. 실행기 수치는 운영 미정이며 자동 테스트의 수치를 운영 기본값으로 사용하지 않습니다.
 - AI는 같은 공간의 CareItem 후보·입력 의존성과 CREATE 제안 저장까지 연결합니다. UPDATE/RESOLVE 저장은 후속입니다. 현재 stub/가짜 응답 검증이 실제 모델 품질 검증을 대신하지 않습니다.
 
+## AI 제안 목록·상세·근거 조회
+
+| Method | 경로 | 설명 |
+| --- | --- | --- |
+| GET | `/api/spaces/{spaceId}/proposals` | 현재 공간의 저장된 CREATE 제안 목록 |
+| GET | `/api/spaces/{spaceId}/proposals/{proposalId}` | 제안 상세와 주 원본 근거 |
+
+활성 공간의 현재 참여자(소유자/구성원)가 세션으로 조회합니다. 두 API 모두 `200 SUCCESS` 공통 응답과 `Cache-Control: no-store`를 사용합니다. GET은 상태·버전·성공 요청 기록을 변경하거나 AI를 호출하지 않으며 CSRF·clientRequestId·항목 잠금을 요구하지 않습니다.
+
+### 목록 요청과 응답
+
+| Query | 타입 | 의미 |
+| --- | --- | --- |
+| recordId | UUID, 선택 | 같은 공간의 특정 원본으로 제한. 존재하지 않거나 다른 공간의 원본은 404 |
+| status | 문자열, 선택 | `REVIEW_PENDING`(생략 시 기본) 또는 `INVALIDATED` |
+| cursor | 문자열, 선택 | 같은 공간·recordId·status에서 받은 nextCursor. 첫 조회는 생략 |
+| size | 정수, 선택 | 기본 20, 1~50 |
+
+생성 시각·제안 ID 내림차순입니다. `data`는 `items`, `nextCursor`(마지막 null), `hasNext`를 포함합니다. 빈 결과는 `items: []`, `nextCursor: null`, `hasNext: false`입니다. 아직 분석 대기 중이거나 완료 결과가 0개여도 빈 목록입니다. 새로 생긴 제안은 첫 페이지를 다시 조회해야 합니다. 커서는 위치이며 페이지 전체를 고정하지 않습니다. 필터 변경·훼손·키 변경으로 무효가 되면 첫 조회부터 시작합니다.
+
+| items 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| proposalId / recordId / analysisId | UUID | 제안·원본·분석 실행 식별자 |
+| itemType | 문자열 | SCHEDULE / TASK / QUESTION / OBSERVATION / GUIDANCE |
+| action | 문자열 | 현재 `CREATE_ITEM` |
+| status | 문자열 | 유효한 OPEN은 `REVIEW_PENDING`, 무효는 `INVALIDATED` |
+| title | 문자열 또는 null | 제안 제목. 무효는 null |
+| targetItemId | UUID 또는 null | 현재 CREATE는 null |
+| needsConflictReview | boolean 또는 null | 판정 미연결로 null. 충돌 없음(false)을 뜻하지 않음 |
+| createdAt | UTC ISO 8601 | 제안 저장 시각 |
+
+승인/반영 상태는 아직 저장 모델과 연결되지 않아 `APPROVAL_REQUESTED`, `APPLIED`, `DECLINED` 필터는 현재 400입니다. 구현되지 않은 상태를 빈 목록으로 성공 처리하지 않습니다.
+
+### 상세 응답
+
+목록의 식별·유형·작업·상태·제목·시각 필드에 다음을 추가합니다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| spaceId | UUID | 소속 공간 |
+| analysisTargetVersion / currentItemVersion | 문자열 또는 null | 현재 CREATE는 null |
+| currentValues | 객체 또는 null | 현재 CREATE는 null |
+| proposedValues | 유형별 객체 또는 null | 아래 공개 필드. 무효 제안은 객체 전체 null |
+| candidates | 배열 | 현재 CREATE는 빈 배열 |
+| evidence | 배열 | evidenceId, recordId, quote, valid, author, recordedAt. 무효는 빈 배열 |
+| relationKind | 문자열 또는 null | 관계 판정 미연결로 null |
+| reviewToken | 문자열 또는 null | 반영 API 미구현으로 null. TTL 미정 |
+| redactedFields | 문자열 배열 | 정상은 빈 배열, 무효는 `["title", "proposedValues", "evidence"]` |
+
+근거의 `valid`는 반환된 유효 근거에 대해 true이며, `author`는 소식 조회와 같은 membershipId/displayName/withdrawn을 사용합니다. 탈퇴하여 회원 연결이 없는 작성자는 ID·이름 null, withdrawn=true입니다. 단순 참여 종료는 원본 삭제가 아닙니다. `recordedAt`은 제안 시각이 아닌 원본 등록 시각입니다.
+
+| itemType | proposedValues 필드 (공통 title/description 포함) |
+| --- | --- |
+| SCHEDULE | scheduledDate(YYYY-MM-DD), scheduledTime(HH:mm, Asia/Seoul), location |
+| TASK | dueDate(YYYY-MM-DD), assigneeMembershipId(UUID) |
+| QUESTION | title, description |
+| OBSERVATION | observedDate(YYYY-MM-DD), observedTimeText |
+| GUIDANCE | sourceName, receivedDate(YYYY-MM-DD) |
+
+기존 노션 CareItem 필드명으로 조회용 변환을 합니다. 저장 제목 외 누락/미상/변환 불가 값은 null이며 새로운 입력 필수값·길이 제한·과거/미래 날짜 정책을 정한 것이 아닙니다. TASK 담당자는 같은 공간의 현재 참여 ID만 반환합니다. 내부 changes 전체, 알 수 없는 필드, 미확정 답변은 노출하지 않습니다. 내부 필드 별칭의 호환 규칙은 [AI 계약](ai-contract.md#be-공개-조회로의-변환)을 따릅니다.
+
+### 무효화·오류·연동 경계
+
+- 원본 삭제/버전 변경, 제안 무효화, 실행 폐기, 문서·근거 제거를 검사합니다. 주 원본 이외 분석에 입력된 모든 원본, 후보 항목의 현재 버전·문서·가시성·재확인 상태, 시작 시 기록한 근거 ID도 검사하며, 파생 내용이 DB에 아직 남아 있어도 API로 반환하지 않습니다. 기본 목록은 제외하고 INVALIDATED 필터/상세에서는 식별 메타데이터만 반환합니다. 삭제된 같은 공간 원본으로 INVALIDATED 필터를 조회할 수 있습니다.
+- 후보 의존성의 근거 ID가 null인 과거 실행은 안전하게 INVALIDATED로 조회합니다. 캡처된 근거가 살아 있어도 해당 후보의 `care_item_basis` 연결이 끊기면 무효로 처리합니다. 직접 입력만 사용한 후보의 빈 배열과 후보가 없는 기존 실행은 유효할 수 있습니다. 조회는 실행 상태·제안·항목을 갱신하지 않습니다.
+- 문서·근거를 실제로 제거하는 원본 삭제 트랜잭션은 별도 필수 작업입니다. 읽기 방어만으로 삭제 API 전체가 구현된 것은 아닙니다.
+- 400 INVALID_REQUEST: 잘못된 ID·필터·size·cursor. 401 UNAUTHENTICATED: 유효 세션/회원 없음. 403 FORBIDDEN: 공간 현재 참여 아님. 404 RESOURCE_NOT_FOUND: 활성 공간/같은 공간의 대상 없음. 500 INTERNAL_ERROR: 서버 실패. 업무 오류 메시지와 필드 오류는 공통 규격을 사용합니다.
+- FE는 두 상태와 null 필드를 처리하고, 원문 확인에는 기존 소식 상세 API를 사용합니다. 현재 조회 응답으로 승인 토큰·항목 버전·관계 판정이 준비되었다고 가정하지 않습니다.
+- AI의 실제 유형별 출력 검증, 후보 선택·현재값 비교·관계 판정의 공개 계약, 제안 수정/거절/변경 요청/소유자 반영은 후속입니다. 운영 TTL·조회 주기·필드 길이 정책은 이번 조회 구현에서 확정하지 않습니다.
+
+명세 근거: [제안 목록](https://app.notion.com/p/3ef0f25ea138818dab00e94f7b6a08bd), [제안 상세](https://app.notion.com/p/3ef0f25ea1388176bbd3d1381325fe19), [CareItem 상세 필드](https://app.notion.com/p/3ef0f25ea138814696dddf926758474b). 이 문서는 현재 구현 범위를 기록하며 노션 DB/템플릿 갱신과 구분합니다.
+
 ## 문서화와 적용 범위
 
 Swagger에 공통 응답·오류 스키마, 재사용 가능한 오류 응답, 세션 쿠키·CSRF 보안 스키마를 둡니다. 공개 경로에 인증을 잘못 표시하지 않도록 전역 보안 요구를 일괄 적용하지 않고 각 API에 필요한 조건과 실제 오류만 명시합니다.
@@ -407,7 +479,7 @@ CSRF·로그아웃 등 존재하는 경로만 문서화하며 미구현 도메�
 
 ### 저장·분석 연동과 후속
 
-V8은 `care_item`, `care_item_basis`, `care_item_history`, `analysis_input_item`을 추가하고 기존 `content_document`에 DIRECT_INPUT 유형을 허용합니다. V1~V6는 수정하지 않고 V7은 #21용으로 남깁니다. V7/V8 배포 순서를 맞춰야 하며 V7이 이미 적용된 개발 DB는 V7 파일이 포함된 통합 checkout에서 실행해야 합니다.
+V8은 `care_item`, `care_item_basis`, `care_item_history`, `analysis_input_item`을 추가하고 기존 `content_document`에 DIRECT_INPUT 유형을 허용합니다. 통합 코드에는 V7 제안 조회 인덱스와 V8·V9가 모두 포함됩니다. 기존 V1~V9 파일은 수정하지 않습니다. V7까지 적용된 DB는 V8·V9로 순서대로 업그레이드하며, V7 없이 V8/V9를 먼저 적용한 DB는 적용 순서를 별도로 점검합니다.
 
 후보는 같은 공간의 유효한 현재 문서와 근거만 사용합니다. 실행기가 분석을 시작할 때 항목 버전·문서와 원본 의존성을 함께 기록하고 완료 시 재검증합니다. V9는 그때 사용한 근거 ID를 추가로 보존하므로 근거 연결이 없어지거나 원본 버전 변경 없이 근거 내용만 제거되어도 늦은 결과를 폐기합니다. V8에서 근거 목록을 기록하지 않은 후보 실행은 완료를 허용하지 않습니다. 기존 내부 후보 50개·요약 2,000 UTF-16 코드 단위 한도를 초과하면 자동 축약/부분 선택하지 않고 분석 의존성 오류로 종료합니다. 공개 일정 입력 제한과 별개입니다. 현재 summary 표현과 AI 연동 경계는 [AI 계약](ai-contract.md#careitem-후보와-입력-근거-검증)을 따릅니다.
 

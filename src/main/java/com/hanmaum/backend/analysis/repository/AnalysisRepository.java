@@ -157,6 +157,10 @@ public class AnalysisRepository {
                 LEFT JOIN evidence e ON e.space_id=dep.space_id AND e.id=captured.evidence_id
                 WHERE e.id IS NULL OR e.quote IS NULL OR e.redacted_at IS NOT NULL
                   OR NOT EXISTS (
+                    SELECT 1 FROM care_item_basis basis
+                    WHERE basis.space_id=dep.space_id AND basis.item_id=dep.item_id
+                      AND basis.source_evidence_id=captured.evidence_id)
+                  OR NOT EXISTS (
                     SELECT 1 FROM analysis_input_source source
                     WHERE source.space_id=dep.space_id AND source.run_id=dep.run_id
                       AND source.source_record_id=e.record_id AND source.source_version=e.record_version))))

@@ -5,7 +5,8 @@ import static org.assertj.core.api.Assertions.*;
 import java.util.UUID;
 import javax.sql.DataSource;
 import org.flywaydb.core.Flyway;
-import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.context.annotation.Import;
@@ -22,17 +23,23 @@ class CareItemMigrationIntegrationTests {
   @Autowired DataSource dataSource;
   @Autowired PlatformTransactionManager transactions;
 
-  @Test
-  void upgradesV6ThroughV8AndV9WithoutLosingDataOrInventingEvidenceSnapshots() {
+  @ParameterizedTest
+  @ValueSource(strings = {"6", "7"})
+  void upgradesThroughV8AndV9WithoutLosingDataOrInventingEvidenceSnapshots(String startingVersion) {
     String schema = "care_upgrade_" + UUID.randomUUID().toString().replace("-", "");
     Flyway.configure()
         .dataSource(dataSource)
         .schemas(schema)
         .defaultSchema(schema)
-        .target("6")
+        .target(startingVersion)
         .load()
         .migrate();
     var jdbc = new JdbcTemplate(dataSource);
+    var originalChecksums =
+        jdbc.queryForList(
+            "SELECT version,checksum FROM "
+                + schema
+                + ".flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank");
     var tx = new TransactionTemplate(transactions);
     UUID user = UUID.randomUUID(),
         space = UUID.randomUUID(),
@@ -69,6 +76,12 @@ class CareItemMigrationIntegrationTests {
     flyway.migrate();
     flyway.validate();
     assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("8");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT to_regclass(?) IS NOT NULL",
+                Boolean.class,
+                schema + ".ai_proposal_space_page_ix"))
+        .isTrue();
     assertThat(
             jdbc.queryForObject(
                 "SELECT body::text FROM " + schema + ".content_document WHERE id=?",
@@ -165,6 +178,19 @@ class CareItemMigrationIntegrationTests {
     upgraded.migrate();
     upgraded.validate();
     assertThat(upgraded.info().current().getVersion().getVersion()).isEqualTo("9");
+    assertThat(
+            jdbc.queryForList(
+                "SELECT version,checksum FROM "
+                    + schema
+                    + ".flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank"))
+        .containsAll(originalChecksums);
+    assertThat(
+            jdbc.queryForList(
+                "SELECT version FROM "
+                    + schema
+                    + ".flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank",
+                String.class))
+        .containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9");
     assertThat(jdbc.queryForMap("SELECT * FROM " + schema + ".analysis_run WHERE id=?", run))
         .isEqualTo(oldRun);
     assertThat(jdbc.queryForMap("SELECT * FROM " + schema + ".care_item WHERE id=?", item))
