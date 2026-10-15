@@ -62,6 +62,23 @@
 
 백엔드는 응답 형식, 요청 ID, 대상 후보 범위와 버전, 근거 구절을 검사합니다. 이 검사가 AI 의미 판단의 정확성을 보장하지는 않습니다. 모든 제안은 사용자 확인이 필요하고, 확정 시 DB의 현재 버전을 다시 검사해야 합니다.
 
+## BE 공개 조회로의 변환
+
+내부 요청/응답 구조는 유지합니다. BE의 `ProposalValueMapper`가 저장 문서에서 다음 공개 필드만 선택합니다. 이는 조회 변환이며 최종 반영의 필수값·길이·업무 검증 계약은 별도로 합의합니다.
+
+| 유형 | 공개 `proposedValues` 필드 |
+| --- | --- |
+| 공통 | `title`(저장 제안 제목), `description` |
+| SCHEDULE | `scheduledDate`, `scheduledTime`, `location` |
+| TASK | `dueDate`, `assigneeMembershipId` |
+| QUESTION | 공통 필드만 사용. 확정 답변 없음 |
+| OBSERVATION | `observedDate`, `observedTimeText` |
+| GUIDANCE | `sourceName`, `receivedDate` |
+
+AI는 `changes`에 위 필드 이름을 사용해야 공개 조회에 해당 값이 나타납니다. 기존 예시의 `content`는 description, `date`는 해당 유형의 날짜, `time`은 scheduledTime으로만 호환합니다. 정식 필드와 별칭이 서로 다른 값을 가지면 null로 반환합니다. 저장 제목을 changes.title로 덮어쓰지 않습니다. 정의하지 않은 키·유형에 맞지 않는 키는 공개하지 않습니다.
+
+누락·빈 문자열·변환 불가 값은 null입니다. 날짜는 유효한 `YYYY-MM-DD`, 일정 시각은 `HH:mm` 문자열만 사용하고 누락 시각을 자정으로 만들지 않습니다. 상대 날짜 추론을 조회에서 다시 실행하지 않습니다. 담당자 ID는 BE가 같은 공간의 현재 참여를 확인합니다. 내부 계약에 관계/상충 판정 결과가 없으므로 공개 `relationKind`, `needsConflictReview`는 null이며 false를 추정하지 않습니다. 실제 모델의 유형별 출력 일치와 관계 판정·CareItem 후보 연결은 AI/BE 후속 연동 사항입니다.
+
 ## 실패·재시도
 
 연결 타임아웃은 3초, 응답 타임아웃은 30초입니다. 잘못된 응답·연결 실패·외부 오류는 `AiServiceException`으로 정리합니다. 동기 API까지 전파되면 공통 처리기는 `502 AI_SERVICE_UNAVAILABLE`을 반환합니다. 비동기 분석에서는 이미 접수된 HTTP 응답을 바꾸지 않고 실행을 `FAILED`, 실패 사유를 `AI_SERVICE_UNAVAILABLE`로 저장합니다. 상태 조회 자체는 `200 SUCCESS`입니다. 외부 응답 본문은 사용자에게 전달하지 않습니다.

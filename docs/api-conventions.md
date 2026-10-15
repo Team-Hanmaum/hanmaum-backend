@@ -355,6 +355,77 @@ GET에는 재시도 전용 409를 적용하지 않습니다. 비동기 실행 �
 - 실행기 기본 비활성 환경에서는 QUEUED에 머뭅니다. 활성화와 필수 외부 설정은 README를 따릅니다. 실행기 수치는 운영 미정이며 자동 테스트의 수치를 운영 기본값으로 사용하지 않습니다.
 - AI는 현재 CREATE 제안 저장까지 연결합니다. CareItem 도입 시 실제 후보·입력 의존성과 UPDATE/RESOLVE를 함께 확장해야 합니다. 현재 stub/가짜 응답 검증이 실제 모델 품질 검증을 대신하지 않습니다.
 
+## AI 제안 목록·상세·근거 조회
+
+| Method | 경로 | 설명 |
+| --- | --- | --- |
+| GET | `/api/spaces/{spaceId}/proposals` | 현재 공간의 저장된 CREATE 제안 목록 |
+| GET | `/api/spaces/{spaceId}/proposals/{proposalId}` | 제안 상세와 주 원본 근거 |
+
+활성 공간의 현재 참여자(소유자/구성원)가 세션으로 조회합니다. 두 API 모두 `200 SUCCESS` 공통 응답과 `Cache-Control: no-store`를 사용합니다. GET은 상태·버전·성공 요청 기록을 변경하거나 AI를 호출하지 않으며 CSRF·clientRequestId·항목 잠금을 요구하지 않습니다.
+
+### 목록 요청과 응답
+
+| Query | 타입 | 의미 |
+| --- | --- | --- |
+| recordId | UUID, 선택 | 같은 공간의 특정 원본으로 제한. 존재하지 않거나 다른 공간의 원본은 404 |
+| status | 문자열, 선택 | `REVIEW_PENDING`(생략 시 기본) 또는 `INVALIDATED` |
+| cursor | 문자열, 선택 | 같은 공간·recordId·status에서 받은 nextCursor. 첫 조회는 생략 |
+| size | 정수, 선택 | 기본 20, 1~50 |
+
+생성 시각·제안 ID 내림차순입니다. `data`는 `items`, `nextCursor`(마지막 null), `hasNext`를 포함합니다. 빈 결과는 `items: []`, `nextCursor: null`, `hasNext: false`입니다. 아직 분석 대기 중이거나 완료 결과가 0개여도 빈 목록입니다. 새로 생긴 제안은 첫 페이지를 다시 조회해야 합니다. 커서는 위치이며 페이지 전체를 고정하지 않습니다. 필터 변경·훼손·키 변경으로 무효가 되면 첫 조회부터 시작합니다.
+
+| items 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| proposalId / recordId / analysisId | UUID | 제안·원본·분석 실행 식별자 |
+| itemType | 문자열 | SCHEDULE / TASK / QUESTION / OBSERVATION / GUIDANCE |
+| action | 문자열 | 현재 `CREATE_ITEM` |
+| status | 문자열 | 유효한 OPEN은 `REVIEW_PENDING`, 무효는 `INVALIDATED` |
+| title | 문자열 또는 null | 제안 제목. 무효는 null |
+| targetItemId | UUID 또는 null | 현재 CREATE는 null |
+| needsConflictReview | boolean 또는 null | 판정 미연결로 null. 충돌 없음(false)을 뜻하지 않음 |
+| createdAt | UTC ISO 8601 | 제안 저장 시각 |
+
+승인/반영 상태는 아직 저장 모델과 연결되지 않아 `APPROVAL_REQUESTED`, `APPLIED`, `DECLINED` 필터는 현재 400입니다. 구현되지 않은 상태를 빈 목록으로 성공 처리하지 않습니다.
+
+### 상세 응답
+
+목록의 식별·유형·작업·상태·제목·시각 필드에 다음을 추가합니다.
+
+| 필드 | 타입 | 설명 |
+| --- | --- | --- |
+| spaceId | UUID | 소속 공간 |
+| analysisTargetVersion / currentItemVersion | 문자열 또는 null | 현재 CREATE는 null |
+| currentValues | 객체 또는 null | 현재 CREATE는 null |
+| proposedValues | 유형별 객체 또는 null | 아래 공개 필드. 무효 제안은 객체 전체 null |
+| candidates | 배열 | 현재 CREATE는 빈 배열 |
+| evidence | 배열 | evidenceId, recordId, quote, valid, author, recordedAt. 무효는 빈 배열 |
+| relationKind | 문자열 또는 null | 관계 판정 미연결로 null |
+| reviewToken | 문자열 또는 null | 반영 API 미구현으로 null. TTL 미정 |
+| redactedFields | 문자열 배열 | 정상은 빈 배열, 무효는 `["title", "proposedValues", "evidence"]` |
+
+근거의 `valid`는 반환된 유효 근거에 대해 true이며, `author`는 소식 조회와 같은 membershipId/displayName/withdrawn을 사용합니다. 탈퇴하여 회원 연결이 없는 작성자는 ID·이름 null, withdrawn=true입니다. 단순 참여 종료는 원본 삭제가 아닙니다. `recordedAt`은 제안 시각이 아닌 원본 등록 시각입니다.
+
+| itemType | proposedValues 필드 (공통 title/description 포함) |
+| --- | --- |
+| SCHEDULE | scheduledDate(YYYY-MM-DD), scheduledTime(HH:mm, Asia/Seoul), location |
+| TASK | dueDate(YYYY-MM-DD), assigneeMembershipId(UUID) |
+| QUESTION | title, description |
+| OBSERVATION | observedDate(YYYY-MM-DD), observedTimeText |
+| GUIDANCE | sourceName, receivedDate(YYYY-MM-DD) |
+
+기존 노션 CareItem 필드명으로 조회용 변환을 합니다. 저장 제목 외 누락/미상/변환 불가 값은 null이며 새로운 입력 필수값·길이 제한·과거/미래 날짜 정책을 정한 것이 아닙니다. TASK 담당자는 같은 공간의 현재 참여 ID만 반환합니다. 내부 changes 전체, 알 수 없는 필드, 미확정 답변은 노출하지 않습니다. 내부 필드 별칭의 호환 규칙은 [AI 계약](ai-contract.md#be-공개-조회로의-변환)을 따릅니다.
+
+### 무효화·오류·연동 경계
+
+- 원본 삭제/버전 변경, 제안 무효화, 실행 폐기, 문서·근거 제거를 검사합니다. 주 원본 이외 분석에 입력된 모든 원본도 검사하며, 파생 내용이 DB에 아직 남아 있어도 API로 반환하지 않습니다. 기본 목록은 제외하고 INVALIDATED 필터/상세에서는 식별 메타데이터만 반환합니다. 삭제된 같은 공간 원본으로 INVALIDATED 필터를 조회할 수 있습니다.
+- 문서·근거를 실제로 제거하는 원본 삭제 트랜잭션은 별도 필수 작업입니다. 읽기 방어만으로 삭제 API 전체가 구현된 것은 아닙니다.
+- 400 INVALID_REQUEST: 잘못된 ID·필터·size·cursor. 401 UNAUTHENTICATED: 유효 세션/회원 없음. 403 FORBIDDEN: 공간 현재 참여 아님. 404 RESOURCE_NOT_FOUND: 활성 공간/같은 공간의 대상 없음. 500 INTERNAL_ERROR: 서버 실패. 업무 오류 메시지와 필드 오류는 공통 규격을 사용합니다.
+- FE는 두 상태와 null 필드를 처리하고, 원문 확인에는 기존 소식 상세 API를 사용합니다. 현재 조회 응답으로 승인 토큰·항목 버전·관계 판정이 준비되었다고 가정하지 않습니다.
+- AI의 실제 유형별 출력 검증, CareItem 후보·비교·관계 판정, 제안 수정/거절/변경 요청/소유자 반영은 후속입니다. 운영 TTL·조회 주기·필드 길이 정책은 이번 조회 구현에서 확정하지 않습니다.
+
+명세 근거: [제안 목록](https://app.notion.com/p/3ef0f25ea138818dab00e94f7b6a08bd), [제안 상세](https://app.notion.com/p/3ef0f25ea1388176bbd3d1381325fe19), [CareItem 상세 필드](https://app.notion.com/p/3ef0f25ea138814696dddf926758474b). 이 문서는 현재 구현 범위를 기록하며 노션 DB/템플릿 갱신과 구분합니다.
+
 ## 문서화와 적용 범위
 
 Swagger에 공통 응답·오류 스키마, 재사용 가능한 오류 응답, 세션 쿠키·CSRF 보안 스키마를 둡니다. 공개 경로에 인증을 잘못 표시하지 않도록 전역 보안 요구를 일괄 적용하지 않고 각 API에 필요한 조건과 실제 오류만 명시합니다.
