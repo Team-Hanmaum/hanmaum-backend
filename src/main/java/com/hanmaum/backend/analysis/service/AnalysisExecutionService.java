@@ -51,7 +51,7 @@ public class AnalysisExecutionService {
     if (!validate(run, active)) return Optional.empty();
     var source = records.findActive(space, run.recordId()).orElseThrow();
     try {
-      var inputs = candidates.candidates(space);
+      var inputs = candidates.candidates(space, id);
       var claimed = runs.claim(id, UUID.randomUUID(), lease);
       return Optional.of(
           new Work(

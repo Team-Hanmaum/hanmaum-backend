@@ -7,6 +7,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.hanmaum.backend.ai.dto.*;
 import com.hanmaum.backend.analysis.service.AnalysisExecutionService;
+import com.hanmaum.backend.careitem.dto.CreateCareItemRequest;
+import com.hanmaum.backend.careitem.dto.ScheduleFields;
+import com.hanmaum.backend.careitem.service.CareItemCreationService;
 import com.hanmaum.backend.carespace.dto.*;
 import com.hanmaum.backend.carespace.service.CareSpaceCreationService;
 import com.hanmaum.backend.global.code.CommonErrorCode;
@@ -51,6 +54,7 @@ class ProposalQueryIntegrationTests {
   @Autowired SourceRecordCreationService records;
   @Autowired AnalysisExecutionService execution;
   @Autowired ProposalQueryService queries;
+  @Autowired CareItemCreationService careItems;
   @Autowired SourceRecordCursor sourceCursors;
   @Autowired PlatformTransactionManager transactions;
   UUID owner, member, outsider, membership;
@@ -150,8 +154,10 @@ class ProposalQueryIntegrationTests {
       }
     }
     assertThat(snapshot()).isEqualTo(before);
-    assertThat(jdbc.queryForObject("SELECT to_regclass('care_item') IS NULL", Boolean.class))
-        .isTrue();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM care_item WHERE space_id = ?", Long.class, space.spaceId()))
+        .isZero();
   }
 
   @Test
@@ -344,6 +350,140 @@ class ProposalQueryIntegrationTests {
             .getResponse()
             .getContentAsString();
     assertThat(response).doesNotContain("합성 원본", "제안 OBSERVATION", "가족");
+    assertThat(snapshot()).isEqualTo(before);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "direct",
+        "source",
+        "deleted",
+        "version",
+        "document",
+        "document-replaced",
+        "reconfirmation",
+        "evidence-redacted",
+        "evidence-removed",
+        "source-erased",
+        "source-version",
+        "legacy"
+      })
+  void completedProposalRevalidatesCapturedCandidateInputsWithoutWrites(String change)
+      throws Exception {
+    var item =
+        careItems.create(
+            owner,
+            space.spaceId(),
+            new CreateCareItemRequest(
+                "SCHEDULE",
+                "참고 일정",
+                "참고 설명",
+                new ScheduleFields(null, null, null),
+                UUID.randomUUID()));
+    UUID document =
+        jdbc.queryForObject(
+            "SELECT current_document_id FROM care_item WHERE id=?", UUID.class, item.itemId());
+    var basisSource = create();
+    UUID evidence = UUID.randomUUID();
+    if (!change.equals("direct")) {
+      jdbc.update(
+          "INSERT INTO evidence (id,space_id,record_id,record_version,quote,created_at) VALUES (?,?,?,1,'합성 원본 소식',now())",
+          evidence,
+          space.spaceId(),
+          basisSource.recordId());
+      jdbc.update(
+          "INSERT INTO care_item_basis (id,space_id,item_id,source_evidence_id,created_at) VALUES (?,?,?,?,now())",
+          UUID.randomUUID(),
+          space.spaceId(),
+          item.itemId(),
+          evidence);
+    }
+    var source = complete(1);
+    UUID run = source.analysis().analysisId();
+    UUID proposal = list(owner).items().getFirst().proposalId();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT cardinality(source_evidence_ids) FROM analysis_input_item WHERE run_id=? AND item_id=?",
+                Integer.class,
+                run,
+                item.itemId()))
+        .isEqualTo(change.equals("direct") ? 0 : 1);
+    assertThat(queries.detail(owner, space.spaceId(), proposal).status())
+        .isEqualTo(ProposalStatus.REVIEW_PENDING);
+    switch (change) {
+      case "deleted" ->
+          jdbc.update("UPDATE care_item SET visibility='DELETED' WHERE id=?", item.itemId());
+      case "version" ->
+          jdbc.update("UPDATE care_item SET version=version+1 WHERE id=?", item.itemId());
+      case "document" ->
+          jdbc.update(
+              "UPDATE content_document SET body=NULL,redacted_at=now() WHERE id=?", document);
+      case "document-replaced" -> {
+        UUID replacement = UUID.randomUUID();
+        jdbc.update(
+            "INSERT INTO content_document (id,space_id,kind,body,created_at) VALUES (?,?,'DIRECT_INPUT','{}',now())",
+            replacement,
+            space.spaceId());
+        jdbc.update(
+            "UPDATE care_item SET current_document_id=? WHERE id=?", replacement, item.itemId());
+      }
+      case "reconfirmation" ->
+          jdbc.update("UPDATE care_item SET needs_reconfirmation=true WHERE id=?", item.itemId());
+      case "evidence-redacted" ->
+          jdbc.update("UPDATE evidence SET quote=NULL,redacted_at=now() WHERE id=?", evidence);
+      case "evidence-removed" -> {
+        jdbc.update("DELETE FROM care_item_basis WHERE source_evidence_id=?", evidence);
+        jdbc.update("DELETE FROM evidence WHERE id=?", evidence);
+      }
+      case "source-erased" -> erase(basisSource);
+      case "source-version" ->
+          jdbc.update(
+              "UPDATE source_record SET version=version+1 WHERE id=?", basisSource.recordId());
+      case "legacy" ->
+          jdbc.update(
+              "UPDATE analysis_input_item SET source_evidence_ids=NULL WHERE run_id=?", run);
+      default -> {}
+    }
+    boolean valid = change.equals("direct") || change.equals("source");
+    var before = snapshot();
+    assertThat(jdbc.queryForObject("SELECT status FROM analysis_run WHERE id=?", String.class, run))
+        .isEqualTo("COMPLETED");
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT d.body::text FROM ai_proposal p JOIN content_document d ON d.id=p.output_document_id WHERE p.id=?",
+                String.class,
+                proposal))
+        .contains("제안 OBSERVATION", "합성 설명");
+    var detail = queries.detail(member, space.spaceId(), proposal);
+    assertThat(detail.status())
+        .isEqualTo(valid ? ProposalStatus.REVIEW_PENDING : ProposalStatus.INVALIDATED);
+    var pending =
+        queries.list(owner, space.spaceId(), source.recordId().toString(), null, null, 20);
+    var invalidated =
+        queries.list(owner, space.spaceId(), source.recordId().toString(), "INVALIDATED", null, 20);
+    assertThat(pending.items()).hasSize(valid ? 1 : 0);
+    assertThat(invalidated.items()).hasSize(valid ? 0 : 1);
+    if (valid) {
+      assertThat(detail.proposedValues()).isNotNull();
+      assertThat(detail.evidence()).hasSize(1);
+      assertThat(detail.candidates()).isEmpty();
+      assertThat(detail.targetItemId()).isNull();
+    } else {
+      assertThat(detail.title()).isNull();
+      assertThat(detail.proposedValues()).isNull();
+      assertThat(detail.evidence()).isEmpty();
+      assertThat(detail.redactedFields()).containsExactly("title", "proposedValues", "evidence");
+      assertThat(invalidated.items().getFirst().title()).isNull();
+      String body =
+          mvc.perform(get(path() + "/" + proposal).with(authentication(login(member))))
+              .andExpect(status().isOk())
+              .andExpect(jsonPath("$.data.status").value("INVALIDATED"))
+              .andReturn()
+              .getResponse()
+              .getContentAsString();
+      assertThat(body).doesNotContain("참고 일정", "참고 설명", "합성 원본 소식", "제안 OBSERVATION", "합성 설명");
+    }
     assertThat(snapshot()).isEqualTo(before);
   }
 
@@ -596,7 +736,9 @@ class ProposalQueryIntegrationTests {
             "analysis_run",
             "ai_proposal",
             "content_document",
-            "evidence"))
+            "evidence",
+            "care_item",
+            "care_item_basis"))
       result.put(
           table,
           jdbc.queryForList(

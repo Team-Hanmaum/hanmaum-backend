@@ -144,8 +144,25 @@ public class AnalysisRepository {
             SELECT 1 FROM analysis_input_source i
             LEFT JOIN source_record r ON r.space_id = i.space_id AND r.id = i.source_record_id
             WHERE i.run_id = ? AND (r.id IS NULL OR r.lifecycle <> 'ACTIVE' OR r.version <> i.source_version))
+          AND NOT EXISTS (
+            SELECT 1 FROM analysis_input_item dep
+            LEFT JOIN care_item item ON item.space_id=dep.space_id AND item.id=dep.item_id
+            LEFT JOIN content_document d ON d.space_id=dep.space_id AND d.id=dep.document_id
+            WHERE dep.run_id = ? AND (item.id IS NULL OR item.visibility<>'VISIBLE'
+              OR item.needs_reconfirmation OR item.version<>dep.item_version
+              OR item.current_document_id<>dep.document_id OR d.body IS NULL OR d.redacted_at IS NOT NULL
+              OR dep.source_evidence_ids IS NULL
+              OR EXISTS (
+                SELECT 1 FROM unnest(dep.source_evidence_ids) captured(evidence_id)
+                LEFT JOIN evidence e ON e.space_id=dep.space_id AND e.id=captured.evidence_id
+                WHERE e.id IS NULL OR e.quote IS NULL OR e.redacted_at IS NOT NULL
+                  OR NOT EXISTS (
+                    SELECT 1 FROM analysis_input_source source
+                    WHERE source.space_id=dep.space_id AND source.run_id=dep.run_id
+                      AND source.source_record_id=e.record_id AND source.source_version=e.record_version))))
         """,
             Boolean.class,
+            runId,
             runId,
             runId));
   }

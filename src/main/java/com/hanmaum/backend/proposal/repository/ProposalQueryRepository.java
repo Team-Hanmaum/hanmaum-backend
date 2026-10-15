@@ -87,7 +87,29 @@ public class ProposalQueryRepository {
                   AND dependency.id = i.source_record_id
                 WHERE i.run_id = a.id AND (dependency.id IS NULL
                   OR dependency.lifecycle <> 'ACTIVE' OR dependency.version <> i.source_version)
-              ) AS available
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM analysis_input_item dep
+                LEFT JOIN care_item item ON item.space_id = dep.space_id AND item.id = dep.item_id
+                LEFT JOIN content_document input_document ON input_document.space_id = dep.space_id
+                  AND input_document.id = dep.document_id
+                WHERE dep.run_id = a.id AND (item.id IS NULL OR item.visibility <> 'VISIBLE'
+                  OR item.needs_reconfirmation OR item.version <> dep.item_version
+                  OR item.current_document_id <> dep.document_id
+                  OR input_document.body IS NULL OR input_document.redacted_at IS NOT NULL
+                  OR dep.source_evidence_ids IS NULL
+                  OR EXISTS (
+                    SELECT 1 FROM unnest(dep.source_evidence_ids) captured(evidence_id)
+                    LEFT JOIN evidence input_evidence ON input_evidence.space_id = dep.space_id
+                      AND input_evidence.id = captured.evidence_id
+                    WHERE input_evidence.id IS NULL OR input_evidence.quote IS NULL
+                      OR input_evidence.redacted_at IS NOT NULL
+                      OR NOT EXISTS (
+                        SELECT 1 FROM analysis_input_source source
+                        WHERE source.space_id = dep.space_id AND source.run_id = dep.run_id
+                          AND source.source_record_id = input_evidence.record_id
+                          AND source.source_version = input_evidence.record_version))))
+                AS available
           ) visibility
           WHERE p.space_id = s.id AND viewer.id IS NOT NULL
             AND (q.record_id IS NULL OR a.record_id = q.record_id)
