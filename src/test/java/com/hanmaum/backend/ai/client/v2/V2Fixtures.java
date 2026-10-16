@@ -13,6 +13,16 @@ import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;
 
 final class V2Fixtures {
+  // Test-only byte budgets. Not production policy defaults.
+  static final AiV2PayloadLimits LIMITS = new AiV2PayloadLimits(1024 * 1024, 1024 * 1024);
+  static final AiV2Properties SETTINGS =
+      new AiV2Properties(LIMITS.requestBytes(), LIMITS.responseBytes());
+  static final com.hanmaum.backend.ai.client.AiProperties AI =
+      new com.hanmaum.backend.ai.client.AiProperties(
+          java.net.URI.create("http://ai.test"),
+          "test-only-key",
+          java.time.Duration.ofSeconds(3),
+          java.time.Duration.ofSeconds(30));
   static final JsonMapper JSON =
       JsonMapper.builder()
           .enable(tools.jackson.databind.DeserializationFeature.USE_BIG_INTEGER_FOR_INTS)

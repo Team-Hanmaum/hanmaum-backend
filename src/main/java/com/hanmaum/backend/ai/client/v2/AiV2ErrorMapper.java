@@ -23,9 +23,9 @@ public final class AiV2ErrorMapper {
               AiFailureCode.AI_RECEIPT_STORE_UNAVAILABLE,
           new ErrorKey(504, "AI_TIMEOUT"), AiFailureCode.AI_TIMEOUT);
 
-  public AiFailureCode map(int status, byte[] raw) {
+  public AiFailureCode map(int status, byte[] raw, int maxBytes) {
     try {
-      var node = read(raw);
+      var node = read(raw, maxBytes);
       keys(node, "code", "message");
       String code = nonBlank(node.get("code"));
       nonBlank(node.get("message"));

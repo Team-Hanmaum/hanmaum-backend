@@ -27,7 +27,7 @@ import org.springframework.web.client.RestClient;
 import tools.jackson.databind.JsonNode;
 
 class HanmaumAiV2ClientTests {
-  private final AiV2Contract contract = new AiV2Contract();
+  private final AiV2Contract contract = new AiV2Contract(LIMITS);
 
   @TestFactory
   List<DynamicTest> consumesStaticHttpOutcomesWithoutCallingAiOrAProvider() throws Exception {
@@ -250,7 +250,7 @@ class HanmaumAiV2ClientTests {
             request.candidates());
     var builder = builder();
     var server = MockRestServiceServer.bindTo(builder).build();
-    var client = new HanmaumAiV2Client(builder.build());
+    var client = new HanmaumAiV2Client(builder.build(), SETTINGS, AI);
     assertFailure(
         catchThrowable(() -> client.analyze(invalid)), AiFailureCode.AI_INTEGRATION_ERROR);
     assertFailure(catchThrowable(() -> client.analyze(null)), AiFailureCode.AI_INTEGRATION_ERROR);
@@ -293,7 +293,7 @@ class HanmaumAiV2ClientTests {
       AiV2AnalysisRequest request, ResponseCreator response, AiFailureCode failure) {
     var builder = builder();
     var server = MockRestServiceServer.bindTo(builder).build();
-    var client = new HanmaumAiV2Client(builder.build());
+    var client = new HanmaumAiV2Client(builder.build(), SETTINGS, AI);
     server
         .expect(requestTo("http://ai.test/v2/analyses"))
         .andExpect(method(HttpMethod.POST))

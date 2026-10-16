@@ -28,7 +28,7 @@ class AiV2ContractTests {
           "A-unavailable", "Provider failure mapping",
           "A-disabled", "Provider configuration failure mapping",
           "A-timeout", "Provider timeout mapping");
-  private final AiV2Contract contract = new AiV2Contract();
+  private final AiV2Contract contract = new AiV2Contract(LIMITS);
 
   @TestFactory
   List<DynamicTest> consumes139StaticContractCasesUsingOriginalPayloads() throws Exception {
@@ -173,6 +173,67 @@ class AiV2ContractTests {
       var request = contract.parseRequest(JSON.writeValueAsBytes(root));
       assertThat(request.content()).isEqualTo(blank + "원문" + blank);
     }
+  }
+
+  @Test
+  void retainsSingleCandidateAmbiguityRequiredByTheAgreedContract() throws Exception {
+    var request = contract.parseRequest(raw(BASE));
+    for (String operation : List.of("update", "resolve", "link_evidence")) {
+      var suggestion =
+          contract
+              .parseResponse(request, raw("payloads/responses/ambiguous-" + operation + ".json"))
+              .suggestions()
+              .getFirst();
+      assertThat(suggestion.targetItemId()).isNull();
+      assertThat(suggestion.candidateItemIds()).hasSize(1);
+      assertThat(suggestion.reviewReasons())
+          .contains(
+              com.hanmaum.backend.ai.dto.v2.AiV2AnalysisResponse.ReviewReason.TARGET_AMBIGUOUS);
+    }
+  }
+
+  @Test
+  void enforcesByteBudgetsBeforeDecodingAndWhileSerializing() throws Exception {
+    byte[] input = raw(BASE);
+    var exactInput = new AiV2Contract(new AiV2PayloadLimits(input.length, LIMITS.responseBytes()));
+    var request = exactInput.parseRequest(input);
+    var smallInput =
+        new AiV2Contract(new AiV2PayloadLimits(input.length - 1, LIMITS.responseBytes()));
+    assertFailure(
+        catchThrowable(() -> smallInput.parseRequest(input)), AiFailureCode.AI_INTEGRATION_ERROR);
+
+    byte[] encoded = contract.encodeRequest(request);
+    var exactEncoded =
+        new AiV2Contract(new AiV2PayloadLimits(encoded.length, LIMITS.responseBytes()));
+    assertThat(exactEncoded.encodeRequest(request)).isEqualTo(encoded);
+    var smallEncoded =
+        new AiV2Contract(new AiV2PayloadLimits(encoded.length - 1, LIMITS.responseBytes()));
+    assertFailure(
+        catchThrowable(() -> smallEncoded.encodeRequest(request)),
+        AiFailureCode.AI_INTEGRATION_ERROR);
+
+    byte[] output = raw("payloads/responses/update.json");
+    var exactOutput = new AiV2Contract(new AiV2PayloadLimits(LIMITS.requestBytes(), output.length));
+    assertThat(exactOutput.parseResponse(request, output).suggestions()).hasSize(1);
+    var smallOutput =
+        new AiV2Contract(new AiV2PayloadLimits(LIMITS.requestBytes(), output.length - 1));
+    assertFailure(
+        catchThrowable(() -> smallOutput.parseResponse(request, output)),
+        AiFailureCode.AI_INVALID_RESPONSE);
+
+    // A large single string must be stopped by the serializer's bounded output stream.
+    var large =
+        new AiV2AnalysisRequest(
+            request.requestId(),
+            request.careSpaceId(),
+            request.recordId(),
+            "한글".repeat(100_000),
+            request.recordedAt(),
+            request.timezone(),
+            request.candidates());
+    assertFailure(
+        catchThrowable(() -> exactEncoded.encodeRequest(large)),
+        AiFailureCode.AI_INTEGRATION_ERROR);
   }
 
   @Test

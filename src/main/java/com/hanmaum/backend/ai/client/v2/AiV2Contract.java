@@ -26,6 +26,12 @@ import tools.jackson.databind.JsonNode;
 
 /** Strict wire contract and request-relative validation, independent of DB/product policies. */
 public final class AiV2Contract {
+  private final AiV2PayloadLimits limits;
+
+  public AiV2Contract(AiV2PayloadLimits limits) {
+    this.limits = java.util.Objects.requireNonNull(limits);
+  }
+
   private static final Map<CareItemType, Set<String>> CHANGE_FIELDS =
       Map.of(
           CareItemType.SCHEDULE,
@@ -52,7 +58,7 @@ public final class AiV2Contract {
 
   public AiV2AnalysisRequest parseRequest(byte[] raw) {
     try {
-      JsonNode root = read(raw);
+      JsonNode root = read(raw, limits.requestBytes());
       keys(
           root,
           "requestId",
@@ -83,7 +89,7 @@ public final class AiV2Contract {
   /** Revalidates constructed DTOs too; does not trim source text or impose v1 limits. */
   public byte[] encodeRequest(AiV2AnalysisRequest request) {
     try {
-      byte[] raw = MAPPER.writeValueAsBytes(request);
+      byte[] raw = write(request, limits.requestBytes());
       parseRequest(raw);
       return raw;
     } catch (RuntimeException exception) {
@@ -95,7 +101,7 @@ public final class AiV2Contract {
     // An invalid caller request is an integration error, not an invalid AI response.
     encodeRequest(request);
     try {
-      JsonNode root = read(raw);
+      JsonNode root = read(raw, limits.responseBytes());
       keys(root, "requestId", "suggestions");
       UUID id = uuid(root.get("requestId"));
       require(id.equals(request.requestId()));

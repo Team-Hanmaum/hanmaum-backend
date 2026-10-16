@@ -24,14 +24,21 @@ final class AiV2Json {
 
   private AiV2Json() {}
 
-  static JsonNode read(byte[] raw) {
+  static JsonNode read(byte[] raw, int maxBytes) {
     try {
+      AiV2PayloadLimits.check(raw.length, maxBytes);
       // Reject malformed UTF-8 and UTF-16/32 before Jackson's encoding autodetection.
       return MAPPER.readTree(
           StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(raw)).toString());
     } catch (Exception exception) {
       throw invalid();
     }
+  }
+
+  static byte[] write(Object value, int maxBytes) {
+    var output = new AiV2PayloadLimits.LimitedBytes(maxBytes);
+    MAPPER.writeValue(output, value);
+    return output.toByteArray();
   }
 
   static void require(boolean condition) {
