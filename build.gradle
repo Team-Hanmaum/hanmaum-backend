@@ -54,6 +54,18 @@ tasks.named('test') {
     useJUnitPlatform()
 }
 
+tasks.named('processTestResources') {
+    // The shared fixture manifest includes this file, which Gradle excludes from file trees.
+    def fixtureAttributes = layout.projectDirectory.file('src/test/resources/ai-contract/v2/.gitattributes')
+    inputs.file(fixtureAttributes).withPathSensitivity(PathSensitivity.RELATIVE)
+    doLast {
+        def target = destinationDir.toPath().resolve('ai-contract/v2/.gitattributes')
+        java.nio.file.Files.createDirectories(target.parent)
+        java.nio.file.Files.copy(fixtureAttributes.asFile.toPath(), target,
+            java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+    }
+}
+
 tasks.named('bootJar') {
     archiveFileName = 'hanmaum-backend.jar'
 }
