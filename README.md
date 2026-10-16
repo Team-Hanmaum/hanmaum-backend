@@ -241,6 +241,8 @@ Flyway V3는 공간·참여·성공 요청 기록을, V4는 초대와 참여의 
 
 `HanmaumAiClient`는 내부 FastAPI의 `POST /v1/analyses`를 호출합니다. 연결 제한은 3초, 응답 대기는 30초이며 자동 재시도는 하지 않습니다. 외부 오류 본문은 API 오류나 로그에 그대로 노출하지 않습니다.
 
+v2 요청·응답 검증과 `HanmaumAiV2Client` 통신 어댑터도 준비되어 있습니다. 현재 분석 실행은 계속 v1이며 v2 저장·조회·활성 전환은 후속 범위입니다. v2를 호출하기 전에는 `AI_V2_MAX_REQUEST_BYTES`·`AI_V2_MAX_RESPONSE_BYTES`를 명시해야 하며 운영 기본값은 아직 정하지 않았습니다. 기존 v1에는 필요하지 않습니다. 전체 HTTP 기한·바이트 예산·검증 범위와 오류 매핑은 [v2 통신 계약](docs/ai-contract-v2-client.md)을 참고합니다.
+
 [AI 계약](docs/ai-contract.md)과 [설계 기준](docs/architecture.md)을 참고합니다. 실제 FastAPI 구현과 모델 품질 평가는 별도 레포에서 진행합니다.
 
 ## 소식 분석 실행
