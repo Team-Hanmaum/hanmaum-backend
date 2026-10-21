@@ -3,6 +3,7 @@ package com.hanmaum.backend.analysis.repository;
 import com.hanmaum.backend.analysis.code.AnalysisFailureCode;
 import com.hanmaum.backend.analysis.entity.AnalysisRun;
 import com.hanmaum.backend.analysis.entity.AnalysisStatus;
+import com.hanmaum.backend.analysis.service.AnalysisContractSettings;
 import com.hanmaum.backend.record.entity.SourceRecord;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -18,9 +19,11 @@ import org.springframework.stereotype.Repository;
 @Repository
 public class AnalysisRepository {
   private final JdbcTemplate jdbc;
+  private final AnalysisContractSettings contracts;
 
-  public AnalysisRepository(JdbcTemplate jdbc) {
+  public AnalysisRepository(JdbcTemplate jdbc, AnalysisContractSettings contracts) {
     this.jdbc = jdbc;
+    this.contracts = contracts;
   }
 
   public UUID enqueue(
@@ -35,9 +38,9 @@ public class AnalysisRepository {
         """
         INSERT INTO analysis_run (id, space_id, record_id, record_version, attempt_no,
           request_id, input_recorded_at, timezone, requested_by_membership_id, status,
-          created_at, retry_of_id, command_id)
+          created_at, retry_of_id, command_id, contract_version)
         VALUES (?, ?, ?, ?, ?, ?, ?, 'Asia/Seoul', ?, 'QUEUED', ?, ?,
-          (SELECT id FROM command_receipt WHERE actor_user_id = ? AND client_request_id = ?))
+          (SELECT id FROM command_receipt WHERE actor_user_id = ? AND client_request_id = ?), ?)
         """,
         id,
         source.spaceId(),
@@ -50,7 +53,8 @@ public class AnalysisRepository {
         Timestamp.from(now),
         failed == null ? null : failed.id(),
         actor,
-        command);
+        command,
+        contracts.version());
     jdbc.update(
         "INSERT INTO analysis_input_source VALUES (?, ?, ?, ?)",
         source.spaceId(),
@@ -137,38 +141,7 @@ public class AnalysisRepository {
 
   public boolean validInputs(UUID runId) {
     return Boolean.TRUE.equals(
-        jdbc.queryForObject(
-            """
-        SELECT EXISTS (SELECT 1 FROM analysis_input_source WHERE run_id = ?)
-          AND NOT EXISTS (
-            SELECT 1 FROM analysis_input_source i
-            LEFT JOIN source_record r ON r.space_id = i.space_id AND r.id = i.source_record_id
-            WHERE i.run_id = ? AND (r.id IS NULL OR r.lifecycle <> 'ACTIVE' OR r.version <> i.source_version))
-          AND NOT EXISTS (
-            SELECT 1 FROM analysis_input_item dep
-            LEFT JOIN care_item item ON item.space_id=dep.space_id AND item.id=dep.item_id
-            LEFT JOIN content_document d ON d.space_id=dep.space_id AND d.id=dep.document_id
-            WHERE dep.run_id = ? AND (item.id IS NULL OR item.visibility<>'VISIBLE'
-              OR item.needs_reconfirmation OR item.version<>dep.item_version
-              OR item.current_document_id<>dep.document_id OR d.body IS NULL OR d.redacted_at IS NOT NULL
-              OR dep.source_evidence_ids IS NULL
-              OR EXISTS (
-                SELECT 1 FROM unnest(dep.source_evidence_ids) captured(evidence_id)
-                LEFT JOIN evidence e ON e.space_id=dep.space_id AND e.id=captured.evidence_id
-                WHERE e.id IS NULL OR e.quote IS NULL OR e.redacted_at IS NOT NULL
-                  OR NOT EXISTS (
-                    SELECT 1 FROM care_item_basis basis
-                    WHERE basis.space_id=dep.space_id AND basis.item_id=dep.item_id
-                      AND basis.source_evidence_id=captured.evidence_id)
-                  OR NOT EXISTS (
-                    SELECT 1 FROM analysis_input_source source
-                    WHERE source.space_id=dep.space_id AND source.run_id=dep.run_id
-                      AND source.source_record_id=e.record_id AND source.source_version=e.record_version))))
-        """,
-            Boolean.class,
-            runId,
-            runId,
-            runId));
+        jdbc.queryForObject("SELECT analysis_inputs_valid(?)", Boolean.class, runId));
   }
 
   public boolean activeRequester(AnalysisRun run) {
@@ -234,6 +207,20 @@ public class AnalysisRepository {
         run.id());
   }
 
+  public List<AnalysisRun> dependingOnBasis(UUID space, UUID basis, UUID document) {
+    return jdbc.query(
+        """
+        SELECT a.* FROM analysis_run a WHERE a.space_id=? AND EXISTS (
+          SELECT 1 FROM analysis_input_basis b WHERE b.run_id=a.id AND
+            (b.basis_id=CAST(? AS uuid) OR b.direct_document_id=CAST(? AS uuid)))
+        ORDER BY a.id
+        """,
+        this::map,
+        space,
+        basis,
+        document);
+  }
+
   public List<AnalysisRun> dependingOn(UUID space, UUID record) {
     return jdbc.query(
         """
@@ -262,7 +249,8 @@ public class AnalysisRepository {
         time(rs, "started_at"),
         time(rs, "finished_at"),
         rs.getObject("worker_token", UUID.class),
-        time(rs, "lease_until"));
+        time(rs, "lease_until"),
+        rs.getString("contract_version"));
   }
 
   private Instant time(ResultSet rs, String key) throws SQLException {

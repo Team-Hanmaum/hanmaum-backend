@@ -51,7 +51,7 @@ public class ProposalQueryRepository {
         LEFT JOIN source_record filter_record ON filter_record.space_id = s.id
           AND filter_record.id = q.record_id
         LEFT JOIN LATERAL (
-          SELECT p.id, a.record_id, a.id AS analysis_id, p.item_type, p.created_at,
+          SELECT p.id, a.record_id, a.id AS analysis_id, p.item_type, p.created_at, p.ai_operation, a.contract_version,
                  visibility.available,
                  CASE WHEN visibility.available THEN d.body::text END AS document,
                  CASE WHEN visibility.available THEN e.id END AS evidence_id,
@@ -81,41 +81,7 @@ public class ProposalQueryRepository {
               AND d.redacted_at IS NULL AND d.body IS NOT NULL
               AND e.redacted_at IS NULL AND e.quote IS NOT NULL
               AND e.record_id = r.id AND e.record_version = r.version
-              AND EXISTS (SELECT 1 FROM analysis_input_source i
-                WHERE i.space_id = p.space_id AND i.run_id = a.id AND i.source_record_id = r.id
-                  AND i.source_version = r.version)
-              AND NOT EXISTS (
-                SELECT 1 FROM analysis_input_source i
-                LEFT JOIN source_record dependency ON dependency.space_id = i.space_id
-                  AND dependency.id = i.source_record_id
-                WHERE i.run_id = a.id AND (dependency.id IS NULL
-                  OR dependency.lifecycle <> 'ACTIVE' OR dependency.version <> i.source_version)
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM analysis_input_item dep
-                LEFT JOIN care_item item ON item.space_id = dep.space_id AND item.id = dep.item_id
-                LEFT JOIN content_document input_document ON input_document.space_id = dep.space_id
-                  AND input_document.id = dep.document_id
-                WHERE dep.run_id = a.id AND (item.id IS NULL OR item.visibility <> 'VISIBLE'
-                  OR item.needs_reconfirmation OR item.version <> dep.item_version
-                  OR item.current_document_id <> dep.document_id
-                  OR input_document.body IS NULL OR input_document.redacted_at IS NOT NULL
-                  OR dep.source_evidence_ids IS NULL
-                  OR EXISTS (
-                    SELECT 1 FROM unnest(dep.source_evidence_ids) captured(evidence_id)
-                    LEFT JOIN evidence input_evidence ON input_evidence.space_id = dep.space_id
-                      AND input_evidence.id = captured.evidence_id
-                    WHERE input_evidence.id IS NULL OR input_evidence.quote IS NULL
-                      OR input_evidence.redacted_at IS NOT NULL
-                      OR NOT EXISTS (
-                        SELECT 1 FROM care_item_basis basis
-                        WHERE basis.space_id = dep.space_id AND basis.item_id = dep.item_id
-                          AND basis.source_evidence_id = captured.evidence_id)
-                      OR NOT EXISTS (
-                        SELECT 1 FROM analysis_input_source source
-                        WHERE source.space_id = dep.space_id AND source.run_id = dep.run_id
-                          AND source.source_record_id = input_evidence.record_id
-                          AND source.source_version = input_evidence.record_version))))
+              AND analysis_inputs_valid(a.id)
                 AS available
           ) visibility
           WHERE p.space_id = s.id AND viewer.id IS NOT NULL
@@ -145,6 +111,58 @@ public class ProposalQueryRepository {
             rows.stream().map(Row::proposal).filter(Objects::nonNull).toList()));
   }
 
+  public List<InputItem> inputItems(UUID space, UUID run) {
+    return jdbc.query(
+        """
+        SELECT i.item_id, c.version, c.status, d.body::text document,
+               assignee.id assignee_id
+        FROM analysis_input_item i
+        JOIN care_item c ON c.space_id=i.space_id AND c.id=i.item_id
+        JOIN content_document d ON d.space_id=c.space_id AND d.id=c.current_document_id
+        LEFT JOIN space_membership assignee ON assignee.space_id=c.space_id AND assignee.is_active
+          AND assignee.id=CASE WHEN (d.body #>> '{fields,assigneeMembershipId}')
+            ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            THEN (d.body #>> '{fields,assigneeMembershipId}')::uuid END
+        WHERE i.space_id=? AND i.run_id=? AND analysis_inputs_valid(i.run_id)
+        ORDER BY i.item_id
+        """,
+        (rs, n) ->
+            new InputItem(
+                rs.getObject("item_id", UUID.class),
+                rs.getLong("version"),
+                rs.getString("status"),
+                rs.getString("document"),
+                rs.getObject("assignee_id", UUID.class)),
+        space,
+        run);
+  }
+
+  public List<com.hanmaum.backend.proposal.dto.ProposalDetail.ComparisonBasis> inputBasis(
+      UUID space, UUID run) {
+    return jdbc.query(
+        """
+        SELECT b.basis_id,b.item_id,e.record_id,
+          CASE WHEN b.direct_document_id IS NOT NULL THEN 'DIRECT_INPUT' ELSE 'SOURCE_RECORD' END kind,
+          CASE WHEN b.direct_document_id IS NOT NULL THEN d.body::text ELSE e.quote END text
+        FROM analysis_input_basis b
+        LEFT JOIN content_document d ON d.space_id=b.space_id AND d.id=b.direct_document_id
+        LEFT JOIN evidence e ON e.space_id=b.space_id AND e.id=b.source_evidence_id
+        WHERE b.space_id=? AND b.run_id=? AND analysis_inputs_valid(b.run_id)
+        ORDER BY b.basis_id
+        """,
+        (rs, n) ->
+            new com.hanmaum.backend.proposal.dto.ProposalDetail.ComparisonBasis(
+                rs.getObject("basis_id", UUID.class),
+                rs.getObject("item_id", UUID.class),
+                rs.getString("kind"),
+                rs.getObject("record_id", UUID.class),
+                rs.getString("text")),
+        space,
+        run);
+  }
+
+  public record InputItem(UUID id, long version, String status, String document, UUID assigneeId) {}
+
   private Row map(ResultSet rs, int index) throws SQLException {
     UUID id = rs.getObject("id", UUID.class);
     boolean available = rs.getBoolean("available");
@@ -169,7 +187,9 @@ public class ProposalQueryRepository {
                         withdrawn)
                     : null,
                 available ? rs.getTimestamp("recorded_at").toInstant() : null,
-                rs.getObject("assignee_id", UUID.class));
+                rs.getObject("assignee_id", UUID.class),
+                rs.getString("ai_operation"),
+                rs.getString("contract_version"));
     return new Row(rs.getBoolean("authorized"), rs.getBoolean("record_found"), view);
   }
 
@@ -189,5 +209,7 @@ public class ProposalQueryRepository {
       String quote,
       SourceRecordAuthor author,
       Instant recordedAt,
-      UUID assigneeId) {}
+      UUID assigneeId,
+      String operation,
+      String contractVersion) {}
 }

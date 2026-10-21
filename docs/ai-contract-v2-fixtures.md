@@ -33,7 +33,7 @@
 | --- | --- | --- |
 | STATIC 146 | 139개 파서/요청 상대 검증, 146개 모의 HTTP 매핑, 무효 결과 69개의 200 응답 독립 거부 | 실제 AI 인증·제공자 |
 | RECEIPT 30 | SUBMIT별 응답의 BE 매핑, 자동 재호출 금지 | AI 수신 기록 등록·키 교체·경쟁·재시작 |
-| BACKEND 25 | 내부 AI 응답의 디코딩/계약 부분 | setup/events/publicQuery 및 실제 DB 상태·저장·삭제 |
+| BACKEND 25 | AnalysisV2IntegrationTests: Testcontainers DB·실제 루프백 HTTP·setup/events/publicQuery·원자 저장·입력 무효화·파생 내용 제거 | 실제 AI 런타임·공개 원본 삭제 API |
 | LIMITS 102 | 96개 경계의 크기 검사/계약 거부, 6개 측정 전용 사례의 계산 | AI 서버가 실제로 같은 오류를 내는지 |
 | HTTP 25 중 BE 11 | 실제 루프백 HTTP의 chunked 수신·오류/과대 200 거부·전송 전 거부·재호출 금지 | DB 저장 건수·원본 보존·공개 조회 |
 | HTTP 나머지 14 | 목록·메타데이터 확인, 공통 오류 매핑은 별도 테스트 | AI 런타임 슬롯·수신 기록·수신 보호 실행 |
@@ -63,4 +63,4 @@ AI 실행 대기 14개는 `AiV2TransportTests.AI_RUNTIME_CASES`에서 전체 cas
 
 첫 명령은 실제 AI 서버·유료 모델·Docker 없이 실행한다. 전체 검사는 기존 Testcontainers PostgreSQL 회귀를 포함한다. 결과는 Gradle 테스트 보고서에 남으며 fixture 검증을 328개 시나리오의 DB·AI 런타임 전체 통과로 표현하지 않는다.
 
-다음은 실행별 계약 버전, 제한을 지키는 후보/근거 입력 구성, 정확한 입력 스냅샷, 현재 권한·버전·근거 연결의 완료/조회 재검사, 네 작업의 검토 제안 원자 저장 및 실패 코드 저장 연결이다. 새 Flyway 마이그레이션·공개 조회·원본 삭제 전파도 해당 후속 범위에서 다룬다. 기존 실행은 v1을 유지한다.
+실행별 계약 버전·입력 구성·입력 의존성 캡처·완료/조회 재검사·네 작업의 원자 저장·실패 저장을 V10과 연결했다. [실행 계약](ai-contract-v2-execution.md)을 참고한다. 공통 C-* 테스트는 fixture 원문을 읽고 DB에 동일한 식별자·내용을 준비한다. DB가 생성한 requestId는 HTTP 호출 전에 fixture의 합성 ID에 연결하며, 재시도의 새 ID 발급·원본 시각 보존은 별도로 검사한다. 후보 순서는 ID 기준으로 대응시키고 recordedAt은 DB에 저장한 UTC 시각과 비교한다. 가짜 HTTP 응답은 fixture 원문 바이트 그대로 사용한다. 실제 AI 슬롯·수신 저장소·모델 품질과 공개 원본 삭제 API는 별도 범위다.

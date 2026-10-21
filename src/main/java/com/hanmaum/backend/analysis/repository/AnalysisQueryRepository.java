@@ -24,7 +24,7 @@ public class AnalysisQueryRepository {
             """
         SELECT viewer.id AS viewer_id, a.*,
           ARRAY(SELECT p.id FROM ai_proposal p WHERE p.run_id = a.id
-            AND p.invalidated_at IS NULL AND a.status = 'COMPLETED' ORDER BY ordinal_no) AS proposal_ids,
+            AND p.invalidated_at IS NULL AND analysis_inputs_valid(a.id) AND a.status = 'COMPLETED' ORDER BY ordinal_no) AS proposal_ids,
           a.status = 'FAILED' AND a.id = (SELECT id FROM analysis_run
             WHERE record_id = r.id ORDER BY attempt_no DESC LIMIT 1) AS can_retry
         FROM care_space s

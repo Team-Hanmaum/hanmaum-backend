@@ -26,7 +26,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping(
     value = "/api/spaces/{spaceId}/proposals",
     produces = MediaType.APPLICATION_JSON_VALUE)
-@Tag(name = "Proposal", description = "저장된 AI CREATE 제안 조회. 수정·최종 반영·변경 요청은 후속 구현")
+@Tag(name = "Proposal", description = "저장된 AI 검토 제안 조회. 수정·최종 반영·변경 요청은 후속 구현")
 @SecurityRequirement(name = "SessionCookie")
 @ApiResponses({
   @io.swagger.v3.oas.annotations.responses.ApiResponse(
@@ -88,9 +88,9 @@ public class ProposalController {
       summary = "AI 제안 상세 및 근거 조회",
       description =
           "현재 참여자만 조회합니다. 제안 값은 유형별 공개 필드로 변환하며 알 수 없는 값은 null입니다. "
-              + "CREATE의 대상·현재 값·버전·reviewToken은 null, candidates는 빈 배열입니다. "
-              + "무효 제안은 title·proposedValues=null, evidence=[]로 반환합니다. "
-              + "관계·상충 판정은 미연결이므로 relationKind·needsConflictReview=null입니다.")
+              + "CREATE에는 기존 대상이 없으며 reviewToken은 아직 발급하지 않습니다. "
+              + "v2 proposedValues는 변경분이며 changedFields·clearFields로 설정·삭제를 구분합니다. "
+              + "v2는 관계·검토 사유·비교 근거를 제공합니다. 입력 의존성이 무효이면 현재 값·제안 값·근거를 노출하지 않습니다.")
   @io.swagger.v3.oas.annotations.responses.ApiResponse(
       responseCode = "200",
       description = "제안 상세 또는 내용이 제거된 INVALIDATED 제안")

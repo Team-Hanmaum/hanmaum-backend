@@ -17,6 +17,23 @@ class ProposalValueMapperTests {
   private final ProposalValueMapper mapper = new ProposalValueMapper(json);
 
   @Test
+  void v2ProjectionKeepsEmptyWhitespaceAndUnicodeCurrentValuesUnchanged() {
+    var fields =
+        json.createObjectNode()
+            .put("title", " ")
+            .put("description", "")
+            .put("status", "SCHEDULED")
+            .putNull("scheduledDate")
+            .putNull("scheduledTime")
+            .put("location", " 가 ");
+    assertThat(mapper.v2(ProposalItemType.SCHEDULE, fields, null))
+        .isEqualTo(new ProposalValues.V2Schedule(" ", "", "SCHEDULED", null, null, " 가 "));
+    var answer = json.createObjectNode().put("answerText", "  답변 제안  ");
+    assertThat(mapper.v2(ProposalItemType.QUESTION, answer, null))
+        .isEqualTo(new ProposalValues.V2Question(null, null, null, "  답변 제안  "));
+  }
+
+  @Test
   void mapsFiveTypesToTheirPublicFieldsWithoutExposingUnknownChanges() {
     var schedule =
         (ProposalValues.Schedule)

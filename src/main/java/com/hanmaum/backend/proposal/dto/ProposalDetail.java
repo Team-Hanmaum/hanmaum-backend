@@ -20,13 +20,22 @@ public record ProposalDetail(
     @Schema(nullable = true, description = "CREATE는 null") String currentItemVersion,
     @Schema(nullable = true, description = "CREATE는 null") ProposalValues currentValues,
     @Schema(nullable = true, description = "무효 제안은 전체 null") ProposalValues proposedValues,
-    @Schema(description = "현재 CREATE 범위는 빈 배열") List<Candidate> candidates,
+    @Schema(description = "미확정 대상 후보. 무효 제안은 빈 배열") List<Candidate> candidates,
     @Schema(description = "현재 주 원본 근거. 무효 제안은 빈 배열") List<Evidence> evidence,
-    @Schema(nullable = true, description = "관계 판정 계약 미연결로 null") String relationKind,
-    @Schema(nullable = true, description = "상충 판정 계약 미연결로 null") Boolean needsConflictReview,
+    @Schema(nullable = true, description = "v2 관계 판정. v1·무효 제안은 null") String relationKind,
+    @Schema(nullable = true, description = "v2 CONFLICT 여부. v1·무효 제안은 null")
+        Boolean needsConflictReview,
     @Schema(nullable = true, description = "반영 API 미구현으로 발급하지 않음") String reviewToken,
     List<String> redactedFields,
-    Instant createdAt) {
+    Instant createdAt,
+    @Schema(description = "제안이 설정하는 필드. proposedValues의 나머지 null은 변경을 의미하지 않음")
+        List<String> changedFields,
+    @Schema(description = "명시적으로 지우려는 필드. 실제 반영 전 검토 필요") List<String> clearFields,
+    List<String> reviewReasons,
+    List<ComparisonBasis> comparisonBasis) {
+  public record ComparisonBasis(
+      UUID basisId, UUID itemId, String kind, UUID recordId, String text) {}
+
   public record Candidate(UUID itemId, String version, String title) {}
 
   public record Evidence(

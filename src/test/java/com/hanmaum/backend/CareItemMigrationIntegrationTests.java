@@ -25,7 +25,7 @@ class CareItemMigrationIntegrationTests {
 
   @ParameterizedTest
   @ValueSource(strings = {"6", "7"})
-  void upgradesThroughV8AndV9WithoutLosingDataOrInventingEvidenceSnapshots(String startingVersion) {
+  void upgradesThroughV10WithoutLosingDataOrInventingEvidenceSnapshots(String startingVersion) {
     String schema = "care_upgrade_" + UUID.randomUUID().toString().replace("-", "");
     Flyway.configure()
         .dataSource(dataSource)
@@ -214,5 +214,37 @@ class CareItemMigrationIntegrationTests {
                 "SELECT checksum FROM " + schema + ".flyway_schema_history WHERE version='8'",
                 Integer.class))
         .isEqualTo(v8Checksum);
+    var v10 =
+        Flyway.configure()
+            .dataSource(dataSource)
+            .schemas(schema)
+            .defaultSchema(schema)
+            .target("10")
+            .load();
+    v10.migrate();
+    v10.validate();
+    assertThat(v10.info().current().getVersion().getVersion()).isEqualTo("10");
+    var migratedRun = jdbc.queryForMap("SELECT * FROM " + schema + ".analysis_run WHERE id=?", run);
+    assertThat(migratedRun).containsAllEntriesOf(oldRun);
+    assertThat(migratedRun.get("contract_version")).isEqualTo("v1");
+    assertThat(migratedRun.get("input_captured")).isEqualTo(false);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT count(*) FROM " + schema + ".analysis_input_basis", Integer.class))
+        .isZero();
+    assertThat(jdbc.queryForMap("SELECT * FROM " + schema + ".care_item WHERE id=?", item))
+        .isEqualTo(oldItem);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT body::text FROM " + schema + ".content_document WHERE id=?",
+                String.class,
+                document))
+        .contains("기존 제안");
+    assertThat(
+            jdbc.queryForList(
+                "SELECT version,checksum FROM "
+                    + schema
+                    + ".flyway_schema_history WHERE version IS NOT NULL ORDER BY installed_rank"))
+        .containsAll(originalChecksums);
   }
 }
