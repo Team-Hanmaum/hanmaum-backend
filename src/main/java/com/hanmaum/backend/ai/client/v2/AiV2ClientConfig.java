@@ -16,6 +16,8 @@ public class AiV2ClientConfig {
   HttpClient hanmaumAiV2HttpClient(AiProperties properties) {
     return HttpClient.newBuilder()
         .connectTimeout(properties.connectTimeout())
+        // Uvicorn serves HTTP/1.1; avoid the JDK's cleartext HTTP/2 (h2c) upgrade.
+        .version(HttpClient.Version.HTTP_1_1)
         .followRedirects(HttpClient.Redirect.NEVER)
         .build();
   }

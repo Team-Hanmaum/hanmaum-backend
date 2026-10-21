@@ -10,7 +10,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.ObjectMapper;
 
-/** Minimal unconfirmed CREATE storage; no approval or CareItem mutation. */
+/** Unconfirmed v1/v2 proposal storage; no approval or CareItem mutation. */
 @Repository
 @Transactional(propagation = Propagation.MANDATORY)
 public class AnalysisProposalRepository {
@@ -76,5 +76,37 @@ public class AnalysisProposalRepository {
     jdbc.update(
         "UPDATE ai_proposal SET invalidated_at = COALESCE(invalidated_at, clock_timestamp()) WHERE run_id = ?",
         runId);
+  }
+
+  public void insertV2(
+      AnalysisRun run,
+      int ordinal,
+      com.hanmaum.backend.ai.dto.v2.AiV2AnalysisResponse.Suggestion suggestion) {
+    UUID document = UUID.randomUUID(), evidence = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO content_document (id,space_id,kind,body,created_at) VALUES (?,?,'AI_OUTPUT',?::jsonb,clock_timestamp())",
+        document,
+        run.spaceId(),
+        mapper.writeValueAsString(suggestion));
+    jdbc.update(
+        "INSERT INTO evidence (id,space_id,record_id,record_version,quote,created_at) VALUES (?,?,?,?,?,clock_timestamp())",
+        evidence,
+        run.spaceId(),
+        run.recordId(),
+        run.recordVersion(),
+        suggestion.evidence());
+    jdbc.update(
+        """
+        INSERT INTO ai_proposal (id,space_id,run_id,ordinal_no,ai_operation,item_type,output_document_id,primary_evidence_id,resolution,created_at)
+        VALUES (?,?,?,?,?,?,?,?,'OPEN',clock_timestamp())
+        """,
+        UUID.randomUUID(),
+        run.spaceId(),
+        run.id(),
+        ordinal,
+        suggestion.operation().name(),
+        suggestion.type().name(),
+        document,
+        evidence);
   }
 }

@@ -98,6 +98,17 @@ public final class AiV2Contract {
     }
   }
 
+  /** Storage boundary for typed results: retains the same bounded wire validation. */
+  public void validateResponse(AiV2AnalysisRequest request, AiV2AnalysisResponse response) {
+    byte[] raw;
+    try {
+      raw = write(response, limits.responseBytes());
+    } catch (RuntimeException exception) {
+      throw new AiV2Exception(AiFailureCode.AI_INVALID_RESPONSE);
+    }
+    parseResponse(request, raw);
+  }
+
   public AiV2AnalysisResponse parseResponse(AiV2AnalysisRequest request, byte[] raw) {
     // An invalid caller request is an integration error, not an invalid AI response.
     encodeRequest(request);

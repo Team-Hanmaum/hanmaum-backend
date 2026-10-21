@@ -708,7 +708,7 @@ class ProposalQueryIntegrationTests {
       assertThat(paths.path(p).has("post")).isFalse();
     }
     var schemas = root.path("components").path("schemas");
-    assertThat(schemas.path("ProposalValues").path("oneOf").size()).isEqualTo(5);
+    assertThat(schemas.path("ProposalValues").path("oneOf").size()).isEqualTo(8);
     assertThat(schemas.path("ScheduleProposalValues").path("properties").has("scheduledDate"))
         .isTrue();
     assertThat(schemas.path("TaskProposalValues").path("properties").has("assigneeMembershipId"))
@@ -716,6 +716,10 @@ class ProposalQueryIntegrationTests {
     assertThat(schemas.path("QuestionProposalValues").path("properties").has("confirmedAnswer"))
         .isFalse();
     assertThat(schemas.path("ProposalDetail").path("properties").has("evidence")).isTrue();
+    assertThat(schemas.path("V2QuestionProposalValues").path("properties").has("answerText"))
+        .isTrue();
+    for (String name : List.of("changedFields", "clearFields", "reviewReasons", "comparisonBasis"))
+      assertThat(schemas.path("ProposalDetail").path("properties").has(name)).isTrue();
     for (String name : List.of("currentValues", "proposedValues")) {
       var property = schemas.path("ProposalDetail").path("properties").path(name);
       assertThat(property.has("type")).isFalse();

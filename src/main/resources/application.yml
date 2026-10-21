@@ -50,6 +50,7 @@ springdoc:
 
 app:
   analysis:
+    contract-version: ${ANALYSIS_CONTRACT_VERSION:v1}
     worker:
       # Opt-in only. Concurrency, poll interval and lease duration have no policy defaults.
       enabled: ${ANALYSIS_WORKER_ENABLED:false}

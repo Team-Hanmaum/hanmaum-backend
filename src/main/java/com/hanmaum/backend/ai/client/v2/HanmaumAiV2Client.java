@@ -13,7 +13,7 @@ import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
-/** Prepared adapter only. AnalysisProcessor continues to call v1 until execution support lands. */
+/** Single-attempt v2 transport selected by the version pinned on the analysis run. */
 @Component
 public class HanmaumAiV2Client {
   private final RestClient client;

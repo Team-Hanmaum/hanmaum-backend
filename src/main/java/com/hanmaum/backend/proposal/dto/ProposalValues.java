@@ -12,16 +12,63 @@ import java.util.UUID;
       ProposalValues.Task.class,
       ProposalValues.Question.class,
       ProposalValues.Observation.class,
-      ProposalValues.Guidance.class
+      ProposalValues.Guidance.class,
+      ProposalValues.V2Schedule.class,
+      ProposalValues.V2Task.class,
+      ProposalValues.V2Question.class
     })
 public sealed interface ProposalValues {
+  @Schema(
+      name = "V2ScheduleProposalValues",
+      requiredProperties = {
+        "title",
+        "description",
+        "status",
+        "scheduledDate",
+        "scheduledTime",
+        "location"
+      },
+      additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
+  record V2Schedule(
+      @Schema(nullable = true) String title,
+      @Schema(nullable = true) String description,
+      @Schema(nullable = true) String status,
+      @Schema(nullable = true) LocalDate scheduledDate,
+      @Schema(nullable = true) String scheduledTime,
+      @Schema(nullable = true) String location)
+      implements ProposalValues {}
+
+  @Schema(
+      name = "V2TaskProposalValues",
+      requiredProperties = {"title", "description", "status", "dueDate", "assigneeMembershipId"},
+      additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
+  record V2Task(
+      @Schema(nullable = true) String title,
+      @Schema(nullable = true) String description,
+      @Schema(nullable = true) String status,
+      @Schema(nullable = true) LocalDate dueDate,
+      @Schema(nullable = true) UUID assigneeMembershipId)
+      implements ProposalValues {}
+
+  @Schema(
+      name = "V2QuestionProposalValues",
+      requiredProperties = {"title", "description", "status", "answerText"},
+      additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
+  record V2Question(
+      @Schema(nullable = true) String title,
+      @Schema(nullable = true) String description,
+      @Schema(nullable = true) String status,
+      @Schema(nullable = true) String answerText)
+      implements ProposalValues {}
+
   String title();
 
   String description();
 
   @Schema(
       name = "ScheduleProposalValues",
-      requiredProperties = {"title", "description", "scheduledDate", "scheduledTime", "location"})
+      requiredProperties = {"title", "description", "scheduledDate", "scheduledTime", "location"},
+      additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
   record Schedule(
       String title,
       @Schema(nullable = true) String description,
@@ -36,7 +83,8 @@ public sealed interface ProposalValues {
 
   @Schema(
       name = "TaskProposalValues",
-      requiredProperties = {"title", "description", "dueDate", "assigneeMembershipId"})
+      requiredProperties = {"title", "description", "dueDate", "assigneeMembershipId"},
+      additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
   record Task(
       String title,
       @Schema(nullable = true) String description,
@@ -54,9 +102,10 @@ public sealed interface ProposalValues {
 
   @Schema(
       name = "ObservationProposalValues",
-      requiredProperties = {"title", "description", "observedDate", "observedTimeText"})
+      requiredProperties = {"title", "description", "observedDate", "observedTimeText"},
+      additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
   record Observation(
-      String title,
+      @Schema(nullable = true) String title,
       @Schema(nullable = true) String description,
       @Schema(nullable = true) LocalDate observedDate,
       @Schema(nullable = true) String observedTimeText)
@@ -64,9 +113,10 @@ public sealed interface ProposalValues {
 
   @Schema(
       name = "GuidanceProposalValues",
-      requiredProperties = {"title", "description", "sourceName", "receivedDate"})
+      requiredProperties = {"title", "description", "sourceName", "receivedDate"},
+      additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
   record Guidance(
-      String title,
+      @Schema(nullable = true) String title,
       @Schema(nullable = true) String description,
       @Schema(nullable = true) String sourceName,
       @Schema(nullable = true) LocalDate receivedDate)

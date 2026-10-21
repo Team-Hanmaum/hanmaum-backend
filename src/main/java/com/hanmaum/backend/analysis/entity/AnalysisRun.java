@@ -19,4 +19,5 @@ public record AnalysisRun(
     Instant startedAt,
     Instant finishedAt,
     UUID workerToken,
-    Instant leaseUntil) {}
+    Instant leaseUntil,
+    String contractVersion) {}

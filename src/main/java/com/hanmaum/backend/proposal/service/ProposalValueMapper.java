@@ -50,6 +50,43 @@ public class ProposalValueMapper {
     };
   }
 
+  public ProposalValues v2(ProposalItemType type, JsonNode fields, UUID assignee) {
+    String title = rawText(fields, "title"),
+        description = rawText(fields, "description"),
+        status = rawText(fields, "status");
+    return switch (type) {
+      case SCHEDULE ->
+          new ProposalValues.V2Schedule(
+              title,
+              description,
+              status,
+              date(rawText(fields, "scheduledDate")),
+              time(rawText(fields, "scheduledTime")),
+              rawText(fields, "location"));
+      case TASK ->
+          new ProposalValues.V2Task(
+              title, description, status, date(rawText(fields, "dueDate")), assignee);
+      case QUESTION ->
+          new ProposalValues.V2Question(title, description, status, rawText(fields, "answerText"));
+      case OBSERVATION ->
+          new ProposalValues.Observation(
+              title,
+              description,
+              date(rawText(fields, "observedDate")),
+              rawText(fields, "observedTimeText"));
+      case GUIDANCE ->
+          new ProposalValues.Guidance(
+              title,
+              description,
+              rawText(fields, "sourceName"),
+              date(rawText(fields, "receivedDate")));
+    };
+  }
+
+  private String rawText(JsonNode node, String key) {
+    return node.path(key).isString() ? node.path(key).asText() : null;
+  }
+
   private String text(JsonNode node, String key) {
     var value = node.path(key);
     return value.isString() && !value.asText().isBlank() ? value.asText() : null;
