@@ -4,12 +4,17 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 
-/** Explicit transport budgets, not product field limits. No production defaults. */
+/** Explicit transport budgets, capped by the agreed v2-20261021.1 wire contract. */
 public record AiV2PayloadLimits(int requestBytes, int responseBytes) {
+  public static final int MAX_REQUEST_BYTES = 1_048_576;
+  public static final int MAX_RESPONSE_BYTES = 524_288;
+
   public AiV2PayloadLimits {
     if (requestBytes < 1 || responseBytes < 1) {
       throw new IllegalArgumentException("AI v2 requires positive payload byte budgets.");
     }
+    requestBytes = Math.min(requestBytes, MAX_REQUEST_BYTES);
+    responseBytes = Math.min(responseBytes, MAX_RESPONSE_BYTES);
   }
 
   static void check(long size, int limit) {

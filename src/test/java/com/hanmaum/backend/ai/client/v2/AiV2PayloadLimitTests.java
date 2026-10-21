@@ -17,6 +17,45 @@ import org.springframework.web.client.RestClient;
 
 class AiV2PayloadLimitTests {
   @Test
+  void oversizedSemanticRequestsAreRejectedBeforeHttpEvenWhenTheyFitTheByteBudget()
+      throws Exception {
+    var builder = RestClient.builder().baseUrl("http://ai.test");
+    var server = MockRestServiceServer.bindTo(builder).build();
+    var client = new HanmaumAiV2Client(builder.build(), SETTINGS, AI);
+    var base = new AiV2Contract(LIMITS).parseRequest(raw(BASE));
+    var oversized =
+        new com.hanmaum.backend.ai.dto.v2.AiV2AnalysisRequest(
+            base.requestId(),
+            base.careSpaceId(),
+            base.recordId(),
+            "a".repeat(10_001),
+            base.recordedAt(),
+            base.timezone(),
+            base.candidates());
+    assertFailure(
+        catchThrowable(() -> client.analyze(oversized)), AiFailureCode.AI_INTEGRATION_ERROR);
+    server.verify();
+  }
+
+  @Test
+  void errorEnvelopesAlsoRespectTheTotalDecodedStringLimit() {
+    var mapper = new AiV2ErrorMapper();
+    String code = "AI_OVERLOADED";
+    for (int delta : new int[] {0, 1}) {
+      byte[] body =
+          JSON.writeValueAsBytes(
+              JSON.createObjectNode()
+                  .put("code", code)
+                  .put("message", "a".repeat(50_000 - code.length() + delta)));
+      assertThat(mapper.map(503, body, LIMITS.responseBytes()))
+          .isEqualTo(
+              delta == 0
+                  ? AiFailureCode.AI_SERVICE_UNAVAILABLE
+                  : AiFailureCode.AI_INVALID_RESPONSE);
+    }
+  }
+
+  @Test
   void missingOrInvalidBudgetsAndOversizedRequestsNeverReachHttp() throws Exception {
     var builder = RestClient.builder().baseUrl("http://ai.test");
     var server = MockRestServiceServer.bindTo(builder).build();

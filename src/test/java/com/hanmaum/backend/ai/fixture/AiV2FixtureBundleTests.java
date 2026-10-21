@@ -24,16 +24,23 @@ import tools.jackson.databind.json.JsonMapper;
 
 /** Checks the imported bundle, not the unimplemented v2 HTTP, receipt or persistence behavior. */
 class AiV2FixtureBundleTests {
-  // AI af3abb3310f2f86c55fdf182f687da7491ef5fec. Update only with a reviewed shared revision.
+  // AI 97972f9ff9980646646947571a8bddfce2df5d9e. Update only with a reviewed shared revision.
   private static final String MANIFEST_SHA256 =
-      "a65c27c8a8c323f3bdfb6fec0bddefe8cf251870f940e2410a2043b0dab83ff9";
+      "524f95bb6c1b27c3ef5cd781a15fd95f372b52b0b79787bf952316b12033183e";
   private static final Map<String, String> SUITES =
       Map.of(
-          "STATIC", "cases/static.json",
-          "RECEIPT", "cases/receipts.json",
-          "BACKEND", "cases/backend.json");
+          "STATIC",
+          "cases/static.json",
+          "RECEIPT",
+          "cases/receipts.json",
+          "BACKEND",
+          "cases/backend.json",
+          "LIMITS",
+          "cases/limits.json",
+          "HTTP",
+          "cases/http.json");
   private static final Map<String, Integer> COUNTS =
-      Map.of("STATIC", 146, "RECEIPT", 30, "BACKEND", 25);
+      Map.of("STATIC", 146, "RECEIPT", 30, "BACKEND", 25, "LIMITS", 102, "HTTP", 25);
   private static final JsonMapper JSON =
       JsonMapper.builder().enable(StreamReadFeature.STRICT_DUPLICATE_DETECTION).build();
 
@@ -43,9 +50,9 @@ class AiV2FixtureBundleTests {
     var manifest = metadata("manifest.json");
     assertThat(manifest.path("formatVersion").asInt()).isEqualTo(1);
     assertThat(manifest.path("contractVersion").asText()).isEqualTo("v2");
-    assertThat(manifest.path("revision").asText()).isEqualTo("v2-20261016.2");
+    assertThat(manifest.path("revision").asText()).isEqualTo("v2-20261021.1");
     assertThat(manifest.path("sourceRepository").asText()).isEqualTo("Team-Hanmaum/hanmaum-ai");
-    assertThat(manifest.path("files").size()).isEqualTo(174);
+    assertThat(manifest.path("files").size()).isEqualTo(183);
 
     var expected = new HashSet<String>();
     expected.add("manifest.json");
@@ -95,14 +102,14 @@ class AiV2FixtureBundleTests {
         assertThat(scenario.path("contractSections").size()).as(id).isPositive();
         for (var section : scenario.path("contractSections")) {
           assertThat(section.isIntegralNumber()).as(id).isTrue();
-          assertThat(section.asInt()).as(id).isBetween(1, 15);
+          assertThat(section.asInt()).as(id).isBetween(1, 16);
         }
       }
     }
     assertThat(strings(manifest.path("caseIds")))
         .doesNotHaveDuplicates()
         .containsExactlyInAnyOrderElementsOf(ids);
-    assertThat(ids).hasSize(201);
+    assertThat(ids).hasSize(328);
   }
 
   @Test
@@ -131,10 +138,20 @@ class AiV2FixtureBundleTests {
               assertThat(request.at("/headers/Content-Type").asText())
                   .as(id)
                   .isEqualTo("application/json");
-              assertThat(request.has("bodyFile")).as(id).isTrue();
+              assertThat(request.has("bodyFile") || request.has("bodyRecipe")).as(id).isTrue();
             }
           });
     }
+    // Generated recipes can introduce a base payload not referenced by a literal bodyFile.
+    visitObjects(
+        metadata("generated.json"),
+        node -> {
+          if (node.has("baseFile")) {
+            String relative = node.path("baseFile").asText();
+            assertThat(Files.isRegularFile(resolve(relative))).as(relative).isTrue();
+            referenced.add(relative);
+          }
+        });
     var payloads = new HashSet<String>();
     for (var entry : metadata("manifest.json").path("files")) {
       String relative = entry.path("path").asText();
@@ -152,7 +169,7 @@ class AiV2FixtureBundleTests {
       String key = entry.path("httpStatus").asInt() + ":" + entry.path("aiCode").asText();
       assertThat(mappings.put(key, entry.path("beFailureCode").asText())).as(key).isNull();
     }
-    assertThat(mappings).hasSize(10);
+    assertThat(mappings).hasSize(13);
     for (var scenario : allCases()) {
       String id = scenario.path("caseId").asText();
       visitObjects(

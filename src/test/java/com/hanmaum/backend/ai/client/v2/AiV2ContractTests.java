@@ -134,6 +134,7 @@ class AiV2ContractTests {
     for (int i = 0; i < 51; i++) {
       ObjectNode copy = first.deepCopy();
       copy.put("itemId", new UUID(1, i).toString());
+      ((ObjectNode) copy.path("basis").get(0)).put("text", "short basis");
       candidates.add(copy);
     }
     var request = contract.parseRequest(JSON.writeValueAsBytes(root));
@@ -143,7 +144,7 @@ class AiV2ContractTests {
     assertThat(request.recordedAt()).isEqualTo("2026-10-16T09:00:00.123456+09:00");
     ObjectNode output = (ObjectNode) metadata("payloads/responses/empty.json");
     ArrayNode suggestions = (ArrayNode) output.path("suggestions");
-    for (int i = 0; i < 31; i++) {
+    for (int i = 0; i < 21; i++) {
       suggestions
           .addObject()
           .put("operation", "CREATE")
@@ -153,12 +154,12 @@ class AiV2ContractTests {
           .set("candidateItemIds", JSON.createArrayNode());
       ObjectNode suggestion = (ObjectNode) suggestions.get(i);
       suggestion.put("title", "제목".repeat(201)).put("evidence", "원문").put("relationKind", "NEW");
-      suggestion.set("changes", JSON.createObjectNode().put("description", "설명".repeat(2001)));
+      suggestion.set("changes", JSON.createObjectNode().put("description", "설명".repeat(501)));
       for (String field : List.of("clearFields", "reviewReasons", "basisReferences"))
         suggestion.putArray(field);
     }
     assertThat(contract.parseResponse(request, JSON.writeValueAsBytes(output)).suggestions())
-        .hasSize(31);
+        .hasSize(21);
   }
 
   @Test

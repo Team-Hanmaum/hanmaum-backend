@@ -59,6 +59,7 @@ public final class AiV2Contract {
   public AiV2AnalysisRequest parseRequest(byte[] raw) {
     try {
       JsonNode root = read(raw, limits.requestBytes());
+      AiV2SizeRules.request(root);
       keys(
           root,
           "requestId",
@@ -102,6 +103,7 @@ public final class AiV2Contract {
     encodeRequest(request);
     try {
       JsonNode root = read(raw, limits.responseBytes());
+      AiV2SizeRules.response(root);
       keys(root, "requestId", "suggestions");
       UUID id = uuid(root.get("requestId"));
       require(id.equals(request.requestId()));
@@ -150,7 +152,13 @@ public final class AiV2Contract {
     }
     return switch (type) {
       case SCHEDULE -> MAPPER.treeToValue(node, AiV2CurrentValues.Schedule.class);
-      case TASK -> MAPPER.treeToValue(node, AiV2CurrentValues.Task.class);
+      case TASK ->
+          new AiV2CurrentValues.Task(
+              nullable(node.get("title"), AiV2Json::string),
+              nullable(node.get("description"), AiV2Json::string),
+              string(node.get("status")),
+              nullable(node.get("dueDate"), AiV2Json::string),
+              nullable(node.get("assigneeMembershipId"), AiV2Json::uuid));
       case QUESTION -> MAPPER.treeToValue(node, AiV2CurrentValues.Question.class);
       case OBSERVATION -> MAPPER.treeToValue(node, AiV2CurrentValues.Observation.class);
       case GUIDANCE -> MAPPER.treeToValue(node, AiV2CurrentValues.Guidance.class);
