@@ -19,6 +19,11 @@ springdoc:
     enabled: true
 
 app:
+  ai:
+    v2:
+      # Agreed initial local/integration profile; does not switch analysis execution to v2.
+      max-request-bytes: ${AI_V2_MAX_REQUEST_BYTES:1048576}
+      max-response-bytes: ${AI_V2_MAX_RESPONSE_BYTES:524288}
   invitations:
     # Public local-only key. Never use this value outside local development.
     encryption-key: ${INVITATION_ENCRYPTION_KEY:bG9jYWwtaW52aXRhdGlvbi1rZXktMzItYnl0ZXMhISE=}

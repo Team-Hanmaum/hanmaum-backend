@@ -90,13 +90,6 @@ class HanmaumAiV2ClientTests {
       throws Exception {
     List<DynamicTest> tests = new ArrayList<>();
     for (JsonNode scenario : metadata("cases/receipts.json")) {
-      if (scenario.path("caseId").asText().equals("B-uncomparable-record")) {
-        // Contract specifies BLOCKED/providerCalls=0, but deliberately no HTTP status/code.
-        // Do not invent a wire outcome or count this as a passing receipt implementation.
-        assertThat(scenario.path("steps").get(1).path("expected").path("ai").has("httpStatus"))
-            .isFalse();
-        continue;
-      }
       tests.add(
           DynamicTest.dynamicTest(
               scenario.path("caseId").asText() + " response mapping only",
@@ -119,7 +112,7 @@ class HanmaumAiV2ClientTests {
                 assertThat(checked).isPositive();
               }));
     }
-    assertThat(tests).hasSize(29);
+    assertThat(tests).hasSize(30);
     return tests;
   }
 
@@ -170,7 +163,7 @@ class HanmaumAiV2ClientTests {
                     errorBody(code),
                     AiFailureCode.valueOf(entry.path("beFailureCode").asText()));
                 for (int other :
-                    List.of(201, 204, 302, 400, 401, 403, 409, 422, 500, 502, 503, 504)) {
+                    List.of(201, 204, 302, 400, 401, 403, 409, 413, 422, 429, 500, 502, 503, 504)) {
                   if (other != status)
                     exchange(request, other, errorBody(code), AiFailureCode.AI_SERVICE_UNAVAILABLE);
                 }

@@ -73,6 +73,19 @@ final class AiV2Json {
 
   static UUID uuid(JsonNode node) {
     String value = string(node);
+    // The shared pre-normalization boundary fixtures also use 32-digit UUID spelling.
+    if (value.matches("[0-9a-fA-F]{32}")) {
+      value =
+          value.substring(0, 8)
+              + "-"
+              + value.substring(8, 12)
+              + "-"
+              + value.substring(12, 16)
+              + "-"
+              + value.substring(16, 20)
+              + "-"
+              + value.substring(20);
+    }
     require(
         value.matches(
             "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"));
