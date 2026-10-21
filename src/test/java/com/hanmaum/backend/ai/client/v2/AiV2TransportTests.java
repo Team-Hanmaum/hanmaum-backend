@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.*;
 
 import com.hanmaum.backend.ai.client.AiProperties;
 import com.hanmaum.backend.ai.code.AiFailureCode;
+import com.hanmaum.backend.ai.dto.v2.AiV2AnalysisResponse;
 import com.hanmaum.backend.ai.fixture.V2GeneratedPayloads;
 import com.sun.net.httpserver.HttpServer;
 import java.net.InetSocketAddress;
@@ -71,7 +72,7 @@ class AiV2TransportTests {
     var received = new AtomicReference<byte[]>();
     var requestId = new AtomicReference<String>();
     var apiKey = new AtomicReference<String>();
-    byte[] response = raw("payloads/responses/empty.json");
+    byte[] response = raw("payloads/responses/create-schedule.json");
     server.createContext(
         "/v2/analyses",
         exchange -> {
@@ -84,10 +85,13 @@ class AiV2TransportTests {
             body.write(response);
           }
         });
-    var client = client(Duration.ofSeconds(3), response.length);
     var request = contract.parseRequest(raw(BASE));
-    assertThat(client.analyze(request).requestId()).isEqualTo(request.requestId());
-    assertThat(received.get()).isEqualTo(contract.encodeRequest(request));
+    byte[] encoded = contract.encodeRequest(request);
+    var client = client(Duration.ofSeconds(3), encoded.length, response.length);
+    var actual = client.analyze(request);
+    assertThat(actual.suggestions()).hasSize(1);
+    assertResponseMatchesFixture(actual, response);
+    assertThat(received.get()).isEqualTo(encoded);
     assertThat(requestId.get()).isEqualTo(request.requestId().toString());
     assertThat(apiKey.get()).isEqualTo("test-only-key");
     assertThat(calls).hasValue(1);
@@ -112,6 +116,19 @@ class AiV2TransportTests {
                 var setup = scenario.path("setup");
                 var expected = scenario.path("expected");
                 if (id.equals("H-be-preflight-limit")) {
+                  byte[] padded = V2GeneratedPayloads.raw(setup.path("requestBodyRecipe").asText());
+                  assertThat(padded.length).isEqualTo(LIMITS.requestBytes() + 1);
+                  assertFailure(
+                      catchThrowable(() -> contract.parseRequest(padded)),
+                      AiFailureCode.AI_INTEGRATION_ERROR);
+                  // The recipe exceeds 1 MiB through trailing whitespace, which a DTO cannot keep.
+                  // Prepare a valid DTO outside the failure assertion, then test the actual client
+                  // with a budget one byte below its serialized size. Shared limits stay unchanged.
+                  var request =
+                      contract.parseRequest(JSON.writeValueAsBytes(JSON.readTree(padded)));
+                  byte[] encoded = contract.encodeRequest(request);
+                  int requestBudget = encoded.length - 1;
+                  assertThat(requestBudget).isPositive();
                   server.createContext(
                       "/v2/analyses",
                       exchange -> {
@@ -119,14 +136,10 @@ class AiV2TransportTests {
                         exchange.close();
                       });
                   try {
-                    var client = client(Duration.ofSeconds(3), LIMITS.responseBytes());
+                    var client =
+                        client(Duration.ofSeconds(3), requestBudget, LIMITS.responseBytes());
                     assertFailure(
-                        catchThrowable(
-                            () ->
-                                client.analyze(
-                                    contract.parseRequest(
-                                        V2GeneratedPayloads.raw(
-                                            setup.path("requestBodyRecipe").asText())))),
+                        catchThrowable(() -> client.analyze(request)),
                         AiFailureCode.AI_INTEGRATION_ERROR);
                     assertThat(calls).hasValue(0);
                   } finally {
@@ -172,7 +185,8 @@ class AiV2TransportTests {
                       expected.has("be")
                           ? expected.path("be").path("failureCode")
                           : expected.path("failureCode");
-                  if (failure.isNull()) assertThat(client.analyze(request)).isNotNull();
+                  if (failure.isNull())
+                    assertResponseMatchesFixture(client.analyze(request), response);
                   else
                     assertFailure(
                         catchThrowable(() -> client.analyze(request)),
@@ -298,6 +312,10 @@ class AiV2TransportTests {
   }
 
   private HanmaumAiV2Client client(Duration timeout, int responseBudget) {
+    return client(timeout, LIMITS.requestBytes(), responseBudget);
+  }
+
+  private HanmaumAiV2Client client(Duration timeout, int requestBudget, int responseBudget) {
     if (http != null) http.shutdownNow();
     var ai =
         new AiProperties(
@@ -309,7 +327,12 @@ class AiV2TransportTests {
     http = config.hanmaumAiV2HttpClient(ai);
     return new HanmaumAiV2Client(
         config.hanmaumAiV2RestClient(RestClient.builder(), ai, http),
-        new AiV2Properties(LIMITS.requestBytes(), responseBudget),
+        new AiV2Properties(requestBudget, responseBudget),
         ai);
+  }
+
+  private static void assertResponseMatchesFixture(AiV2AnalysisResponse actual, byte[] response) {
+    // Compare against the injected JSON, independently of the production response parser.
+    assertThat(uuidValues(JSON.valueToTree(actual))).isEqualTo(uuidValues(JSON.readTree(response)));
   }
 }
