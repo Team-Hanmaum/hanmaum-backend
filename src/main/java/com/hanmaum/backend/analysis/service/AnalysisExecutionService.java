@@ -168,7 +168,8 @@ public class AnalysisExecutionService {
   }
 
   /**
-   * Original direct document redaction must remove copied proposal content in the same transaction.
+   * Redacting a captured current or original direct document removes copied proposal content in the
+   * same transaction.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public void invalidateDirectDocument(UUID space, UUID document) {

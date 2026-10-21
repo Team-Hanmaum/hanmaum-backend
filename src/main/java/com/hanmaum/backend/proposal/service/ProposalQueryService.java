@@ -151,7 +151,8 @@ public class ProposalQueryService {
                     mapper,
                     p.itemType().name(),
                     current.status(),
-                    mapper.readTree(current.document())),
+                    mapper.readTree(current.document()),
+                    current.assigneeId()),
                 current.assigneeId());
     var candidateIds =
         strings(body.path("candidateItemIds")).stream()

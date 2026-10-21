@@ -28,7 +28,9 @@ import java.util.concurrent.atomic.*;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -373,8 +375,10 @@ class AnalysisV2IntegrationTests {
     verify(legacy, times(1)).analyze(any());
   }
 
-  @Test
-  void discardsCopiedV2ContentThroughDirectDocumentMutationHook() throws Exception {
+  @ParameterizedTest
+  @CsvSource({"CURRENT,false", "CURRENT,true", "BASIS,false", "BASIS,true"})
+  void discardsCopiedV2ContentThroughDirectDocumentMutationHook(
+      String dependency, boolean alreadyCompleted) throws Exception {
     var scenario =
         scenarios()
             .filter(c -> c.path("caseId").asText().equals("C-completed"))
@@ -390,12 +394,28 @@ class AnalysisV2IntegrationTests {
             .parseResponse(
                 work.v2Request(),
                 Files.readAllBytes(FIXTURES.resolve("payloads/responses/all-operations.json")));
-    execution.completeV2(work, response);
-    UUID document =
+    if (alreadyCompleted) {
+      execution.completeV2(work, response);
+      assertThat(count("ai_proposal")).isEqualTo(4);
+    }
+    UUID item = UUID.fromString("aaaaaaaa-0000-4000-8000-000000000104");
+    UUID currentDocument =
+        jdbc.queryForObject(
+            "SELECT current_document_id FROM care_item WHERE id=?", UUID.class, item);
+    UUID basisDocument =
         jdbc.queryForObject(
             "SELECT direct_document_id FROM care_item_basis WHERE id=?",
             UUID.class,
             UUID.fromString("aaaaaaaa-0000-4000-8000-000000000304"));
+    assertThat(currentDocument).isNotEqualTo(basisDocument);
+    UUID document = dependency.equals("CURRENT") ? currentDocument : basisDocument;
+    if (dependency.equals("CURRENT"))
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT count(*) FROM analysis_input_basis WHERE direct_document_id=?",
+                  Integer.class,
+                  document))
+          .isZero();
     tx(
         () -> {
           execution.invalidateDirectDocument(space, document);
@@ -404,13 +424,105 @@ class AnalysisV2IntegrationTests {
         });
     assertThat(runs.find(space, record, run).orElseThrow().status())
         .isEqualTo(AnalysisStatus.DISCARDED);
+    // A late response must not restore content removed by the mutation hook.
+    execution.completeV2(work, response);
+    assertThat(count("ai_proposal")).isEqualTo(alreadyCompleted ? 4 : 0);
     assertThat(
             jdbc.queryForObject(
-                "SELECT count(*) FROM content_document WHERE kind='AI_OUTPUT' AND body IS NOT NULL",
-                Integer.class))
+                """
+                SELECT count(*) FROM ai_proposal p
+                JOIN content_document d ON d.id=p.output_document_id
+                JOIN evidence e ON e.id=p.primary_evidence_id
+                WHERE p.run_id=? AND (d.body IS NOT NULL OR d.redacted_at IS NULL
+                  OR e.quote IS NOT NULL OR e.redacted_at IS NULL OR p.invalidated_at IS NULL)
+                """,
+                Integer.class,
+                run))
         .isZero();
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT body IS NOT NULL AND redacted_at IS NULL FROM content_document WHERE id=?",
+                Boolean.class,
+                dependency.equals("CURRENT") ? basisDocument : currentDocument))
+        .isTrue();
     for (UUID id : proposalIds())
       assertThat(queries.detail(owner, space, id).proposedValues()).isNull();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"ACTIVE", "ENDED", "OTHER_SPACE", "MISSING", "INVALID", "NONE"})
+  void projectsOnlyActiveSameSpaceAssigneesIntoAiInputAndPublicCurrentValues(String state)
+      throws Exception {
+    var scenario =
+        scenarios()
+            .filter(c -> c.path("caseId").asText().equals("C-completed"))
+            .findFirst()
+            .orElseThrow();
+    request = read(scenario.path("request").path("bodyFile").asText());
+    seed(scenario);
+    UUID assignee = UUID.randomUUID();
+    if (state.equals("ACTIVE") || state.equals("ENDED") || state.equals("OTHER_SPACE")) {
+      UUID assigneeUser = user();
+      UUID assignedSpace = state.equals("OTHER_SPACE") ? UUID.randomUUID() : space;
+      tx(
+          () -> {
+            if (state.equals("OTHER_SPACE"))
+              jdbc.update(
+                  "INSERT INTO care_space (id,owner_membership_id,owner_user_id,subject_label,created_at,updated_at) VALUES (?,?,?,'other',now(),now())",
+                  assignedSpace,
+                  assignee,
+                  assigneeUser);
+            jdbc.update(
+                "INSERT INTO space_membership (id,space_id,user_id,joined_at) VALUES (?,?,?,now())",
+                assignee,
+                assignedSpace,
+                assigneeUser);
+          });
+      if (state.equals("ENDED"))
+        jdbc.update(
+            "UPDATE space_membership SET ended_at=now(),end_reason='LEFT' WHERE id=?", assignee);
+    }
+    String storedAssignee =
+        switch (state) {
+          case "NONE" -> null;
+          case "INVALID" -> "not-a-uuid";
+          default -> assignee.toString().toUpperCase(Locale.ROOT);
+        };
+    UUID task = UUID.fromString("aaaaaaaa-0000-4000-8000-000000000101");
+    jdbc.update(
+        "UPDATE content_document d SET body=jsonb_set(body,'{fields,assigneeMembershipId}',?::jsonb) FROM care_item i WHERE i.id=? AND d.id=i.current_document_id",
+        mapper.writeValueAsString(storedAssignee),
+        task);
+    accept(scenario);
+    var work = execution.claim(space, run, Duration.ofMinutes(2)).orElseThrow();
+    var candidate =
+        work.v2Request().candidates().stream()
+            .filter(c -> c.itemId().equals(task))
+            .findFirst()
+            .orElseThrow();
+    UUID expectedAssignee = state.equals("ACTIVE") ? assignee : null;
+    assertThat(
+            ((com.hanmaum.backend.ai.dto.v2.AiV2CurrentValues.Task) candidate.currentValues())
+                .assigneeMembershipId())
+        .isEqualTo(expectedAssignee);
+    var output = read("payloads/responses/all-operations.json");
+    var update = (ObjectNode) output.path("suggestions").get(1);
+    update.put("type", "TASK").put("targetItemId", task.toString());
+    var reference = (ObjectNode) update.path("basisReferences").get(0);
+    reference.put("itemId", task.toString());
+    reference.putArray("basisIds").add("aaaaaaaa-0000-4000-8000-000000000201");
+    var contract =
+        new com.hanmaum.backend.ai.client.v2.AiV2Contract(
+            new com.hanmaum.backend.ai.client.v2.AiV2PayloadLimits(1048576, 524288));
+    execution.completeV2(
+        work, contract.parseResponse(work.v2Request(), mapper.writeValueAsBytes(output)));
+    assertThat(runs.find(space, record, run).orElseThrow().status())
+        .isEqualTo(AnalysisStatus.COMPLETED);
+    var current = queries.detail(owner, space, proposalIds().get(1)).currentValues();
+    assertThat(
+            ((com.hanmaum.backend.proposal.dto.ProposalValues.V2Task) current)
+                .assigneeMembershipId())
+        .isEqualTo(expectedAssignee);
   }
 
   @Test

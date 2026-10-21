@@ -43,8 +43,13 @@ public class AnalysisV2InputService {
     var items =
         jdbc.query(
             """
-        SELECT i.id,i.version,i.item_type,i.status,i.current_document_id
+        SELECT i.id,i.version,i.item_type,i.status,i.current_document_id,assignee.id assignee_id
         FROM care_item i JOIN content_document d ON d.space_id=i.space_id AND d.id=i.current_document_id
+        LEFT JOIN space_membership assignee ON i.item_type='TASK'
+          AND assignee.space_id=i.space_id AND assignee.is_active
+          AND assignee.id=CASE WHEN (d.body #>> '{fields,assigneeMembershipId}')
+            ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            THEN (d.body #>> '{fields,assigneeMembershipId}')::uuid END
         WHERE i.space_id=? AND i.visibility='VISIBLE' AND NOT i.needs_reconfirmation
           AND d.body IS NOT NULL AND d.redacted_at IS NULL
           AND EXISTS (SELECT 1 FROM care_item_basis b
@@ -72,7 +77,8 @@ public class AnalysisV2InputService {
                     rs.getLong(2),
                     rs.getString(3),
                     rs.getString(4),
-                    rs.getObject(5, UUID.class)),
+                    rs.getObject(5, UUID.class),
+                    rs.getObject(6, UUID.class)),
             run.spaceId());
     if (items.size() > 100) throw invalid();
     var captured = new ArrayList<Link>();
@@ -88,7 +94,8 @@ public class AnalysisV2InputService {
       ObjectNode values;
       try {
         values =
-            CareItemV2Values.project(mapper, item.type(), item.status(), mapper.readTree(body));
+            CareItemV2Values.project(
+                mapper, item.type(), item.status(), mapper.readTree(body), item.assignee());
       } catch (RuntimeException e) {
         throw invalid();
       }
@@ -221,7 +228,8 @@ public class AnalysisV2InputService {
     return new AiV2Exception(AiFailureCode.AI_INTEGRATION_ERROR);
   }
 
-  private record Item(UUID id, long version, String type, String status, UUID document) {}
+  private record Item(
+      UUID id, long version, String type, String status, UUID document, UUID assignee) {}
 
   private record Link(
       UUID item, UUID id, UUID document, UUID evidence, UUID record, Long version) {}
