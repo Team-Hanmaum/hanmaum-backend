@@ -97,6 +97,35 @@ class AiV2TransportTests {
     assertThat(calls).hasValue(1);
   }
 
+  @Test
+  void sendsHttp11WithoutAnH2cUpgradeToTheAiServer() throws Exception {
+    var protocol = new AtomicReference<String>();
+    var upgrade = new AtomicReference<String>();
+    var http2Settings = new AtomicReference<String>();
+    byte[] response = raw("payloads/responses/create-schedule.json");
+    server.createContext(
+        "/v2/analyses",
+        exchange -> {
+          calls.incrementAndGet();
+          protocol.set(exchange.getProtocol());
+          upgrade.set(exchange.getRequestHeaders().getFirst("Upgrade"));
+          http2Settings.set(exchange.getRequestHeaders().getFirst("HTTP2-Settings"));
+          exchange.getRequestBody().readAllBytes();
+          exchange.sendResponseHeaders(200, response.length);
+          try (var output = exchange.getResponseBody()) {
+            output.write(response);
+          }
+        });
+    var actual =
+        client(Duration.ofSeconds(3), LIMITS.responseBytes())
+            .analyze(contract.parseRequest(raw(BASE)));
+    assertResponseMatchesFixture(actual, response);
+    assertThat(protocol.get()).isEqualTo("HTTP/1.1");
+    assertThat(upgrade.get()).isNull();
+    assertThat(http2Settings.get()).isNull();
+    assertThat(calls).hasValue(1);
+  }
+
   @TestFactory
   List<DynamicTest> executesElevenSharedBeHttpCasesWithoutClaimingDatabaseEffects()
       throws Exception {
