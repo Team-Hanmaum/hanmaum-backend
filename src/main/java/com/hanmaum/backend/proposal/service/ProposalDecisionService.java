@@ -55,12 +55,14 @@ public class ProposalDecisionService {
 
   @Transactional
   public ProposalApplicationResponse apply(UUID actor, UUID space, JsonNode input) {
+    validateSize(input);
     return proposals.application(
         space, decide(actor, space, ProposalDecisionRequest.parse(input, true), true));
   }
 
   @Transactional
   public ProposalDeclineResponse decline(UUID actor, UUID space, JsonNode input) {
+    validateSize(input);
     return proposals.decline(
         space, decide(actor, space, ProposalDecisionRequest.parse(input, false), false));
   }
@@ -114,6 +116,7 @@ public class ProposalDecisionService {
     Map<UUID, CareItemApplicationRepository.Item> locked = new HashMap<>();
     targets.stream().sorted().forEach(id -> locked.put(id, applications.lock(space, id)));
     List<Plan> plans = new ArrayList<>();
+    int documentBytes = 0;
     for (int i = 0; i < request.entries().size(); i++) {
       var e = request.entries().get(i);
       var p = loaded.get(e.proposalId());
@@ -151,6 +154,15 @@ public class ProposalDecisionService {
         prepared =
             applications.prepare(
                 space, p.type(), p.operation(), target, e.values(), path + ".values");
+        if (!p.operation().equals("LINK_EVIDENCE")) {
+          CareMutationSizeLimits.strings(prepared.body(), path + ".values");
+          documentBytes +=
+              CareMutationSizeLimits.bytes(
+                  mapper,
+                  prepared.body(),
+                  CareMutationSizeLimits.DOCUMENT_BYTES - documentBytes,
+                  path + ".values");
+        }
       }
       String current = reviews.issue(actor, space, p.id());
       if (!p.available()
@@ -186,6 +198,12 @@ public class ProposalDecisionService {
             Map.of("batchId", batch.toString(), "membershipId", member.toString())),
         now);
     return batch;
+  }
+
+  private void validateSize(JsonNode input) {
+    // Also defend direct service callers before canonicalization, hashing or DB writes.
+    CareMutationSizeLimits.strings(input, "body");
+    CareMutationSizeLimits.bytes(mapper, input, CareMutationSizeLimits.REQUEST_BYTES, "body");
   }
 
   private JsonNode canonical(JsonNode node) {

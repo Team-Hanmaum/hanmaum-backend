@@ -18,6 +18,10 @@ public class EditLockRepository {
     this.jdbc = jdbc;
   }
 
+  public Instant now() {
+    return jdbc.queryForObject("SELECT clock_timestamp()", Timestamp.class).toInstant();
+  }
+
   public void releaseMembership(UUID space, UUID member) {
     jdbc.update(
         "DELETE FROM care_item_edit_lock WHERE space_id=? AND holder_membership_id=?",

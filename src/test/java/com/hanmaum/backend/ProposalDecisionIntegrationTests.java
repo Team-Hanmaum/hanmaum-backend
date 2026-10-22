@@ -20,7 +20,9 @@ import com.hanmaum.backend.proposal.dto.*;
 import com.hanmaum.backend.proposal.service.*;
 import com.hanmaum.backend.record.dto.*;
 import com.hanmaum.backend.record.service.SourceRecordCreationService;
+import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 import org.junit.jupiter.api.*;
@@ -36,6 +38,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -68,6 +71,7 @@ class ProposalDecisionIntegrationTests {
   @Autowired MembershipLifecycleService membershipChanges;
   @Autowired com.hanmaum.backend.analysis.service.AnalysisQueryService analysisQueries;
   @Autowired PlatformTransactionManager transactions;
+  @MockitoSpyBean Clock clock;
   UUID owner, member, space, ownerMembership, memberMembership;
 
   @BeforeEach
@@ -127,13 +131,15 @@ class ProposalDecisionIntegrationTests {
     var replay = decisions.apply(owner, space, body);
     assertThat(replay.results()).hasSize(5);
     assertThat(count("care_item", "space_id", space)).isEqualTo(5);
-    assertThat(
-            jdbc.queryForObject(
-                "SELECT result_refs::text FROM command_receipt WHERE actor_user_id=? AND client_request_id=?",
-                String.class,
-                owner,
-                UUID.fromString(body.path("clientRequestId").asText())))
-        .doesNotContain("소유자", "AI 제목", "leaseToken", "reviewToken");
+    String receipt =
+        jdbc.queryForObject(
+            "SELECT result_refs::text FROM command_receipt WHERE actor_user_id=? AND client_request_id=?",
+            String.class,
+            owner,
+            UUID.fromString(body.path("clientRequestId").asText()));
+    assertThat(receipt).doesNotContain("소유자", "AI 제목", "leaseToken", "reviewToken");
+    for (var submitted : body.path("entries"))
+      assertThat(receipt).doesNotContain(submitted.path("reviewToken").asText());
   }
 
   @Test
@@ -160,6 +166,16 @@ class ProposalDecisionIntegrationTests {
                 ids.get(1), second, mapper.readTree("{\"fields\":{\"dueDate\":\"2026-10-25\"}}")));
     var result = decisions.apply(owner, space, body);
     assertThat(result.results()).hasSize(2);
+    String receipt =
+        jdbc.queryForObject(
+            "SELECT result_refs::text FROM command_receipt WHERE actor_user_id=? AND client_request_id=?",
+            String.class,
+            owner,
+            UUID.fromString(body.path("clientRequestId").asText()));
+    for (var submitted : body.path("entries"))
+      assertThat(receipt)
+          .doesNotContain(
+              submitted.path("reviewToken").asText(), submitted.path("leaseToken").asText());
     assertThat(itemQueries.detail(owner, space, first).fields().path("scheduledDate").asText())
         .isEqualTo("2026-10-25");
     assertThat(itemQueries.detail(owner, space, second).fields().path("dueDate").asText())
@@ -259,6 +275,111 @@ class ProposalDecisionIntegrationTests {
   }
 
   @Test
+  void confirmedQuestionAllowsTitleAndDescriptionChangesButNotAnswerOrStatusReplacement() {
+    UUID item = seedItem("QUESTION");
+    var resolve =
+        propose(
+            List.of(
+                new Spec("RESOLVE", "QUESTION", item, Map.of("answerText", "AI 답변"), List.of())));
+    var first = batch();
+    first
+        .withArray("entries")
+        .add(
+            entry(
+                ids(resolve).getFirst(),
+                item,
+                mapper.readTree("{\"confirmedAnswer\":\"확정된 답변\"}")));
+    decisions.apply(owner, space, first);
+
+    var update = propose(List.of(update(item, "QUESTION")));
+    var body = batch();
+    var e = entry(ids(update).getFirst(), item, mapper.readTree("{\"confirmedAnswer\":\"다른 답변\"}"));
+    body.withArray("entries").add(e);
+    failure(() -> decisions.apply(owner, space, body), "INVALID_REQUEST");
+    e.set("values", mapper.readTree("{\"status\":\"UNCONFIRMED\"}"));
+    failure(() -> decisions.apply(owner, space, body), "PROPOSAL_STATE_CONFLICT");
+    e.set("values", mapper.readTree("{\"title\":\"질문 제목 정정\",\"description\":null}"));
+    decisions.apply(owner, space, body);
+    var actual = itemQueries.detail(owner, space, item);
+    assertThat(actual.title()).isEqualTo("질문 제목 정정");
+    assertThat(actual.description()).isNull();
+    assertThat(actual.confirmedAnswer()).isEqualTo("확정된 답변");
+    assertThat(actual.status()).isEqualTo("CONFIRMED");
+    assertThat(actual.version()).isEqualTo("3");
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"{\"title\":\"제목만 변경\"}", "{\"status\":\"IN_PROGRESS\"}"})
+  void omittedInactiveAssigneeRemainsStoredButHiddenUntilExplicitlyCleared(String changes) {
+    UUID item = seedItem("TASK");
+    jdbc.update(
+        "UPDATE content_document SET body=jsonb_set(body,'{fields,assigneeMembershipId}',to_jsonb(CAST(? AS text))) WHERE id=(SELECT current_document_id FROM care_item WHERE id=?)",
+        memberMembership.toString(),
+        item);
+    jdbc.update(
+        "UPDATE space_membership SET ended_at=now(),end_reason='LEFT' WHERE id=?",
+        memberMembership);
+    var source = propose(List.of(update(item, "TASK")));
+    var body = batch();
+    body.withArray("entries").add(entry(ids(source).getFirst(), item, mapper.readTree(changes)));
+    decisions.apply(owner, space, body);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT d.body #>> '{fields,assigneeMembershipId}' FROM care_item i JOIN content_document d ON d.id=i.current_document_id WHERE i.id=?",
+                String.class,
+                item))
+        .isEqualTo(memberMembership.toString());
+    assertThat(
+            itemQueries.detail(owner, space, item).fields().path("assigneeMembershipId").isNull())
+        .isTrue();
+
+    var next = propose(List.of(update(item, "TASK")));
+    var clear = batch();
+    clear
+        .withArray("entries")
+        .add(
+            entry(
+                ids(next).getFirst(),
+                item,
+                mapper.readTree("{\"fields\":{\"assigneeMembershipId\":null}}")));
+    decisions.apply(owner, space, clear);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT d.body #>> '{fields,assigneeMembershipId}' FROM care_item i JOIN content_document d ON d.id=i.current_document_id WHERE i.id=?",
+                String.class,
+                item))
+        .isNull();
+  }
+
+  @Test
+  void leasesUseDatabaseTimeEvenWhenApplicationClockIsAheadOrBehind() {
+    UUID item = seedItem("TASK");
+    Instant before =
+        jdbc.queryForObject("SELECT clock_timestamp()", java.sql.Timestamp.class).toInstant();
+    try {
+      org.mockito.Mockito.doReturn(before.plus(Duration.ofDays(7))).when(clock).instant();
+      var lease = locks.acquire(owner, space, item, 1);
+      Instant after =
+          jdbc.queryForObject("SELECT clock_timestamp()", java.sql.Timestamp.class).toInstant();
+      assertThat(lease.expiresAt())
+          .isBetween(before.plus(Duration.ofMinutes(2)), after.plus(Duration.ofMinutes(2)));
+      org.mockito.Mockito.doReturn(before.minus(Duration.ofDays(7))).when(clock).instant();
+      assertThat(itemQueries.detail(owner, space, item).editLock()).isNotNull();
+      failure(() -> locks.acquire(member, space, item, 1), "ITEM_LOCKED");
+      assertThat(locks.renew(owner, space, item, lease.leaseToken()).expiresAt())
+          .isAfter(lease.expiresAt());
+      jdbc.update(
+          "UPDATE care_item_edit_lock SET expires_at=clock_timestamp()-interval '1 second' WHERE item_id=?",
+          item);
+      assertThat(itemQueries.detail(owner, space, item).editLock()).isNull();
+      failure(() -> locks.renew(owner, space, item, lease.leaseToken()), "EDIT_LOCK_EXPIRED");
+      assertThat(locks.acquire(member, space, item, 1).leaseToken()).isNotBlank();
+    } finally {
+      org.mockito.Mockito.reset(clock);
+    }
+  }
+
+  @Test
   void rejectsTwoProposalsForOneTargetAndActionOrTypeChanges() {
     UUID item = seedItem("TASK");
     var source = propose(List.of(update(item, "TASK"), update(item, "TASK")));
@@ -354,8 +475,16 @@ class ProposalDecisionIntegrationTests {
         .isEqualTo(memberMembership);
     failure(() -> locks.acquire(owner, space, item, 1), "ITEM_LOCKED");
     failure(() -> locks.acquire(member, space, item, 1), "ITEM_LOCKED");
-    assertThat(locks.renew(member, space, item, lease.leaseToken()).expiresAt())
-        .isAfterOrEqualTo(lease.expiresAt());
+    var renewed = locks.renew(member, space, item, lease.leaseToken());
+    assertThat(renewed.expiresAt()).isAfter(lease.expiresAt());
+    assertThat(renewed.leaseToken()).isNull();
+    assertThat(
+            jdbc.queryForObject(
+                    "SELECT expires_at FROM care_item_edit_lock WHERE item_id=?",
+                    java.sql.Timestamp.class,
+                    item)
+                .toInstant())
+        .isEqualTo(renewed.expiresAt());
     assertThat(
             jdbc.queryForObject(
                 "SELECT token_digest FROM care_item_edit_lock WHERE item_id=?", String.class, item))
@@ -587,6 +716,16 @@ class ProposalDecisionIntegrationTests {
     decisions.apply(owner, space, body);
     var later =
         propose(List.of(new Spec("CREATE", "TASK", null, Map.of("title", "파생된 내용"), List.of())));
+    var historyBefore =
+        jdbc.queryForList(
+            "SELECT * FROM care_item_history WHERE item_id=? ORDER BY version", question);
+    assertThat(historyBefore).hasSize(2);
+    var historyDocuments =
+        jdbc.queryForList(
+            "SELECT document_id FROM care_item_history WHERE item_id=? ORDER BY version",
+            UUID.class,
+            question);
+    assertThat(historyDocuments).hasSize(2).doesNotHaveDuplicates();
     new TransactionTemplate(transactions)
         .executeWithoutResult(
             s -> {
@@ -598,6 +737,16 @@ class ProposalDecisionIntegrationTests {
             });
     assertThat(itemQueries.detail(owner, space, question).confirmedAnswer()).isNull();
     assertThat(queries.detail(owner, space, ids(later).getFirst()).proposedValues()).isNull();
+    assertThat(
+            jdbc.queryForList(
+                "SELECT * FROM care_item_history WHERE item_id=? ORDER BY version", question))
+        .containsExactlyElementsOf(historyBefore);
+    for (UUID document : historyDocuments) {
+      var erased =
+          jdbc.queryForMap("SELECT body,redacted_at FROM content_document WHERE id=?", document);
+      assertThat(erased.get("body")).isNull();
+      assertThat(erased.get("redacted_at")).isNotNull();
+    }
     assertThat(
             jdbc.queryForObject(
                 "SELECT count(*) FROM content_document d JOIN care_item_history h ON h.document_id=d.id WHERE h.item_id=? AND d.body IS NOT NULL",
@@ -612,6 +761,86 @@ class ProposalDecisionIntegrationTests {
     var body = batch();
     for (int i = 0; i < size; i++) body.withArray("entries").add(mapper.createObjectNode());
     failure(() -> decisions.apply(owner, space, body), "INVALID_REQUEST");
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"proposal-applications", "proposal-declines"})
+  void rejectsOversizedHttpBodyBeforeParsingJson(String endpoint) throws Exception {
+    String malformed = "[" + " ".repeat(CareMutationSizeLimits.REQUEST_BYTES);
+    mvc.perform(
+            post(base() + "/" + endpoint)
+                .with(authentication(login(owner)))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(malformed))
+        .andExpect(status().is(413))
+        .andExpect(jsonPath("$.code").value("PAYLOAD_TOO_LARGE"))
+        .andExpect(jsonPath("$.data").isEmpty());
+    assertThat(count("proposal_decision_batch", "space_id", space)).isZero();
+    // At the byte boundary, parsing/normal input validation still runs (400, not 413).
+    mvc.perform(
+            post(base() + "/" + endpoint)
+                .with(authentication(login(owner)))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{}" + " ".repeat(CareMutationSizeLimits.REQUEST_BYTES - 2)))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+  }
+
+  @Test
+  void rejectsTextAboveUtf16LimitAndAcceptsExactBoundaryWithoutTruncation() throws Exception {
+    var source =
+        propose(List.of(new Spec("CREATE", "QUESTION", null, Map.of("title", "AI 제목"), List.of())));
+    String boundary = "😀".repeat(5_000);
+    var values = createValues("QUESTION", boundary + "x");
+    var body = batch();
+    body.withArray("entries").add(entry(ids(source).getFirst(), null, values));
+    mvc.perform(
+            post(base() + "/proposal-applications")
+                .with(authentication(login(owner)))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body.toString()))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+    assertThat(count("care_item", "space_id", space)).isZero();
+    assertThat(count("proposal_decision_batch", "space_id", space)).isZero();
+    values.put("title", boundary);
+    UUID item = decisions.apply(owner, space, body).results().getFirst().itemId();
+    assertThat(itemQueries.detail(owner, space, item).title()).isEqualTo(boundary);
+  }
+
+  @Test
+  void excessiveFinalDocumentBatchRejectsAllWritesEvenWhenEachFieldAndHttpBodyFit()
+      throws Exception {
+    var specs =
+        java.util.stream.IntStream.range(0, 6)
+            .mapToObj(
+                i ->
+                    new Spec("CREATE", "SCHEDULE", null, Map.of("title", "AI 제목"), List.<UUID>of()))
+            .toList();
+    var source = propose(specs);
+    var body = batch();
+    String text = "가".repeat(10_000);
+    for (UUID id : ids(source)) {
+      var values = createValues("SCHEDULE", text).put("description", text);
+      values.withObject("fields").put("location", text);
+      body.withArray("entries").add(entry(id, null, values));
+    }
+    byte[] request = mapper.writeValueAsBytes(body);
+    assertThat(request.length).isLessThan(CareMutationSizeLimits.REQUEST_BYTES);
+    mvc.perform(
+            post(base() + "/proposal-applications")
+                .with(authentication(login(owner)))
+                .with(csrf())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(request))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("INVALID_REQUEST"));
+    assertThat(count("care_item", "space_id", space)).isZero();
+    assertThat(count("proposal_decision_batch", "space_id", space)).isZero();
+    assertThat(queries.list(owner, space, null, "REVIEW_PENDING", null, 20).items()).hasSize(6);
   }
 
   private Spec update(UUID item, String type) {

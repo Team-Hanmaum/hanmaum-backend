@@ -10,10 +10,8 @@ import com.hanmaum.backend.global.exception.ApiException;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
-import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.Base64;
 import java.util.UUID;
 import org.springframework.beans.factory.annotation.Value;
@@ -26,7 +24,6 @@ public class EditLockService {
   private final EditLockRepository locks;
   private final CareSpaceAccessService access;
   private final CommandDigest digests;
-  private final Clock clock;
   private final Duration duration, renewal;
   private final SecureRandom random = new SecureRandom();
 
@@ -34,7 +31,6 @@ public class EditLockService {
       EditLockRepository locks,
       CareSpaceAccessService access,
       CommandDigest digests,
-      Clock clock,
       @Value("${app.care-items.edit-lock-duration:PT2M}") Duration duration,
       @Value("${app.care-items.edit-lock-renewal:PT30S}") Duration renewal) {
     if (duration.isNegative()
@@ -46,7 +42,6 @@ public class EditLockService {
     this.locks = locks;
     this.access = access;
     this.digests = digests;
-    this.clock = clock;
     this.duration = duration;
     this.renewal = renewal;
   }
@@ -141,6 +136,7 @@ public class EditLockService {
   }
 
   private Instant now() {
-    return clock.instant().truncatedTo(ChronoUnit.MICROS);
+    // Read after acquiring the item/space locks, not at transaction start or on an app node.
+    return locks.now();
   }
 }

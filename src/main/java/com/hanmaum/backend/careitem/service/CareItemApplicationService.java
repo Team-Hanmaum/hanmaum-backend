@@ -79,7 +79,6 @@ public class CareItemApplicationService {
           body,
           "CONFIRMED");
     }
-    if (!create && type.equals("QUESTION") && "CONFIRMED".equals(status)) throw stateConflict();
     CareMutationInput.object(
         values,
         path,
@@ -99,14 +98,8 @@ public class CareItemApplicationService {
         body.path("fields").isObject()
             ? (ObjectNode) body.get("fields")
             : mapper.createObjectNode();
-    // Ended assignees cannot be propagated through a new current document.
-    if (type.equals("TASK")
-        && fields.path("assigneeMembershipId").isString()
-        && !items.activeAssignee(
-            space,
-            CareMutationInput.uuid(
-                fields.get("assigneeMembershipId"), path + ".fields.assigneeMembershipId", false)))
-      fields.putNull("assigneeMembershipId");
+    // Omitted fields retain their stored values. Read/AI projections hide inactive assignees;
+    // explicit assignment changes are validated below against current membership.
     for (String field : FIELDS.get(type)) if (!fields.has(field)) fields.putNull(field);
     body.set("fields", fields);
     ObjectNode original = body.deepCopy();

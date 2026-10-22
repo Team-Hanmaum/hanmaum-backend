@@ -33,6 +33,9 @@ import tools.jackson.databind.JsonNode;
       responseCode = "404",
       ref = "#/components/responses/RESOURCE_NOT_FOUND"),
   @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "413",
+      ref = "#/components/responses/PAYLOAD_TOO_LARGE"),
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
       responseCode = "409",
       description =
           "PROPOSAL_STATE_CONFLICT / PROPOSAL_BATCH_CONFLICT / VERSION_CONFLICT / ITEM_LOCKED / EDIT_LOCK_EXPIRED / IDEMPOTENCY_KEY_REUSED / REQUEST_IN_PROGRESS"),

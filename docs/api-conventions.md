@@ -61,11 +61,13 @@ throw new ApiException(ProposalErrorCode.PROPOSAL_BATCH_CONFLICT);
 | 404 | `RESOURCE_NOT_FOUND`, `INVITATION_UNAVAILABLE` |
 | 409 | `VERSION_CONFLICT`, `ITEM_LOCKED`, `EDIT_LOCK_EXPIRED`, `PROPOSAL_STATE_CONFLICT`, `IDEMPOTENCY_KEY_REUSED`, `REQUEST_IN_PROGRESS`, `SPACE_LABEL_DUPLICATED`, `PROPOSAL_BATCH_CONFLICT`, `DELETION_IMPACT_CHANGED` |
 | 410 | `INVITATION_EXPIRED` |
+| 413 | `PAYLOAD_TOO_LARGE` |
 | 500 | `INTERNAL_ERROR` |
 | 502 | `AI_SERVICE_UNAVAILABLE` |
 
 - 잘못된 JSON·필수 파라미터·입력 형식·본문 검증 등 MVC 400은 `INVALID_REQUEST`, MVC 404는 `RESOURCE_NOT_FOUND`입니다.
 - 보호 경로는 보안 검사가 먼저 적용되므로 비로그인 요청은 401 또는 CSRF 검사에 따른 403일 수 있습니다.
+- 제안 반영·미적용 POST는 JSON 파싱 전 본문 1 MiB 상한 초과 시 `413 PAYLOAD_TOO_LARGE`입니다. 자유입력 10,000 UTF-16 및 새 최종 문서 합계 512 KiB 제한 초과는 `400 INVALID_REQUEST`이며 상세 계산은 [제안 반영 계약](proposal-decisions.md)을 따릅니다. 다른 API에 같은 본문 상한을 일괄 적용하지 않습니다.
 - 별도 합의하지 않은 프레임워크 상태는 실제 HTTP 상태와 `HTTP_<상태>` 및 일반 안내를 사용합니다. 예: 405 `HTTP_405`, 415 `HTTP_415`. `Allow` 등 프레임워크 헤더를 보존합니다.
 - 예상하지 못한 예외는 500이며 예외 메시지·제출 값·AI 원문을 노출하지 않습니다. 반환 값 검증 실패도 입력 오류로 바꾸지 않습니다.
 - 추가 도메인 코드는 해당 기능 구현 시 합의합니다. 코드 상수의 존재는 잠금·승인·삭제 업무 구현을 뜻하지 않습니다.

@@ -22,6 +22,7 @@ public final class CareMutationInput {
     }
     if (!node.isString()) throw CareItemInput.invalid(path, "문자열을 입력해주세요.");
     String value = node.asString();
+    CareMutationSizeLimits.text(value, path);
     if (value.indexOf('\0') >= 0 || value.codePoints().anyMatch(c -> c >= 0xD800 && c <= 0xDFFF))
       throw CareItemInput.invalid(path, "문자 형식을 확인해주세요.");
     if (required
