@@ -16,10 +16,19 @@ import tools.jackson.databind.ObjectMapper;
 public class AnalysisProposalRepository {
   private final JdbcTemplate jdbc;
   private final ObjectMapper mapper;
+  private final com.hanmaum.backend.careitem.repository.CareContentRedactionRepository redactions;
 
-  public AnalysisProposalRepository(JdbcTemplate jdbc, ObjectMapper mapper) {
+  public AnalysisProposalRepository(
+      JdbcTemplate jdbc,
+      ObjectMapper mapper,
+      com.hanmaum.backend.careitem.repository.CareContentRedactionRepository redactions) {
     this.jdbc = jdbc;
     this.mapper = mapper;
+    this.redactions = redactions;
+  }
+
+  public void redactDocumentDependents(UUID space) {
+    redactions.propagate(space);
   }
 
   public void insert(AnalysisRun run, int ordinal, AiAnalysisResponse.Suggestion suggestion) {
@@ -58,6 +67,7 @@ public class AnalysisProposalRepository {
         suggestion.type().name(),
         document,
         evidence);
+    registerParents(run, document);
   }
 
   public void redact(UUID runId) {
@@ -76,6 +86,9 @@ public class AnalysisProposalRepository {
     jdbc.update(
         "UPDATE ai_proposal SET invalidated_at = COALESCE(invalidated_at, clock_timestamp()) WHERE run_id = ?",
         runId);
+    UUID space =
+        jdbc.queryForObject("SELECT space_id FROM analysis_run WHERE id=?", UUID.class, runId);
+    redactions.propagate(space);
   }
 
   public void insertV2(
@@ -108,5 +121,21 @@ public class AnalysisProposalRepository {
         suggestion.type().name(),
         document,
         evidence);
+    registerParents(run, document);
+  }
+
+  private void registerParents(AnalysisRun run, UUID document) {
+    jdbc.update(
+        """
+        INSERT INTO care_item_document_parent(space_id,document_id,parent_document_id)
+        SELECT ?,?,document_id FROM analysis_input_item WHERE run_id=?
+        UNION SELECT ?,?,direct_document_id FROM analysis_input_basis WHERE run_id=? AND direct_document_id IS NOT NULL
+        """,
+        run.spaceId(),
+        document,
+        run.id(),
+        run.spaceId(),
+        document,
+        run.id());
   }
 }

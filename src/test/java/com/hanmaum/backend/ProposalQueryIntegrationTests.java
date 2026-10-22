@@ -113,7 +113,7 @@ class ProposalQueryIntegrationTests {
       assertThat(detail.currentValues()).isNull();
       assertThat(detail.candidates()).isEmpty();
       assertThat(detail.relationKind()).isNull();
-      assertThat(detail.reviewToken()).isNull();
+      assertThat(detail.reviewToken()).matches("[0-9a-f]{64}");
       assertThat(detail.redactedFields()).isEmpty();
       assertThat(detail.evidence())
           .singleElement()
@@ -641,7 +641,7 @@ class ProposalQueryIntegrationTests {
         "recordId=",
         "recordId=invalid",
         "status=",
-        "status=APPLIED",
+        "status=APPROVAL_REQUESTED",
         "cursor=",
         "cursor=broken"
       })

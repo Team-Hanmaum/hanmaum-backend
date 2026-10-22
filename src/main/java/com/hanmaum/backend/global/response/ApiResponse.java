@@ -54,6 +54,7 @@ public record ApiResponse<T>(
       case 401 -> error(CommonErrorCode.UNAUTHENTICATED);
       case 403 -> error(CommonErrorCode.FORBIDDEN);
       case 404 -> error(CommonErrorCode.RESOURCE_NOT_FOUND);
+      case 413 -> error(CommonErrorCode.PAYLOAD_TOO_LARGE);
       case 500 -> error(CommonErrorCode.INTERNAL_ERROR);
       case 502 -> error(CommonErrorCode.AI_SERVICE_UNAVAILABLE);
       default ->

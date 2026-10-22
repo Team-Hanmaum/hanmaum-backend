@@ -43,7 +43,9 @@ public class SourceRecordQueryRepository {
                author.user_id AS author_user_id, u.display_name, author.user_id = ? AS is_mine,
                a.id AS analysis_id, a.status AS analysis_status,
                ARRAY(SELECT p.id FROM ai_proposal p WHERE p.run_id = a.id AND a.status = 'COMPLETED'
-                 AND p.invalidated_at IS NULL AND analysis_inputs_valid(a.id) ORDER BY p.ordinal_no) AS proposal_ids
+                 AND p.invalidated_at IS NULL AND care_document_available(p.output_document_id)
+                 AND (CASE WHEN p.resolution='OPEN' THEN analysis_inputs_valid(a.id) ELSE analysis_provenance_valid(a.id) END)
+                 ORDER BY p.ordinal_no) AS proposal_ids
         FROM care_space s
         LEFT JOIN space_membership viewer ON viewer.space_id = s.id AND viewer.user_id = ? AND viewer.is_active
         LEFT JOIN LATERAL (
@@ -74,7 +76,9 @@ public class SourceRecordQueryRepository {
                author.user_id AS author_user_id, u.display_name, author.user_id = ? AS is_mine,
                a.id AS analysis_id, a.status AS analysis_status,
                ARRAY(SELECT p.id FROM ai_proposal p WHERE p.run_id = a.id AND a.status = 'COMPLETED'
-                 AND p.invalidated_at IS NULL AND analysis_inputs_valid(a.id) ORDER BY p.ordinal_no) AS proposal_ids
+                 AND p.invalidated_at IS NULL AND care_document_available(p.output_document_id)
+                 AND (CASE WHEN p.resolution='OPEN' THEN analysis_inputs_valid(a.id) ELSE analysis_provenance_valid(a.id) END)
+                 ORDER BY p.ordinal_no) AS proposal_ids
         FROM care_space s
         LEFT JOIN space_membership viewer ON viewer.space_id = s.id AND viewer.user_id = ? AND viewer.is_active
         LEFT JOIN source_record r ON r.space_id = s.id AND r.id = ? AND r.lifecycle = 'ACTIVE' AND viewer.id IS NOT NULL

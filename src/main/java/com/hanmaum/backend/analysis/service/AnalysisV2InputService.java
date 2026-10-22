@@ -52,6 +52,7 @@ public class AnalysisV2InputService {
             THEN (d.body #>> '{fields,assigneeMembershipId}')::uuid END
         WHERE i.space_id=? AND i.visibility='VISIBLE' AND NOT i.needs_reconfirmation
           AND d.body IS NOT NULL AND d.redacted_at IS NULL
+          AND care_document_available(d.id)
           AND EXISTS (SELECT 1 FROM care_item_basis b
             LEFT JOIN content_document direct ON direct.space_id=b.space_id AND direct.id=b.direct_document_id
             LEFT JOIN evidence e ON e.space_id=b.space_id AND e.id=b.source_evidence_id

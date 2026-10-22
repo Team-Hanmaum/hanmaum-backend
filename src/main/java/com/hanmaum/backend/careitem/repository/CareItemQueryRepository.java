@@ -25,26 +25,25 @@ public class CareItemQueryRepository {
     var rows =
         jdbc.query(
             """
-        SELECT viewer.id AS viewer_id, i.*, d.body::text AS document_body, d.redacted_at AS document_redacted
+        SELECT viewer.id AS viewer_id, i.*, CASE WHEN care_document_available(d.id) THEN d.body::text END AS document_body,
+          d.redacted_at AS document_redacted, l.holder_membership_id,l.expires_at,
+          l.holder_membership_id=viewer.id AS own_lock,assignee.id AS active_assignee
         FROM care_space s
         LEFT JOIN space_membership viewer ON viewer.space_id = s.id AND viewer.user_id = ? AND viewer.is_active
         LEFT JOIN care_item i ON i.space_id = s.id AND viewer.id IS NOT NULL
           AND ((CAST(? AS uuid) IS NOT NULL AND i.id = ?) OR (CAST(? AS uuid) IS NULL AND i.visibility = 'VISIBLE'))
           AND (CAST(? AS text) IS NULL OR i.item_type = ?) AND (CAST(? AS text) IS NULL OR i.status = ?)
         LEFT JOIN content_document d ON d.space_id = s.id AND d.id = i.current_document_id
+        LEFT JOIN care_item_edit_lock l ON l.space_id=i.space_id AND l.item_id=i.id AND l.expires_at>statement_timestamp()
+          AND i.visibility='VISIBLE' AND NOT i.needs_reconfirmation AND care_document_available(d.id)
+          AND EXISTS(SELECT 1 FROM space_membership m WHERE m.space_id=l.space_id AND m.id=l.holder_membership_id AND m.is_active)
+        LEFT JOIN space_membership assignee ON assignee.space_id=i.space_id AND assignee.is_active
+          AND assignee.id=CASE WHEN (d.body #>> '{fields,assigneeMembershipId}') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+            THEN (d.body #>> '{fields,assigneeMembershipId}')::uuid END
         WHERE s.id = ? AND s.lifecycle = 'ACTIVE'
         ORDER BY i.created_at DESC, i.id DESC
         """,
-            this::map,
-            actor,
-            item,
-            item,
-            item,
-            type,
-            type,
-            status,
-            status,
-            space);
+            this::map, actor, item, item, item, type, type, status, status, space);
     if (rows.isEmpty()) return Optional.empty();
     return Optional.of(
         new Result(
@@ -68,6 +67,9 @@ public class CareItemQueryRepository {
         if (!removed.contains(field)) removed.add(field);
     JsonNode fields = values.path("fields");
     if (!fields.isObject()) fields = mapper.createObjectNode();
+    if (!redacted && !deleted && "TASK".equals(rs.getString("item_type")))
+      ((tools.jackson.databind.node.ObjectNode) fields)
+          .put("assigneeMembershipId", rs.getString("active_assignee"));
     var detail =
         new CareItemDetail(
             id,
@@ -82,10 +84,16 @@ public class CareItemQueryRepository {
             !deleted && (redacted || rs.getBoolean("needs_reconfirmation")),
             rs.getBoolean("needs_conflict_review"),
             deleted ? List.of() : removed,
-            null,
+            rs.getObject("holder_membership_id") == null
+                ? null
+                : new com.hanmaum.backend.careitem.dto.EditLockView(
+                    rs.getObject("holder_membership_id", UUID.class),
+                    rs.getTimestamp("expires_at").toInstant(),
+                    rs.getBoolean("own_lock")),
             List.of(),
             rs.getTimestamp("created_at").toInstant(),
-            rs.getTimestamp("updated_at").toInstant());
+            rs.getTimestamp("updated_at").toInstant(),
+            string(values, "confirmedAnswer"));
     return new Row(rs.getObject("viewer_id") != null, detail);
   }
 
