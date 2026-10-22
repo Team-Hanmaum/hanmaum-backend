@@ -10,8 +10,6 @@ import com.hanmaum.backend.global.response.ApiFieldError;
 import com.hanmaum.backend.proposal.code.ProposalErrorCode;
 import com.hanmaum.backend.proposal.dto.*;
 import com.hanmaum.backend.proposal.repository.ProposalDecisionRepository;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
 import java.time.Clock;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
@@ -28,7 +26,7 @@ public class ProposalDecisionService {
   private final ProposalDecisionRepository proposals;
   private final CareItemApplicationService applications;
   private final EditLockService leases;
-  private final ProposalReviewToken reviews;
+  private final ProposalApplicationValidator validator;
   private final ObjectMapper mapper;
   private final Clock clock;
 
@@ -39,7 +37,7 @@ public class ProposalDecisionService {
       ProposalDecisionRepository proposals,
       CareItemApplicationService applications,
       EditLockService leases,
-      ProposalReviewToken reviews,
+      ProposalApplicationValidator validator,
       ObjectMapper mapper,
       Clock clock) {
     this.access = access;
@@ -48,7 +46,7 @@ public class ProposalDecisionService {
     this.proposals = proposals;
     this.applications = applications;
     this.leases = leases;
-    this.reviews = reviews;
+    this.validator = validator;
     this.mapper = mapper;
     this.clock = clock;
   }
@@ -125,35 +123,14 @@ public class ProposalDecisionService {
       if (p.body() == null) throw state();
       CareItemApplicationService.Prepared prepared = null;
       if (apply) {
-        if (!publicAction(p.operation()).equals(e.action()))
-          throw CareItemInput.invalid(path + ".action", "제안 동작을 변경할 수 없습니다.");
-        boolean create = p.operation().equals("CREATE");
-        var target = e.targetItemId() == null ? null : locked.get(e.targetItemId());
-        if (create) {
-          if (e.targetItemId() != null || e.expectedItemVersion() != null || e.leaseToken() != null)
-            throw CareItemInput.invalid(path, "생성에는 대상·버전·잠금 토큰을 전달하지 않습니다.");
-        } else {
-          if (target == null || e.expectedItemVersion() == null)
-            throw CareItemInput.invalid(path, "대상과 버전을 입력해주세요.");
-          if (!target.available()) throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND);
-          if (target.version() != e.expectedItemVersion())
-            throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
-          if (!target.type().equals(p.type()))
-            throw CareItemInput.invalid(path + ".targetItemId", "동일 유형의 대상을 선택해주세요.");
-          JsonNode body = mapper.readTree(p.body());
-          boolean selected =
-              body.path("targetItemId").isString()
-                  && body.path("targetItemId").asText().equalsIgnoreCase(target.id().toString());
-          if (!body.path("targetItemId").isString())
-            for (var candidate : body.path("candidateItemIds"))
-              if (candidate.asText().equalsIgnoreCase(target.id().toString())) selected = true;
-          if (!selected) throw CareItemInput.invalid(path + ".targetItemId", "제안에 포함된 대상을 선택해주세요.");
-          leases.requireForWrite(space, target.id(), member, e.leaseToken());
-        }
-        if (!p.available()) throw state();
         prepared =
-            applications.prepare(
-                space, p.type(), p.operation(), target, e.values(), path + ".values");
+            validator.prepare(
+                space,
+                member,
+                p,
+                e,
+                e.targetItemId() == null ? null : locked.get(e.targetItemId()),
+                path);
         if (!p.operation().equals("LINK_EVIDENCE")) {
           CareMutationSizeLimits.strings(prepared.body(), path + ".values");
           documentBytes +=
@@ -164,12 +141,8 @@ public class ProposalDecisionService {
                   path + ".values");
         }
       }
-      String current = reviews.issue(actor, space, p.id());
-      if (!p.available()
-          || current == null
-          || !MessageDigest.isEqual(
-              current.getBytes(StandardCharsets.US_ASCII),
-              e.reviewToken().getBytes(StandardCharsets.US_ASCII))) throw state();
+      if (!p.available()) throw state();
+      validator.verifyReview(actor, space, p.id(), e.reviewToken());
       plans.add(new Plan(p, prepared));
     }
     // No writes before this boundary; all proposals see the same pre-mutation state.
@@ -218,16 +191,6 @@ public class ProposalDecisionService {
       return out;
     }
     return node;
-  }
-
-  private ProposalAction publicAction(String operation) {
-    return switch (operation) {
-      case "CREATE" -> ProposalAction.CREATE_ITEM;
-      case "UPDATE" -> ProposalAction.UPDATE_ITEM;
-      case "RESOLVE" -> ProposalAction.RESOLVE_QUESTION;
-      case "LINK_EVIDENCE" -> ProposalAction.LINK_EVIDENCE;
-      default -> throw new IllegalStateException("Unknown operation");
-    };
   }
 
   private ApiException state() {

@@ -15,7 +15,8 @@ import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.servlet.mvc.method.annotation.RequestBodyAdviceAdapter;
 
 /** Bounds raw bytes before the JSON converter, including bodies without Content-Length. */
-@ControllerAdvice(assignableTypes = ProposalDecisionController.class)
+@ControllerAdvice(
+    assignableTypes = {ProposalDecisionController.class, ChangeRequestController.class})
 public class ProposalDecisionBodyAdvice extends RequestBodyAdviceAdapter {
   @Override
   public boolean supports(

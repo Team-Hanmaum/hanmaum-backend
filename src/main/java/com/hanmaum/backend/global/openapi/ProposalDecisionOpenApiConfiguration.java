@@ -36,6 +36,36 @@ public class ProposalDecisionOpenApiConfiguration {
                       ProposalErrorCode.PROPOSAL_STATE_CONFLICT,
                       CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
                       CommonErrorCode.REQUEST_IN_PROGRESS),
+              "/change-requests",
+                  List.of(
+                      ProposalErrorCode.CHANGE_REQUEST_ALREADY_PENDING,
+                      ProposalErrorCode.PROPOSAL_STATE_CONFLICT,
+                      ProposalErrorCode.PROPOSAL_BATCH_CONFLICT,
+                      CommonErrorCode.VERSION_CONFLICT,
+                      CareItemErrorCode.ITEM_LOCKED,
+                      CareItemErrorCode.EDIT_LOCK_EXPIRED,
+                      CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
+                      CommonErrorCode.REQUEST_IN_PROGRESS),
+              "/request-applications",
+                  List.of(
+                      ProposalErrorCode.CHANGE_REQUEST_STATE_CONFLICT,
+                      ProposalErrorCode.PROPOSAL_STATE_CONFLICT,
+                      ProposalErrorCode.PROPOSAL_BATCH_CONFLICT,
+                      CommonErrorCode.VERSION_CONFLICT,
+                      CareItemErrorCode.ITEM_LOCKED,
+                      CareItemErrorCode.EDIT_LOCK_EXPIRED,
+                      CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
+                      CommonErrorCode.REQUEST_IN_PROGRESS),
+              "/request-declines",
+                  List.of(
+                      ProposalErrorCode.CHANGE_REQUEST_STATE_CONFLICT,
+                      CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
+                      CommonErrorCode.REQUEST_IN_PROGRESS),
+              "/change-requests/{requestId}/cancellations",
+                  List.of(
+                      ProposalErrorCode.CHANGE_REQUEST_STATE_CONFLICT,
+                      CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
+                      CommonErrorCode.REQUEST_IN_PROGRESS),
               "/items/{itemId}/edit-lock",
                   List.of(CommonErrorCode.VERSION_CONFLICT, CareItemErrorCode.ITEM_LOCKED),
               "/items/{itemId}/edit-lock/renewals", List.of(CareItemErrorCode.EDIT_LOCK_EXPIRED),
@@ -68,19 +98,20 @@ public class ProposalDecisionOpenApiConfiguration {
                         .content(new Content().addMediaType("application/json", media)));
             if (suffix.endsWith("/releases")) op.getResponses().get("204").setContent(null);
           });
-      Map.of(
-              "ApplicationBody",
-              List.of("clientRequestId", "entries"),
-              "DeclineBody",
-              List.of("clientRequestId", "entries"),
-              "ApplicationEntry",
-              List.of("proposalId", "action", "reviewToken"),
-              "DeclineEntry",
-              List.of("proposalId", "reviewToken"),
-              "AcquireBody",
-              List.of("expectedItemVersion"),
-              "TokenBody",
-              List.of("leaseToken"))
+      Map.ofEntries(
+              Map.entry("ApplicationBody", List.of("clientRequestId", "entries")),
+              Map.entry("DeclineBody", List.of("clientRequestId", "entries")),
+              Map.entry("ApplicationEntry", List.of("proposalId", "action", "reviewToken")),
+              Map.entry("DeclineEntry", List.of("proposalId", "reviewToken")),
+              Map.entry("AcquireBody", List.of("expectedItemVersion")),
+              Map.entry("TokenBody", List.of("leaseToken")),
+              Map.entry("ChangeRequestSubmissionBody", List.of("clientRequestId", "entries")),
+              Map.entry("ChangeRequestApplicationBody", List.of("clientRequestId", "entries")),
+              Map.entry("ChangeRequestApplicationEntry", List.of("requestEntryId", "reviewToken")),
+              Map.entry("ChangeRequestDeclineBody", List.of("clientRequestId", "entries")),
+              Map.entry("ChangeRequestDeclineEntry", List.of("requestEntryId", "reviewToken")),
+              Map.entry("ChangeRequestCancellationBody", List.of("clientRequestId", "entries")),
+              Map.entry("ChangeRequestCancellationEntry", List.of("requestEntryId")))
           .forEach(
               (name, required) -> {
                 var schema = api.getComponents().getSchemas().get(name);
