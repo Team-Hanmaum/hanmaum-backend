@@ -107,6 +107,9 @@ public class ChangeRequestController {
       summary = "변경 요청 목록 조회",
       description =
           "현재 참여자 모두 조회합니다. 해당 상태의 항목을 포함하는 요청 묶음을 제출 시각·ID 내림차순으로 반환합니다. 기본 PENDING·20개, 최대 50개. 커서는 동일 공간·필터에서 사용합니다. 조회는 상태를 변경하지 않습니다.")
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "200",
+      description = "변경 요청 목록 조회 성공")
   public ResponseEntity<ApiResponse<RequestPage>> list(
       @CurrentUser AuthenticatedUser user,
       @PathVariable UUID spaceId,
@@ -139,6 +142,9 @@ public class ChangeRequestController {
       summary = "변경 요청 상세 및 처리 결과 조회",
       description =
           "현재 참여자 모두 제출 내용·현재 값·근거·결정 이력을 조회합니다. 현재 소유자에게만 유효 PENDING 항목의 reviewToken을 발급합니다. 무효 요청을 새 토큰으로 복구하거나 버전을 자동 갱신하지 않습니다. 삭제된 내용은 null로 가리며 처리 메타데이터는 보존합니다.")
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "200",
+      description = "변경 요청 상세 및 처리 결과 조회 성공")
   public ResponseEntity<ApiResponse<RequestDetail>> detail(
       @CurrentUser AuthenticatedUser user,
       @PathVariable UUID spaceId,
@@ -363,5 +369,8 @@ public class ChangeRequestController {
       Instant decidedAt,
       UUID itemId,
       String itemVersion,
-      JsonNode appliedValues) {}
+      @Schema(
+              description =
+                  "생성·수정·답변 확정 시 저장한 최종 문서 값. LINK_EVIDENCE·미적용·취소는 null이며 근거 연결의 기존 항목 문서는 반환하지 않습니다.")
+          JsonNode appliedValues) {}
 }

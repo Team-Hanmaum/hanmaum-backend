@@ -81,6 +81,43 @@ class ChangeRequestIntegrationTests {
   }
 
   @Test
+  void documentsSuccessfulQueriesAndEvidenceOnlyDecisionValues() throws Exception {
+    var specification =
+        mapper.readTree(
+            mvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    for (var endpoint :
+        Map.of(
+                "/api/spaces/{spaceId}/change-requests", "ChangeRequestPage",
+                "/api/spaces/{spaceId}/change-requests/{requestId}", "ChangeRequestDetail")
+            .entrySet()) {
+      var responseSchema =
+          specification
+              .path("paths")
+              .path(endpoint.getKey())
+              .path("get")
+              .path("responses")
+              .path("200")
+              .path("content")
+              .path("application/json")
+              .path("schema");
+      assertThat(responseSchema.path("$ref").asText()).startsWith("#/components/schemas/");
+      var envelope = specification.at(responseSchema.path("$ref").asText().substring(1));
+      assertThat(envelope.at("/properties/data/$ref").asText())
+          .isEqualTo("#/components/schemas/" + endpoint.getValue());
+    }
+    assertThat(
+            specification
+                .at(
+                    "/components/schemas/ChangeRequestDecision/properties/appliedValues/description")
+                .asText())
+        .contains("LINK_EVIDENCE", "null");
+  }
+
+  @Test
   void submitsWithoutChangingItemsAndOwnerEditsFinalValuesWithFreshReviewAndLease()
       throws Exception {
     UUID item = seedItem("TASK");
@@ -151,12 +188,16 @@ class ChangeRequestIntegrationTests {
     var applied = postData(owner, "/request-applications", decision, 200);
     assertThat(applied.path("results").size()).isEqualTo(5);
     assertThat(count("care_item", "space_id", space)).isEqualTo(5);
-    for (int i = 0; i < 5; i++)
+    var finalEntries = detail(member, request).path("entries");
+    for (int i = 0; i < 5; i++) {
       assertThat(
               itemQueries
                   .detail(owner, space, uuid(applied.path("results").get(i), "itemId"))
                   .title())
           .isEqualTo("요청 " + i);
+      assertThat(finalEntries.get(i).at("/decision/appliedValues/title").asText())
+          .isEqualTo("요청 " + i);
+    }
   }
 
   @Test
@@ -206,10 +247,72 @@ class ChangeRequestIntegrationTests {
     if (operation.equals("RESOLVE")) {
       assertThat(after.status()).isEqualTo("CONFIRMED");
       assertThat(after.confirmedAnswer()).isEqualTo("가족이 확인한 답변");
+      assertThat(
+              detail(member, request)
+                  .at("/entries/0/decision/appliedValues/confirmedAnswer")
+                  .asText())
+          .isEqualTo("가족이 확인한 답변");
     } else {
       assertThat(after.title()).isEqualTo("기존 제목");
       assertThat(count("care_item_basis", "item_id", item)).isEqualTo(2);
     }
+  }
+
+  @Test
+  void linkEvidenceDecisionHasNoAppliedValuesAndPreservesReferencedItemDocument() throws Exception {
+    UUID item = seedItem("TASK");
+    UUID originalDocument =
+        jdbc.queryForObject(
+            "SELECT current_document_id FROM care_item WHERE id=?", UUID.class, item);
+    String originalBody =
+        jdbc.queryForObject(
+            "SELECT body::text FROM content_document WHERE id=?", String.class, originalDocument);
+    var source = propose(List.of(new Spec("LINK_EVIDENCE", "TASK", item, Map.of(), List.of())));
+    var submission = batch();
+    submission.withArray("entries").add(memberEntry(member, ids(source).getFirst(), item, null));
+    UUID request = uuid(postData(member, "/change-requests", submission, 201), "requestId");
+    var approval = approval(request, 0, item);
+    var applied = postData(owner, "/request-applications", approval, 200);
+
+    for (UUID viewer : List.of(owner, member)) {
+      var entry = detail(viewer, request).at("/entries/0");
+      assertThat(entry.path("status").asText()).isEqualTo("APPLIED");
+      assertThat(entry.path("requestedValues").isNull()).isTrue();
+      assertThat(entry.at("/decision/appliedValues").isNull()).isTrue();
+      assertThat(entry.at("/decision/itemId").asText()).isEqualTo(item.toString());
+      assertThat(entry.at("/decision/itemVersion").asText()).isEqualTo("2");
+      assertThat(entry.path("redactedFields"))
+          .doesNotContain(mapper.valueToTree("decision.appliedValues"));
+      // Existing content belongs to the current item view, not to a link-only decision.
+      assertThat(entry.at("/currentValues/title").asText()).isEqualTo("기존 제목");
+    }
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT result_document_id FROM change_request_entry WHERE request_id=?",
+                UUID.class,
+                request))
+        .isEqualTo(originalDocument);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT current_document_id FROM care_item WHERE id=?", UUID.class, item))
+        .isEqualTo(originalDocument);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT body::text FROM content_document WHERE id=?",
+                String.class,
+                originalDocument))
+        .isEqualTo(originalBody);
+    assertThat(count("care_item_basis", "item_id", item)).isEqualTo(2);
+    assertThat(count("care_item_history", "item_id", item)).isEqualTo(2);
+    assertThat(postData(owner, "/request-applications", approval, 200)).isEqualTo(applied);
+
+    erase(source);
+    var afterErasure = detail(member, request).at("/entries/0");
+    assertThat(afterErasure.path("status").asText()).isEqualTo("APPLIED");
+    assertThat(afterErasure.at("/decision/appliedValues").isNull()).isTrue();
+    assertThat(afterErasure.path("redactedFields"))
+        .doesNotContain(mapper.valueToTree("decision.appliedValues"));
+    assertThat(postData(owner, "/request-applications", approval, 200)).isEqualTo(applied);
   }
 
   @Test

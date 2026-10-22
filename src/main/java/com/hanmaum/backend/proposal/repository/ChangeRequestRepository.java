@@ -169,7 +169,9 @@ public class ChangeRequestRepository {
         change_request_entry_invalid_reason(e.id) invalid_reason,
         CASE WHEN care_document_available(d.id) THEN (d.body->'values')::text END requested_values,
         b.decided_by_membership_id,b.decided_at,
-        CASE WHEN care_document_available(d.id) AND care_document_available(applied.id) THEN applied.body::text END applied_values
+        CASE WHEN e.action<>'LINK_EVIDENCE'
+          AND care_document_available(d.id) AND care_document_available(applied.id)
+          THEN applied.body::text END applied_values
       FROM change_request_entry e
       JOIN change_request r ON r.space_id=e.space_id AND r.id=e.request_id
       JOIN space_membership m ON m.space_id=r.space_id AND m.id=r.submitted_by_membership_id

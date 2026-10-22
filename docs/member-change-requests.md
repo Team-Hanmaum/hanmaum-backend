@@ -62,7 +62,9 @@
 
 상세 entry에는 작업·제안·대상 ID, `expectedItemVersion`, `currentItemVersion`, `requestedValues`, `currentValues`, `evidenceIds`, `reviewToken`, `invalidReason`, `decision`, `redactedFields`를 제공한다. 현재 소유자의 유효 PENDING에만 요청 검토 토큰을 발급한다. 구성원의 제안 검토 토큰과 다른 토큰이며 원래 토큰을 보관했다가 소유자 승인에 재사용하지 않는다.
 
-`decision`은 미결정이면 null, 결정 후에는 `batchId`, `decidedByMembershipId`, `decidedAt`, `itemId`, `itemVersion`, `appliedValues`다. 미적용·취소는 항목과 반영 값이 null이다. 원래 `requestedValues`와 최종 `appliedValues`는 분리한다. 조회로 DB 상태를 바꾸지 않는다.
+`decision`은 미결정이면 null, 결정 후에는 `batchId`, `decidedByMembershipId`, `decidedAt`, `itemId`, `itemVersion`, `appliedValues`다. 미적용·취소는 항목과 반영 값이 null이다. 원래 `requestedValues`와 최종 `appliedValues`는 분리한다. 생성·수정·답변 확정의 `appliedValues`는 소유자 반영 시 저장한 최종 문서 값이며, UPDATE의 유지된 값도 포함한다. 조회로 DB 상태를 바꾸지 않는다.
+
+`LINK_EVIDENCE`는 내용 변경 없이 근거만 연결하므로 `appliedValues`는 항상 null이다. 항목 ID·버전·처리 정보는 유지하고 기존 항목 내용은 `currentValues`에서 확인한다. 이 null은 삭제된 값이 아니므로 `redactedFields`에 `decision.appliedValues`를 추가하지 않는다. 내부 `result_document_id`는 이력의 항목 문서 참조이며, 근거 연결 결정의 입력값을 의미하지 않는다.
 
 ## 소유자 반영
 

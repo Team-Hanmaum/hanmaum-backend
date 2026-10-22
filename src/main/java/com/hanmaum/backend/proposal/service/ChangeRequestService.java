@@ -263,6 +263,7 @@ public class ChangeRequestService {
           requests.linkAppliedDocument(space, result.document(), e.documentId());
         proposals.decision(
             space, batch, i, p.id(), result.item(), result.version(), result.document());
+        // Keep the item document reference for history; LINK has no applied values to expose.
         requests.decide(
             space, e.id(), batch, decision, result.item(), result.version(), result.document());
         if (e.targetItemId() != null) leases.releaseAfterSave(space, e.targetItemId());

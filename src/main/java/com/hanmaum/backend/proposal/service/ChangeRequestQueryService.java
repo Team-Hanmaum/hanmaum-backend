@@ -139,8 +139,9 @@ public class ChangeRequestQueryService {
             "appliedValues",
             e.appliedValues() == null ? mapper.nullNode() : mapper.readTree(e.appliedValues()));
         row.set("decision", decision);
-        if ("APPLIED".equals(e.status()) && e.appliedValues() == null)
-          removed.add("decision.appliedValues");
+        if ("APPLIED".equals(e.status())
+            && !"LINK_EVIDENCE".equals(e.action())
+            && e.appliedValues() == null) removed.add("decision.appliedValues");
       }
       rows.add(row);
     }
