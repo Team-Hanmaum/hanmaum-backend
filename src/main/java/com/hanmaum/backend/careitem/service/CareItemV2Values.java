@@ -36,8 +36,13 @@ public final class CareItemV2Values {
     if (type.equals("TASK"))
       out.put("assigneeMembershipId", activeAssignee == null ? null : activeAssignee.toString());
     if (List.of("SCHEDULE", "TASK", "QUESTION").contains(type)) out.put("status", status);
-    // Confirmed-answer storage is a separate feature; never infer it from unconfirmed AI output.
-    if (type.equals("QUESTION")) out.putNull("answerText");
+    // Only owner-confirmed storage is projected; unconfirmed AI proposals are never current values.
+    if (type.equals("QUESTION"))
+      out.set(
+          "answerText",
+          "CONFIRMED".equals(status) && body.path("confirmedAnswer").isString()
+              ? body.get("confirmedAnswer")
+              : mapper.nullNode());
     return out;
   }
 }

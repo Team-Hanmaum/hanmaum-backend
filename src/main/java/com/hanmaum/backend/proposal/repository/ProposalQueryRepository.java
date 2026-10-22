@@ -51,7 +51,7 @@ public class ProposalQueryRepository {
         LEFT JOIN source_record filter_record ON filter_record.space_id = s.id
           AND filter_record.id = q.record_id
         LEFT JOIN LATERAL (
-          SELECT p.id, a.record_id, a.id AS analysis_id, p.item_type, p.created_at, p.ai_operation, a.contract_version,
+          SELECT p.id, a.record_id, a.id AS analysis_id, p.item_type, p.created_at, p.ai_operation, a.contract_version, p.resolution,
                  visibility.available,
                  CASE WHEN visibility.available THEN d.body::text END AS document,
                  CASE WHEN visibility.available THEN e.id END AS evidence_id,
@@ -75,20 +75,23 @@ public class ProposalQueryRepository {
                 ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
               THEN (d.body #>> '{changes,assigneeMembershipId}')::uuid END
           CROSS JOIN LATERAL (
-            SELECT p.invalidated_at IS NULL AND p.resolution = 'OPEN'
+            SELECT p.invalidated_at IS NULL
               AND a.status = 'COMPLETED' AND a.invalidated_at IS NULL
               AND r.lifecycle = 'ACTIVE' AND r.version = a.record_version
               AND d.redacted_at IS NULL AND d.body IS NOT NULL
               AND e.redacted_at IS NULL AND e.quote IS NOT NULL
               AND e.record_id = r.id AND e.record_version = r.version
-              AND analysis_inputs_valid(a.id)
+              AND care_document_available(d.id)
+              AND (CASE WHEN p.resolution='OPEN' THEN analysis_inputs_valid(a.id)
+                ELSE analysis_provenance_valid(a.id) END)
                 AS available
           ) visibility
           WHERE p.space_id = s.id AND viewer.id IS NOT NULL
             AND (q.record_id IS NULL OR a.record_id = q.record_id)
             AND (q.proposal_id IS NULL OR p.id = q.proposal_id)
-            AND (q.status IS NULL OR (q.status = 'REVIEW_PENDING' AND visibility.available)
-              OR (q.status = 'INVALIDATED' AND NOT visibility.available))
+            AND (q.status IS NULL OR (q.status = 'REVIEW_PENDING' AND p.resolution='OPEN' AND visibility.available)
+              OR (q.status = 'INVALIDATED' AND p.resolution='OPEN' AND NOT visibility.available)
+              OR (q.status IN ('APPLIED','DECLINED') AND p.resolution=q.status))
             AND (q.before_time IS NULL OR (p.created_at, p.id) < (q.before_time, q.before_id))
           ORDER BY p.created_at DESC, p.id DESC LIMIT q.page_limit
         ) p ON true
@@ -163,6 +166,31 @@ public class ProposalQueryRepository {
 
   public record InputItem(UUID id, long version, String status, String document, UUID assigneeId) {}
 
+  public com.hanmaum.backend.proposal.dto.ProposalDetail.Decision decision(
+      UUID space, UUID proposal, tools.jackson.databind.ObjectMapper mapper) {
+    return jdbc
+        .query(
+            """
+        SELECT b.id,b.decided_at,x.item_id,x.item_version,
+          CASE WHEN care_document_available(d.id) THEN d.body::text END body
+        FROM proposal_decision x JOIN proposal_decision_batch b ON b.space_id=x.space_id AND b.id=x.batch_id
+        LEFT JOIN content_document d ON d.space_id=x.space_id AND d.id=x.document_id
+        WHERE x.space_id=? AND x.proposal_id=?
+        """,
+            (rs, n) ->
+                new com.hanmaum.backend.proposal.dto.ProposalDetail.Decision(
+                    rs.getObject(1, UUID.class),
+                    rs.getTimestamp(2).toInstant(),
+                    rs.getObject(3, UUID.class),
+                    rs.getString(4),
+                    rs.getString(5) == null ? null : mapper.readTree(rs.getString(5))),
+            space,
+            proposal)
+        .stream()
+        .findFirst()
+        .orElse(null);
+  }
+
   private Row map(ResultSet rs, int index) throws SQLException {
     UUID id = rs.getObject("id", UUID.class);
     boolean available = rs.getBoolean("available");
@@ -175,7 +203,9 @@ public class ProposalQueryRepository {
                 rs.getObject("record_id", UUID.class),
                 rs.getObject("analysis_id", UUID.class),
                 ProposalItemType.valueOf(rs.getString("item_type")),
-                available ? ProposalStatus.REVIEW_PENDING : ProposalStatus.INVALIDATED,
+                "OPEN".equals(rs.getString("resolution"))
+                    ? (available ? ProposalStatus.REVIEW_PENDING : ProposalStatus.INVALIDATED)
+                    : ProposalStatus.valueOf(rs.getString("resolution")),
                 rs.getTimestamp("created_at").toInstant(),
                 rs.getString("document"),
                 rs.getObject("evidence_id", UUID.class),

@@ -182,6 +182,7 @@ public class AnalysisExecutionService {
       runs.lockRun(run.id());
       discard(run);
     }
+    proposals.redactDocumentDependents(space);
   }
 
   private boolean owns(AnalysisRun run, UUID token) {

@@ -49,6 +49,9 @@ springdoc:
     enabled: false
 
 app:
+  care-items:
+    edit-lock-duration: ${CARE_ITEM_EDIT_LOCK_DURATION:PT2M}
+    edit-lock-renewal: ${CARE_ITEM_EDIT_LOCK_RENEWAL:PT30S}
   analysis:
     contract-version: ${ANALYSIS_CONTRACT_VERSION:v1}
     worker:

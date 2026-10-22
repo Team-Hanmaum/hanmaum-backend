@@ -19,10 +19,9 @@ public record CareItemDetail(
     boolean needsReconfirmation,
     boolean needsConflictReview,
     List<String> redactedFields,
-    @Schema(
-            types = {"null"},
-            description = "편집 잠금은 후속 구현")
-        Void editLock,
+    @Schema(nullable = true, description = "현재 유효한 편집 잠금. 토큰은 포함하지 않음") EditLockView editLock,
     @Schema(description = "답변 제출은 후속 구현. 현재 빈 배열") List<Object> answers,
     Instant createdAt,
-    Instant updatedAt) {}
+    Instant updatedAt,
+    @Schema(nullable = true, description = "소유자가 확정한 질문 답변. 원본 삭제 시 null")
+        String confirmedAnswer) {}

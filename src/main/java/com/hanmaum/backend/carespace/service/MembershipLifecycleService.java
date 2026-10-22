@@ -38,18 +38,21 @@ public class MembershipLifecycleService {
   private final CommandReceiptRepository receipts;
   private final CommandDigest digests;
   private final Clock clock;
+  private final com.hanmaum.backend.careitem.service.EditLockService editLocks;
 
   public MembershipLifecycleService(
       CareSpaceAccessService access,
       MembershipLifecycleRepository memberships,
       CommandReceiptRepository receipts,
       CommandDigest digests,
-      Clock clock) {
+      Clock clock,
+      com.hanmaum.backend.careitem.service.EditLockService editLocks) {
     this.access = access;
     this.memberships = memberships;
     this.receipts = receipts;
     this.digests = digests;
     this.clock = clock;
+    this.editLocks = editLocks;
   }
 
   public TransferOwnershipResponse transfer(
@@ -101,6 +104,7 @@ public class MembershipLifecycleService {
     requireVersion(actor, version);
     Instant now = now();
     memberships.end(spaceId, actor.membershipId(), "LEFT", now);
+    editLocks.releaseMembership(spaceId, actor.membershipId());
     var refs = Map.of("membershipId", actor.membershipId().toString(), "endedAt", now.toString());
     save(command, refs, now);
     return departureResponse(refs);
@@ -123,6 +127,7 @@ public class MembershipLifecycleService {
     if (!member.active() || target.equals(actor.membershipId())) throw stateConflict();
     Instant now = now();
     memberships.end(spaceId, target, "REMOVED", now);
+    editLocks.releaseMembership(spaceId, target);
     var refs =
         Map.of(
             "actorMembershipId",

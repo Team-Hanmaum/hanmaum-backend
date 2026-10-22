@@ -1,7 +1,9 @@
 package com.hanmaum.backend.proposal.dto;
 
-/** Public states supported by the current CREATE query scope. */
+/** Approval requests are a separate, not-yet-implemented workflow. */
 public enum ProposalStatus {
   REVIEW_PENDING,
+  APPLIED,
+  DECLINED,
   INVALIDATED
 }

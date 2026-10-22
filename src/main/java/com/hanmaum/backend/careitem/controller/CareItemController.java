@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping(value = "/api/spaces/{spaceId}/items", produces = MediaType.APPLICATION_JSON_VALUE)
-@Tag(name = "CareItem", description = "일정 직접 등록·현재 참여자의 목록/상세 조회. 승인·수정·잠금은 후속")
+@Tag(name = "CareItem", description = "일정 직접 등록·다섯 유형 조회·항목별 편집 잠금")
 @SecurityRequirement(name = "SessionCookie")
 @ApiResponses({
   @io.swagger.v3.oas.annotations.responses.ApiResponse(
@@ -90,7 +90,7 @@ public class CareItemController {
   @Operation(
       summary = "관리 항목 상세 조회",
       description =
-          "같은 공간의 현재 참여자만 조회. 삭제 표시·제거된 문서의 내용을 재노출하지 않음. editLock=null, answers=[]는 후속 기능.")
+          "현재 참여자만 조회. 삭제된 내용을 재노출하지 않음. editLock은 현재 잠금 요약, confirmedAnswer는 소유자 확정 답변. answers=[]는 별도 답변 제안 기능의 예약 필드.")
   @io.swagger.v3.oas.annotations.responses.ApiResponse(
       responseCode = "200",
       description = "항목 상세 조회 성공")

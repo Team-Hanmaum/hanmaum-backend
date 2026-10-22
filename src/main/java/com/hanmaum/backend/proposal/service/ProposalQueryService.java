@@ -30,16 +30,19 @@ public class ProposalQueryService {
   private final ProposalCursor cursors;
   private final ProposalValueMapper values;
   private final ObjectMapper mapper;
+  private final ProposalReviewToken reviews;
 
   public ProposalQueryService(
       ProposalQueryRepository proposals,
       ProposalCursor cursors,
       ProposalValueMapper values,
-      ObjectMapper mapper) {
+      ObjectMapper mapper,
+      ProposalReviewToken reviews) {
     this.proposals = proposals;
     this.cursors = cursors;
     this.values = values;
     this.mapper = mapper;
+    this.reviews = reviews;
   }
 
   public ProposalListResponse list(
@@ -91,9 +94,9 @@ public class ProposalQueryService {
     var result = authorized(proposals.find(userId, spaceId, null, null, null, null, proposalId, 1));
     if (result.proposals().isEmpty()) throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND);
     var p = result.proposals().getFirst();
-    if (p.contractVersion().equals("v2")) return detailV2(spaceId, p);
+    if (p.contractVersion().equals("v2")) return detailV2(userId, spaceId, p);
     var projected = project(p);
-    boolean redacted = p.status() == ProposalStatus.INVALIDATED;
+    boolean redacted = p.document() == null;
     return new ProposalDetail(
         p.id(),
         spaceId,
@@ -116,25 +119,26 @@ public class ProposalQueryService {
                     p.evidenceId(), p.recordId(), p.quote(), true, p.author(), p.recordedAt())),
         null,
         null,
-        null,
+        reviews.issue(userId, spaceId, p.id()),
         redacted ? List.of("title", "proposedValues", "evidence") : List.of(),
         p.createdAt(),
         List.of(),
         List.of(),
         List.of(),
-        List.of());
+        List.of(),
+        proposals.decision(spaceId, p.id(), mapper));
   }
 
   private ProposalValues project(ProposalQueryRepository.View p) {
-    return p.status() == ProposalStatus.INVALIDATED
+    return p.document() == null
         ? null
         : p.contractVersion().equals("v2")
             ? values.v2(p.itemType(), payload(p).path("changes"), p.assigneeId())
             : values.map(p.itemType(), p.document(), p.assigneeId());
   }
 
-  private ProposalDetail detailV2(UUID space, ProposalQueryRepository.View p) {
-    boolean redacted = p.status() == ProposalStatus.INVALIDATED;
+  private ProposalDetail detailV2(UUID user, UUID space, ProposalQueryRepository.View p) {
+    boolean redacted = p.document() == null;
     JsonNode body = payload(p);
     UUID target = uuid(body, "targetItemId");
     var items =
@@ -200,7 +204,7 @@ public class ProposalQueryService {
                     p.evidenceId(), p.recordId(), p.quote(), true, p.author(), p.recordedAt())),
         text(body, "relationKind"),
         conflict(p),
-        null,
+        reviews.issue(user, space, p.id()),
         redacted
             ? List.of(
                 "title",
@@ -222,7 +226,8 @@ public class ProposalQueryService {
         redacted ? List.of() : body.path("changes").propertyNames().stream().sorted().toList(),
         strings(body.path("clearFields")),
         strings(body.path("reviewReasons")),
-        basis);
+        basis,
+        proposals.decision(space, p.id(), mapper));
   }
 
   private ProposalAction action(ProposalQueryRepository.View p) {
@@ -246,7 +251,7 @@ public class ProposalQueryService {
   }
 
   private Boolean conflict(ProposalQueryRepository.View p) {
-    return p.contractVersion().equals("v2") && p.status() != ProposalStatus.INVALIDATED
+    return p.contractVersion().equals("v2") && p.document() != null
         ? "CONFLICT".equals(text(payload(p), "relationKind"))
         : null;
   }
@@ -290,7 +295,7 @@ public class ProposalQueryService {
     try {
       return ProposalStatus.valueOf(value);
     } catch (IllegalArgumentException exception) {
-      throw invalid("status", "REVIEW_PENDING 또는 INVALIDATED로 입력해주세요.");
+      throw invalid("status", "REVIEW_PENDING, APPLIED, DECLINED, INVALIDATED로 입력해주세요.");
     }
   }
 

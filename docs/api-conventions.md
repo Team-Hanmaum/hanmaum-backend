@@ -35,8 +35,8 @@
 | `global/code/CommonErrorCode` | 입력·인증 필요·권한·대상 없음·버전·반복 요청·삭제 영향·서버·AI 서비스 오류 |
 | `auth/code/AuthErrorCode` | `OAUTH_LOGIN_FAILED` |
 | `carespace/code/CareSpaceErrorCode` | `SPACE_LABEL_DUPLICATED`, `INVITATION_UNAVAILABLE`, `INVITATION_EXPIRED` |
-| `careitem/code/CareItemErrorCode` | `ITEM_LOCKED` |
-| `proposal/code/ProposalErrorCode` | `PROPOSAL_BATCH_CONFLICT` |
+| `careitem/code/CareItemErrorCode` | `ITEM_LOCKED`, `EDIT_LOCK_EXPIRED` |
+| `proposal/code/ProposalErrorCode` | `PROPOSAL_BATCH_CONFLICT`, `PROPOSAL_STATE_CONFLICT` |
 
 기존 공통 오류로 충분하면 재사용합니다. FE가 별도로 구분할 업무 오류만 해당 도메인에서 추가하고, `code()`가 반환하는 문자열은 서비스 전체에서 중복되지 않도록 관리합니다. 현재 enum은 `name()`을 반환하므로 상수 이름을 바꾸면 외부 API 코드도 바뀐다는 점에 주의합니다.
 
@@ -59,7 +59,7 @@ throw new ApiException(ProposalErrorCode.PROPOSAL_BATCH_CONFLICT);
 | 401 | `UNAUTHENTICATED`, `OAUTH_LOGIN_FAILED` |
 | 403 | `FORBIDDEN` |
 | 404 | `RESOURCE_NOT_FOUND`, `INVITATION_UNAVAILABLE` |
-| 409 | `VERSION_CONFLICT`, `ITEM_LOCKED`, `IDEMPOTENCY_KEY_REUSED`, `REQUEST_IN_PROGRESS`, `SPACE_LABEL_DUPLICATED`, `PROPOSAL_BATCH_CONFLICT`, `DELETION_IMPACT_CHANGED` |
+| 409 | `VERSION_CONFLICT`, `ITEM_LOCKED`, `EDIT_LOCK_EXPIRED`, `PROPOSAL_STATE_CONFLICT`, `IDEMPOTENCY_KEY_REUSED`, `REQUEST_IN_PROGRESS`, `SPACE_LABEL_DUPLICATED`, `PROPOSAL_BATCH_CONFLICT`, `DELETION_IMPACT_CHANGED` |
 | 410 | `INVITATION_EXPIRED` |
 | 500 | `INTERNAL_ERROR` |
 | 502 | `AI_SERVICE_UNAVAILABLE` |
@@ -369,7 +369,7 @@ GET에는 재시도 전용 409를 적용하지 않습니다. 비동기 실행 �
 | Query | 타입 | 의미 |
 | --- | --- | --- |
 | recordId | UUID, 선택 | 같은 공간의 특정 원본으로 제한. 존재하지 않거나 다른 공간의 원본은 404 |
-| status | 문자열, 선택 | `REVIEW_PENDING`(생략 시 기본) 또는 `INVALIDATED` |
+| status | 문자열, 선택 | `REVIEW_PENDING`(생략 시 기본), `INVALIDATED`, `APPLIED`, `DECLINED` |
 | cursor | 문자열, 선택 | 같은 공간·recordId·status에서 받은 nextCursor. 첫 조회는 생략 |
 | size | 정수, 선택 | 기본 20, 1~50 |
 
@@ -386,7 +386,7 @@ GET에는 재시도 전용 409를 적용하지 않습니다. 비동기 실행 �
 | needsConflictReview | boolean 또는 null | v2 CONFLICT 여부. v1·무효 제안은 null |
 | createdAt | UTC ISO 8601 | 제안 저장 시각 |
 
-승인/반영 상태는 아직 저장 모델과 연결되지 않아 `APPROVAL_REQUESTED`, `APPLIED`, `DECLINED` 필터는 현재 400입니다. 구현되지 않은 상태를 빈 목록으로 성공 처리하지 않습니다.
+APPLIED/DECLINED는 처리 이력으로 유지하며, 출처 삭제에 따른 내용 가림과 구분합니다. 구성원 승인 요청의 APPROVAL_REQUESTED는 아직 400입니다.
 
 ### 상세 응답
 
@@ -401,7 +401,8 @@ GET에는 재시도 전용 409를 적용하지 않습니다. 비동기 실행 �
 | candidates | 배열 | v2 미확정 대상 후보(itemId/version/title). CREATE·무효는 빈 배열 |
 | evidence | 배열 | evidenceId, recordId, quote, valid, author, recordedAt. 무효는 빈 배열 |
 | relationKind | 문자열 또는 null | v2 NEW / RELATED / CONFLICT / DUPLICATE / UNDETERMINED. v1·무효는 null |
-| reviewToken | 문자열 또는 null | 반영 API 미구현으로 null. TTL 미정 |
+| reviewToken | 문자열 또는 null | 유효한 OPEN 제안의 상태·회원/참여에 묶인 HMAC. 처리/무효 시 null, 고정 TTL 없음 |
+| decision | 객체 또는 null | 처리 묶음·시각·결과 항목/버전·확정 문서. [반영 계약](proposal-decisions.md) 참고 |
 | redactedFields | 문자열 배열 | 정상은 빈 배열. 무효 시 가린 필드 목록 |
 | changedFields / clearFields | 문자열 배열 | v2 설정할 필드 / 명시적으로 지울 필드. v1·무효는 빈 배열 |
 | reviewReasons | 문자열 배열 | v2 검토 사유. v1·무효는 빈 배열 |
@@ -425,8 +426,8 @@ GET에는 재시도 전용 409를 적용하지 않습니다. 비동기 실행 �
 - 후보 의존성의 근거 ID가 null인 과거 실행은 안전하게 INVALIDATED로 조회합니다. 캡처된 근거가 살아 있어도 해당 후보의 `care_item_basis` 연결이 끊기면 무효로 처리합니다. 직접 입력만 사용한 후보의 빈 배열과 후보가 없는 기존 실행은 유효할 수 있습니다. 조회는 실행 상태·제안·항목을 갱신하지 않습니다.
 - 문서·근거를 실제로 제거하는 원본 삭제 트랜잭션은 별도 필수 작업입니다. 읽기 방어만으로 삭제 API 전체가 구현된 것은 아닙니다.
 - 400 INVALID_REQUEST: 잘못된 ID·필터·size·cursor. 401 UNAUTHENTICATED: 유효 세션/회원 없음. 403 FORBIDDEN: 공간 현재 참여 아님. 404 RESOURCE_NOT_FOUND: 활성 공간/같은 공간의 대상 없음. 500 INTERNAL_ERROR: 서버 실패. 업무 오류 메시지와 필드 오류는 공통 규격을 사용합니다.
-- FE는 두 상태와 null 필드를 처리하고, 원문 확인에는 기존 소식 상세 API를 사용합니다. v2 대상·버전·관계와 변경 필드 정보를 사용하되, 승인 토큰·최종 반영 기능이 준비되었다고 가정하지 않습니다.
-- 실제 모델 품질 평가와 제안 수정/거절/변경 요청/소유자 반영은 후속입니다. 운영 TTL·조회 주기·필드 길이 정책은 이번 조회 구현에서 확정하지 않습니다.
+- FE는 네 상태와 null 필드를 처리하고, 원문 확인에는 기존 소식 상세 API를 사용합니다. 검토·편집 잠금·일괄 반영/미적용은 [소유자 반영 계약](proposal-decisions.md)을 따릅니다.
+- 실제 모델 품질 평가, 구성원 변경 요청, 관련 항목 재분석은 후속입니다. 검토 초안은 FE가 보관하고 최종 값을 반영 API에 제출합니다. 조회 주기·필드 길이 정책은 추가 확정하지 않았습니다.
 
 명세 근거: [제안 목록](https://app.notion.com/p/3ef0f25ea138818dab00e94f7b6a08bd), [제안 상세](https://app.notion.com/p/3ef0f25ea1388176bbd3d1381325fe19), [CareItem 상세 필드](https://app.notion.com/p/3ef0f25ea138814696dddf926758474b). 이 문서는 현재 구현 범위를 기록하며 노션 DB/템플릿 갱신과 구분합니다.
 
@@ -476,7 +477,7 @@ CSRF·로그아웃 등 존재하는 경로만 문서화하며 미구현 도메�
 - `GET /api/spaces/{spaceId}/items`는 현재 참여자가 전체 조회합니다. `data.items`에 ID·유형·문자열 버전·제목·상태·재확인/상충 표시·유형별 fields·nullable 담당자 표시 이름을 제공합니다. 현재 생성 시각·ID 내림차순이며 별도 페이지 크기·상한은 없습니다.
 - `itemType`은 다섯 명세 유형을 받습니다. 다른 유형의 등록은 아직 없어 목록이 비어 있을 수 있습니다. 상태 없이 조회하면 모든 업무 상태를 포함하며 일반 삭제만 제외합니다. `status`는 `itemType`을 함께 지정하고 해당 유형의 상태를 사용합니다.
 - 예정/지난 필터는 사용자 선택으로 후속입니다. `scheduleView`를 전달하면 `400 INVALID_REQUEST`이며 무시하지 않습니다. 날짜 경과로 일정을 자동 완료하지 않습니다.
-- `GET /api/spaces/{spaceId}/items/{itemId}`는 현재값·상태·버전·시각과 재확인/상충/삭제 표시를 제공합니다. 편집 잠금과 질문 답변은 후속이라 `editLock: null`, `answers: []`입니다.
+- `GET /api/spaces/{spaceId}/items/{itemId}`는 현재값·상태·버전·시각과 재확인/상충/삭제 표시를 제공합니다. `editLock`은 현재 잠금 요약이고 `confirmedAnswer`는 소유자가 확정한 답변입니다. 별도 답변 제출 기능의 `answers`는 아직 빈 배열입니다.
 - 권한과 목록/상세는 같은 SQL 스냅샷에서 조회합니다. 현재 비구성원은 403, 다른 공간의 항목이나 삭제 중인 공간은 404입니다. 조회는 업무 데이터를 변경하지 않으며 응답은 `Cache-Control: no-store`입니다.
 - 문서 내용이 제거됐으면 제목·설명/fields를 노출하지 않고 재확인 표시와 `redactedFields`를 반환합니다. 일반 삭제 상세는 내용 없는 삭제 표시입니다. 삭제 API·전체 삭제 전파·근거/이력 조회 API의 완료를 뜻하지 않습니다.
 
@@ -486,4 +487,4 @@ V8은 `care_item`, `care_item_basis`, `care_item_history`, `analysis_input_item`
 
 후보는 같은 공간의 유효한 현재 문서와 근거만 사용합니다. 실행기가 분석을 시작할 때 항목 버전·문서와 원본 의존성을 함께 기록하고 완료 시 재검증합니다. V9는 그때 사용한 근거 ID를 추가로 보존하므로 근거 연결이 없어지거나 원본 버전 변경 없이 근거 내용만 제거되어도 늦은 결과를 폐기합니다. V8에서 근거 목록을 기록하지 않은 후보 실행은 완료를 허용하지 않습니다. 기존 내부 후보 50개·요약 2,000 UTF-16 코드 단위 한도를 초과하면 자동 축약/부분 선택하지 않고 분석 의존성 오류로 종료합니다. 공개 일정 입력 제한과 별개입니다. 현재 summary 표현과 AI 연동 경계는 [AI 계약](ai-contract.md#careitem-후보와-입력-근거-검증)을 따릅니다.
 
-v1 CREATE와 v2 네 작업의 검토 제안 저장을 지원합니다. 승인·편집 잠금·항목 수정·TASK/QUESTION 등록·담당자·원본 삭제·현황판·공유는 후속입니다. 데이터 구조의 다른 유형/상태 준비는 해당 업무의 구현 완료를 뜻하지 않습니다.
+v1 CREATE와 v2 네 작업의 검토 제안 저장을 지원합니다. 소유자 제안 반영/미적용·편집 잠금은 [별도 계약](proposal-decisions.md)으로 구현합니다. 일반 항목 수정·TASK/QUESTION 직접 등록·구성원 승인 요청·원본 삭제·현황판·공유는 후속입니다. 데이터 구조의 다른 유형/상태 준비는 해당 업무의 구현 완료를 뜻하지 않습니다.
