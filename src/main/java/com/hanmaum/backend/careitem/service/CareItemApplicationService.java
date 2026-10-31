@@ -1,6 +1,9 @@
 package com.hanmaum.backend.careitem.service;
 
+import com.hanmaum.backend.careitem.code.CareItemErrorCode;
 import com.hanmaum.backend.careitem.repository.CareItemApplicationRepository;
+import com.hanmaum.backend.global.code.CommonErrorCode;
+import com.hanmaum.backend.global.code.ErrorCode;
 import com.hanmaum.backend.global.exception.ApiException;
 import com.hanmaum.backend.proposal.code.ProposalErrorCode;
 import java.time.*;
@@ -38,10 +41,12 @@ public class CareItemApplicationService {
   public CareItemApplicationRepository.Item lock(UUID space, UUID item) {
     return items
         .lock(space, item)
-        .orElseThrow(
-            () ->
-                new ApiException(
-                    com.hanmaum.backend.global.code.CommonErrorCode.RESOURCE_NOT_FOUND));
+        .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND));
+  }
+
+  public void requireEditable(CareItemApplicationRepository.Item item, long expected) {
+    if (!item.available()) throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND);
+    if (item.version() != expected) throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
   }
 
   /** No writes here: every entry must be prepared before the first entry is persisted. */
@@ -52,8 +57,44 @@ public class CareItemApplicationService {
       CareItemApplicationRepository.Item current,
       JsonNode values,
       String path) {
+    return prepare(
+        space, type, operation, current, values, path, ProposalErrorCode.PROPOSAL_STATE_CONFLICT);
+  }
+
+  public Prepared prepareDirect(
+      UUID space, CareItemApplicationRepository.Item target, JsonNode values, String path) {
+    String type =
+        target == null
+            ? CareMutationInput.text(
+                values == null ? null : values.path("itemType"), path + ".itemType", true)
+            : target.type();
+    if (target == null && !Set.of("SCHEDULE", "TASK", "QUESTION").contains(type))
+      throw CareItemInput.invalid(path + ".itemType", "일정·할 일·질문만 직접 등록할 수 있습니다.");
+    var result =
+        prepare(
+            space,
+            type,
+            target == null ? "CREATE" : "UPDATE",
+            target,
+            values,
+            path,
+            CareItemErrorCode.ITEM_STATE_CONFLICT);
+    CareMutationSizeLimits.strings(result.body(), path);
+    CareMutationSizeLimits.bytes(
+        mapper, result.body(), CareMutationSizeLimits.DOCUMENT_BYTES, path);
+    return result;
+  }
+
+  private Prepared prepare(
+      UUID space,
+      String type,
+      String operation,
+      CareItemApplicationRepository.Item current,
+      JsonNode values,
+      String path,
+      ErrorCode conflict) {
     boolean create = operation.equals("CREATE");
-    if (!create && current.version() == Long.MAX_VALUE) throw stateConflict();
+    if (!create && current.version() == Long.MAX_VALUE) throw new ApiException(conflict);
     if (!FIELDS.containsKey(type)) throw CareItemInput.invalid(path, "허용하지 않는 유형입니다.");
     ObjectNode body =
         create ? mapper.createObjectNode() : (ObjectNode) mapper.readTree(current.body());
@@ -65,7 +106,8 @@ public class CareItemApplicationService {
           current.id(), type, operation, current.version() + 1, current.document(), body, status);
     }
     if (operation.equals("RESOLVE")) {
-      if (!type.equals("QUESTION") || !"UNCONFIRMED".equals(status)) throw stateConflict();
+      if (!type.equals("QUESTION") || !"UNCONFIRMED".equals(status))
+        throw new ApiException(conflict);
       CareMutationInput.object(values, path, Set.of("confirmedAnswer"));
       body.put(
           "confirmedAnswer",
@@ -144,9 +186,20 @@ public class CareItemApplicationService {
                   };
               default -> false;
             };
-        if (!allowed) throw stateConflict();
+        if (!allowed) throw new ApiException(conflict);
         status = next;
-      } else if (!Set.of("SCHEDULE", "TASK").contains(type)) throw stateConflict();
+      } else if (!Set.of("SCHEDULE", "TASK").contains(type)) throw new ApiException(conflict);
+    }
+    // Reopening a completed task never restores a former participant's assignment.
+    if ("TASK".equals(type)
+        && "COMPLETED".equals(previousStatus)
+        && "IN_PROGRESS".equals(status)
+        && fields.path("assigneeMembershipId").isString()
+        && !items.activeAssignee(
+            space,
+            CareMutationInput.uuid(
+                fields.get("assigneeMembershipId"), path + ".fields.assigneeMembershipId", true))) {
+      fields.putNull("assigneeMembershipId");
     }
     CareMutationInput.text(body.path("title"), path + ".title", true);
     if (!create && original.equals(body) && Objects.equals(status, previousStatus))
@@ -187,6 +240,34 @@ public class CareItemApplicationService {
     return new Applied(p.item(), p.version(), document);
   }
 
+  public Applied applyDirect(
+      UUID space,
+      UUID actor,
+      Prepared p,
+      UUID inputDocument,
+      UUID submitter,
+      Instant submittedAt,
+      Instant now) {
+    UUID document =
+        items.document(
+            space,
+            mapper.writeValueAsString(p.body()),
+            p.previousDocument(),
+            inputDocument,
+            null,
+            now);
+    if (p.operation().equals("CREATE"))
+      items.create(space, p.item(), p.type(), p.status(), document, actor, now);
+    else items.update(space, p.item(), p.version() - 1, document, p.status(), now);
+    items.directBasis(space, p.item(), inputDocument, submitter, submittedAt);
+    items.history(space, p.item(), p.version(), p.operation(), document, p.status(), actor, now);
+    return new Applied(p.item(), p.version(), document);
+  }
+
+  public void releaseAssignments(UUID space, UUID departing, UUID actor, Instant now) {
+    items.unassignOpenTasks(space, departing, actor, now);
+  }
+
   private String initialStatus(String type) {
     return switch (type) {
       case "SCHEDULE" -> "SCHEDULED";
@@ -209,10 +290,6 @@ public class CareItemApplicationService {
     } catch (IllegalArgumentException | DateTimeException e) {
       throw CareItemInput.invalid(path, "유효한 날짜 또는 시각을 입력해주세요.");
     }
-  }
-
-  private ApiException stateConflict() {
-    return new ApiException(ProposalErrorCode.PROPOSAL_STATE_CONFLICT);
   }
 
   public record Prepared(

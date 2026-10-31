@@ -38,7 +38,7 @@
 }
 ```
 
-- `clientRequestId`, `entries` 및 각 entry의 `proposalId`, `action`, `reviewToken`은 필수다. AI 제안 없이 직접 등록·수정하는 요청은 지원하지 않는다.
+- `clientRequestId`, `entries` 및 각 entry의 `proposalId`, `action`, `reviewToken`은 필수다. 이 형식은 AI 제안 제출용이다. #37부터 직접 입력은 [직접 변경 계약](direct-care-items.md)의 DIRECT_INPUT 형식을 사용한다.
 - 허용 작업은 `CREATE_ITEM`, `UPDATE_ITEM`, `RESOLVE_QUESTION`, `LINK_EVIDENCE`다. 원래 AI 제안의 작업·유형을 바꾸지 않는다. 대상이 모호하면 제안 후보 안에서만 선택하고, `TARGET_NOT_FOUND`를 임의 대상이나 생성 요청으로 바꾸지 않는다.
 - `values`의 허용 필드·null/생략·날짜·상태 전이는 [소유자 반영 계약](proposal-decisions.md#일괄-반영)과 같다. CREATE는 AI 제안의 다섯 유형을 지원한다. RESOLVE는 `confirmedAnswer`, LINK는 `values` 생략 또는 null이다.
 - 기존 항목 작업은 `targetItemId`, `expectedItemVersion`(양의 정수 문자열), 본인 `leaseToken`을 전달한다. CREATE에서는 이 세 필드를 생략 또는 null로 둔다.
@@ -130,4 +130,4 @@ V12는 제출 묶음·요청 항목·결정 묶음과 요청 문서 유형을 �
 
 Swagger 수동 확인은 두 브라우저 프로필에서 구성원/소유자로 각각 로그인한 뒤 진행한다. 구성원 제안 상세 → 기존 대상이면 잠금 → 제출(201, 항목 불변) → 소유자 요청 상세 → 기존 대상 잠금 → 반영(200) → 항목 버전·요청/제안 APPLIED 확인 순서다. 두 세션은 각자 CSRF 토큰을 사용한다. 빈 제안 배열을 반환하는 AI stub만으로는 제출 대상이 생기지 않는다.
 
-AI 제안 없는 일반 직접 CRUD, 가족 답변 제출, 공간 정보 수정, 관련 항목 재분석·알림은 이번 범위가 아니다. 노션 DB와 기존 템플릿의 최종 동기화는 별도 사용자 지시 시 진행한다.
+AI 제안 없는 등록·수정·상태 변경은 #37에서 확장했다. 일반 삭제·가족 답변 제출·공간 정보 수정·관련 항목 재분석·알림은 별도 작업이다. 노션 DB와 기존 템플릿의 최종 동기화는 별도 사용자 지시 시 진행한다.

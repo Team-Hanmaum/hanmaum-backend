@@ -9,8 +9,14 @@ public record CreateCareItemRequest(
     String itemType,
     String title,
     @Schema(types = {"string", "null"}) String description,
-    ScheduleFields fields,
+    @Schema(oneOf = {ScheduleFields.class, TaskFields.class, QuestionFields.class}) Fields fields,
     UUID clientRequestId) {
+  public sealed interface Fields permits ScheduleFields, TaskFields, QuestionFields {}
+
+  public record TaskFields(String dueDate, String assigneeMembershipId) implements Fields {}
+
+  public record QuestionFields() implements Fields {}
+
   @Override
   public String toString() {
     return "CreateCareItemRequest[id=" + clientRequestId + "]";

@@ -62,13 +62,13 @@ public class ChangeRequestService {
 
   public JsonNode submit(UUID actor, UUID space, JsonNode input) {
     validateSize(input);
-    var request = ProposalDecisionRequest.parse(input, true);
+    var request = ProposalDecisionRequest.submission(input);
     var logical = mapper.createArrayNode();
     for (var e : request.entries()) {
       var l =
           logical
               .addObject()
-              .put("proposalId", e.proposalId().toString())
+              .put("proposalId", text(e.proposalId()))
               .put("action", e.action().name());
       l.put("targetItemId", text(e.targetItemId()));
       l.put("expectedItemVersion", e.expectedItemVersion());
@@ -83,7 +83,10 @@ public class ChangeRequestService {
     var loaded =
         loadProposals(
             space,
-            request.entries().stream().map(ProposalDecisionRequest.Entry::proposalId).toList());
+            request.entries().stream()
+                .map(ProposalDecisionRequest.Entry::proposalId)
+                .filter(Objects::nonNull)
+                .toList());
     var locked =
         lockTargets(
             space,
@@ -93,10 +96,22 @@ public class ChangeRequestService {
       var e = request.entries().get(i);
       var p = loaded.get(e.proposalId());
       String path = "entries[" + i + "]";
-      validator.prepare(space, current.membershipId(), p, e, locked.get(e.targetItemId()), path);
-      validator.verifyReview(actor, space, p.id(), e.reviewToken());
-      if (requests.hasPending(space, current.membershipId(), p.id()))
-        throw new ApiException(ProposalErrorCode.CHANGE_REQUEST_ALREADY_PENDING);
+      if (p == null) {
+        prepareDirect(space, current.membershipId(), e, locked.get(e.targetItemId()), path);
+        if (e.targetItemId() != null
+            && requests.hasPendingDirect(
+                space,
+                current.membershipId(),
+                e.targetItemId(),
+                e.action().name(),
+                e.expectedItemVersion()))
+          throw new ApiException(ProposalErrorCode.CHANGE_REQUEST_ALREADY_PENDING);
+      } else {
+        validator.prepare(space, current.membershipId(), p, e, locked.get(e.targetItemId()), path);
+        validator.verifyReview(actor, space, p.id(), e.reviewToken());
+        if (requests.hasPending(space, current.membershipId(), p.id()))
+          throw new ApiException(ProposalErrorCode.CHANGE_REQUEST_ALREADY_PENDING);
+      }
       var document = mapper.createObjectNode();
       document.set("values", e.values() == null ? mapper.nullNode() : e.values());
       documentBytes +=
@@ -118,8 +133,8 @@ public class ChangeRequestService {
           requests.document(
               space,
               e.values(),
-              p.document(),
-              p.run(),
+              p == null ? null : p.document(),
+              p == null ? null : p.run(),
               target == null ? null : target.document(),
               now);
       requests.insertEntry(space, id, UUID.randomUUID(), i, e, doc);
@@ -183,7 +198,10 @@ public class ChangeRequestService {
     Map<UUID, CareItemApplicationRepository.Item> locked = Map.of();
     if (apply) {
       var proposalIds =
-          selection.entries().stream().map(e -> entries.get(e.id()).proposalId()).toList();
+          selection.entries().stream()
+              .map(e -> entries.get(e.id()).proposalId())
+              .filter(Objects::nonNull)
+              .toList();
       if (new HashSet<>(proposalIds).size() != proposalIds.size()) throw batchConflict();
       loaded = loadProposals(space, proposalIds);
       locked =
@@ -220,14 +238,27 @@ public class ChangeRequestService {
                 e.expectedItemVersion(),
                 chosen.lease(),
                 values);
+        if (proposal == null
+            && e.action().equals("CREATE_ITEM")
+            && !Objects.equals(
+                mapper.readTree(e.values()).path("itemType"), values.path("itemType")))
+          throw CareItemInput.invalid(
+              "entries[" + i + "].values.itemType", "요청의 항목 유형을 변경할 수 없습니다.");
         prepared =
-            validator.prepare(
-                space,
-                current.membershipId(),
-                proposal,
-                operation,
-                locked.get(e.targetItemId()),
-                "entries[" + i + "]");
+            proposal == null
+                ? prepareDirect(
+                    space,
+                    current.membershipId(),
+                    operation,
+                    locked.get(e.targetItemId()),
+                    "entries[" + i + "]")
+                : validator.prepare(
+                    space,
+                    current.membershipId(),
+                    proposal,
+                    operation,
+                    locked.get(e.targetItemId()),
+                    "entries[" + i + "]");
         if (!e.action().equals("LINK_EVIDENCE")) {
           CareMutationSizeLimits.strings(prepared.body(), "entries[" + i + "].values");
           documentBytes +=
@@ -243,26 +274,37 @@ public class ChangeRequestService {
     UUID batch = UUID.randomUUID();
     var now = now();
     requests.batch(space, batch, current.membershipId(), decision, now);
-    if (apply) proposals.batch(batch, space, current.membershipId(), true, now);
+    if (apply && !loaded.isEmpty())
+      proposals.batch(batch, space, current.membershipId(), true, now);
     for (int i = 0; i < plans.size(); i++) {
       var plan = plans.get(i);
       var e = plan.entry();
       if (apply) {
         var p = loaded.get(e.proposalId());
         var result =
-            applications.apply(
-                space,
-                current.membershipId(),
-                plan.prepared(),
-                p.document(),
-                p.evidence(),
-                p.run(),
-                now);
+            p == null
+                ? applications.applyDirect(
+                    space,
+                    current.membershipId(),
+                    plan.prepared(),
+                    e.documentId(),
+                    e.memberId(),
+                    e.submittedAt(),
+                    now)
+                : applications.apply(
+                    space,
+                    current.membershipId(),
+                    plan.prepared(),
+                    p.document(),
+                    p.evidence(),
+                    p.run(),
+                    now);
         // LINK reuses the old document; linking it to its own descendant would create a cycle.
-        if (!e.action().equals("LINK_EVIDENCE"))
+        if (p != null && !e.action().equals("LINK_EVIDENCE"))
           requests.linkAppliedDocument(space, result.document(), e.documentId());
-        proposals.decision(
-            space, batch, i, p.id(), result.item(), result.version(), result.document());
+        if (p != null)
+          proposals.decision(
+              space, batch, i, p.id(), result.item(), result.version(), result.document());
         // Keep the item document reference for history; LINK has no applied values to expose.
         requests.decide(
             space, e.id(), batch, decision, result.item(), result.version(), result.document());
@@ -271,6 +313,24 @@ public class ChangeRequestService {
     }
     save(command, current.membershipId(), batch, now);
     return requests.decisionResult(space, batch);
+  }
+
+  private CareItemApplicationService.Prepared prepareDirect(
+      UUID space,
+      UUID member,
+      ProposalDecisionRequest.Entry e,
+      CareItemApplicationRepository.Item target,
+      String path) {
+    if (e.action() == ProposalAction.CREATE_ITEM) {
+      if (target != null || e.expectedItemVersion() != null || e.leaseToken() != null)
+        throw CareItemInput.invalid(path, "생성에는 대상·버전·잠금을 전달하지 않습니다.");
+    } else {
+      if (target == null || e.expectedItemVersion() == null)
+        throw CareItemInput.invalid(path, "수정할 대상과 버전을 입력해주세요.");
+      applications.requireEditable(target, e.expectedItemVersion());
+      leases.requireForWrite(space, target.id(), member, e.leaseToken());
+    }
+    return applications.prepareDirect(space, target, e.values(), path + ".values");
   }
 
   private Map<UUID, ProposalDecisionRepository.Proposal> loadProposals(UUID space, List<UUID> ids) {
@@ -333,7 +393,10 @@ public class ChangeRequestService {
     String scope = "SPACE:" + space + (request == null ? "" : ":REQUEST:" + request);
     String digest =
         digests.digest(
-            kind, scope, actor.toString(), mapper.writeValueAsString(canonical(logical)));
+            kind,
+            scope,
+            actor.toString(),
+            mapper.writeValueAsString(CommandJson.canonical(mapper, logical)));
     if (!receipts.tryLock(actor, key)) throw new ApiException(CommonErrorCode.REQUEST_IN_PROGRESS);
     var previous = receipts.find(actor, key).orElse(null);
     if (previous != null
@@ -360,20 +423,6 @@ public class ChangeRequestService {
             c.digest(),
             Map.of("resultId", id.toString(), "membershipId", member.toString())),
         now);
-  }
-
-  private JsonNode canonical(JsonNode node) {
-    if (node.isObject()) {
-      var out = mapper.createObjectNode();
-      node.propertyNames().stream().sorted().forEach(k -> out.set(k, canonical(node.get(k))));
-      return out;
-    }
-    if (node.isArray()) {
-      var out = mapper.createArrayNode();
-      node.forEach(n -> out.add(canonical(n)));
-      return out;
-    }
-    return node;
   }
 
   private void validateSize(JsonNode input) {

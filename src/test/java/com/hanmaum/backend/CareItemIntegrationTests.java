@@ -169,7 +169,7 @@ class CareItemIntegrationTests {
 
   static Stream<String> invalidRequests() {
     return Stream.of(
-        "{\"itemType\":\"TASK\",\"title\":\"업무\",\"fields\":{}}",
+        "{\"itemType\":\"GUIDANCE\",\"title\":\"안내\",\"fields\":{}}",
         "{\"itemType\":\"SCHEDULE\",\"title\":\"　 \t\",\"fields\":{}}".replace("\t", "\\t"),
         "{\"itemType\":\"SCHEDULE\",\"title\":22,\"fields\":{}}",
         "{\"itemType\":\"SCHEDULE\",\"title\":\"일정\",\"fields\":null}",
@@ -364,7 +364,7 @@ class CareItemIntegrationTests {
               throw new DataAccessResourceFailureException("test failure");
             })
         .when(AopTestUtils.<CareItemRepository>getUltimateTargetObject(repository))
-        .insert(any(), any(), any(), any(), any(), anyString(), any());
+        .insert(any(), any(), any(), any(), any(), anyString(), anyString(), anyString(), any());
     var request = request("실패", new ScheduleFields(null, null, null));
     assertThatThrownBy(() -> creation.create(owner, space.spaceId(), request))
         .isInstanceOf(DataAccessResourceFailureException.class);
@@ -396,7 +396,7 @@ class CareItemIntegrationTests {
               return call.callRealMethod();
             })
         .when(AopTestUtils.<CareItemRepository>getUltimateTargetObject(repository))
-        .insert(any(), any(), any(), any(), any(), anyString(), any());
+        .insert(any(), any(), any(), any(), any(), anyString(), anyString(), anyString(), any());
     var request = request("한 번", new ScheduleFields(null, null, null));
     try (var pool = Executors.newSingleThreadExecutor()) {
       var future = pool.submit(() -> creation.create(owner, space.spaceId(), request));
@@ -652,8 +652,8 @@ class CareItemIntegrationTests {
     }
     assertThat(
             doc.at("/components/schemas/CreateCareItemRequest/properties/itemType/enum").toString())
-        .contains("SCHEDULE")
-        .doesNotContain("TASK");
+        .contains("SCHEDULE", "TASK", "QUESTION")
+        .doesNotContain("GUIDANCE", "OBSERVATION");
     assertThat(
             doc.at("/paths/~1api~1spaces~1{spaceId}~1items~1{itemId}/get/responses/200")
                 .isMissingNode())

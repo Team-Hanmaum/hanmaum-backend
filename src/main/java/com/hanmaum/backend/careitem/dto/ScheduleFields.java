@@ -13,4 +13,5 @@ public record ScheduleFields(
             example = "10:00",
             description = "Asia/Seoul HH:mm, 시각 미상은 null")
         String scheduledTime,
-    @Schema(types = {"string", "null"}) String location) {}
+    @Schema(types = {"string", "null"}) String location)
+    implements CreateCareItemRequest.Fields {}

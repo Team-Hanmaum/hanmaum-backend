@@ -1,5 +1,6 @@
 package com.hanmaum.backend.proposal.controller;
 
+import com.hanmaum.backend.careitem.controller.CareItemController;
 import com.hanmaum.backend.careitem.service.CareMutationSizeLimits;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.exception.ApiException;
@@ -16,7 +17,11 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestBodyAdviceAd
 
 /** Bounds raw bytes before the JSON converter, including bodies without Content-Length. */
 @ControllerAdvice(
-    assignableTypes = {ProposalDecisionController.class, ChangeRequestController.class})
+    assignableTypes = {
+      ProposalDecisionController.class,
+      ChangeRequestController.class,
+      CareItemController.class
+    })
 public class ProposalDecisionBodyAdvice extends RequestBodyAdviceAdapter {
   @Override
   public boolean supports(

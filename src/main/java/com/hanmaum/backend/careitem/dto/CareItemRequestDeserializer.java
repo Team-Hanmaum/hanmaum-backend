@@ -15,7 +15,25 @@ public class CareItemRequestDeserializer extends ValueDeserializer<CreateCareIte
     JsonNode body = parser.readValueAsTree();
     object(body, "", Set.of("itemType", "title", "description", "fields", "clientRequestId"));
     JsonNode fields = body.path("fields");
-    object(fields, "fields", Set.of("scheduledDate", "scheduledTime", "location"));
+    String type = text(body.path("itemType"), "itemType");
+    CreateCareItemRequest.Fields parsed;
+    if ("SCHEDULE".equals(type)) {
+      object(fields, "fields", Set.of("scheduledDate", "scheduledTime", "location"));
+      parsed =
+          new ScheduleFields(
+              text(fields.path("scheduledDate"), "fields.scheduledDate"),
+              text(fields.path("scheduledTime"), "fields.scheduledTime"),
+              text(fields.path("location"), "fields.location"));
+    } else if ("TASK".equals(type)) {
+      object(fields, "fields", Set.of("dueDate", "assigneeMembershipId"));
+      parsed =
+          new CreateCareItemRequest.TaskFields(
+              text(fields.path("dueDate"), "fields.dueDate"),
+              text(fields.path("assigneeMembershipId"), "fields.assigneeMembershipId"));
+    } else if ("QUESTION".equals(type)) {
+      object(fields, "fields", Set.of());
+      parsed = new CreateCareItemRequest.QuestionFields();
+    } else throw CareItemInput.invalid("itemType", "일정·할 일·질문만 직접 등록할 수 있습니다.");
     String id = text(body.path("clientRequestId"), "clientRequestId");
     UUID key;
     try {
@@ -28,10 +46,7 @@ public class CareItemRequestDeserializer extends ValueDeserializer<CreateCareIte
         text(body.path("itemType"), "itemType"),
         text(body.path("title"), "title"),
         text(body.path("description"), "description"),
-        new ScheduleFields(
-            text(fields.path("scheduledDate"), "fields.scheduledDate"),
-            text(fields.path("scheduledTime"), "fields.scheduledTime"),
-            text(fields.path("location"), "fields.location")),
+        parsed,
         key);
   }
 

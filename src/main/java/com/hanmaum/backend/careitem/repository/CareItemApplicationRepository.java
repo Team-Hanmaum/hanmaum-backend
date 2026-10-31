@@ -129,6 +129,73 @@ public class CareItemApplicationRepository {
         Timestamp.from(now));
   }
 
+  public UUID directInput(UUID space, String body, UUID previous, Instant now) {
+    UUID document = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO content_document(id,space_id,kind,body,created_at) VALUES (?,?,'DIRECT_INPUT',?::jsonb,?)",
+        document,
+        space,
+        body,
+        Timestamp.from(now));
+    if (previous != null)
+      jdbc.update(
+          "INSERT INTO care_item_document_parent(space_id,document_id,parent_document_id) VALUES (?,?,?)",
+          space,
+          document,
+          previous);
+    return document;
+  }
+
+  public void directBasis(
+      UUID space, UUID item, UUID document, UUID submitter, Instant submittedAt) {
+    jdbc.update(
+        "INSERT INTO care_item_basis(id,space_id,item_id,direct_document_id,submitted_by_membership_id,created_at) VALUES (?,?,?,?,?,?)",
+        UUID.randomUUID(),
+        space,
+        item,
+        document,
+        submitter,
+        Timestamp.from(submittedAt));
+  }
+
+  /** Immutable previous documents/assignments remain available to authorized history readers. */
+  public void unassignOpenTasks(UUID space, UUID departing, UUID actor, Instant now) {
+    jdbc.update(
+        """
+      WITH affected AS MATERIALIZED (
+        SELECT i.id,i.version,i.status,d.id previous,gen_random_uuid() document,
+               jsonb_set(d.body,'{fields,assigneeMembershipId}','null'::jsonb) body
+        FROM care_item i JOIN content_document d ON d.space_id=i.space_id AND d.id=i.current_document_id
+        WHERE i.space_id=? AND i.item_type='TASK' AND i.status IN ('NOT_STARTED','IN_PROGRESS')
+          AND i.visibility='VISIBLE' AND lower(d.body #>> '{fields,assigneeMembershipId}')=?
+          AND care_document_available(d.id) FOR UPDATE OF i
+      ), docs AS (
+        INSERT INTO content_document(id,space_id,kind,body,created_at)
+        SELECT document,?,'CONFIRMED_ITEM',body,? FROM affected RETURNING id
+      ), parents AS (
+        INSERT INTO care_item_document_parent(space_id,document_id,parent_document_id)
+        SELECT ?,docs.id,a.previous FROM docs JOIN affected a ON a.document=docs.id
+      ), updated AS (
+        UPDATE care_item i SET current_document_id=docs.id,version=i.version+1,updated_at=?
+        FROM docs JOIN affected a ON a.document=docs.id WHERE i.id=a.id
+        RETURNING i.id,i.version,i.current_document_id,i.status
+      ), released AS (
+        DELETE FROM care_item_edit_lock l USING updated u WHERE l.item_id=u.id
+      )
+      INSERT INTO care_item_history(space_id,item_id,version,operation,document_id,status,changed_by_membership_id,changed_at)
+      SELECT ?,id,version,'UNASSIGN',current_document_id,status,?,? FROM updated
+      """,
+        space,
+        departing.toString(),
+        space,
+        Timestamp.from(now),
+        space,
+        Timestamp.from(now),
+        space,
+        actor,
+        Timestamp.from(now));
+  }
+
   public void history(
       UUID space,
       UUID item,

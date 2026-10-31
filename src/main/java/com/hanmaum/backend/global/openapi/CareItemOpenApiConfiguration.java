@@ -39,11 +39,18 @@ public class CareItemOpenApiConfiguration {
         path.getPost()
             .setSecurity(
                 List.of(new SecurityRequirement().addList("SessionCookie").addList("CsrfToken")));
+      for (String suffix : List.of("/{itemId}", "/{itemId}/status")) {
+        var edit = api.getPaths().get("/api/spaces/{spaceId}/items" + suffix);
+        if (edit != null && edit.getPatch() != null)
+          edit.getPatch()
+              .setSecurity(
+                  List.of(new SecurityRequirement().addList("SessionCookie").addList("CsrfToken")));
+      }
       var request = api.getComponents().getSchemas().get("CreateCareItemRequest");
       if (request != null) {
         request.setRequired(List.of("itemType", "title", "fields", "clientRequestId"));
         var itemType = new StringSchema();
-        itemType.setEnum(List.of("SCHEDULE"));
+        itemType.setEnum(List.of("SCHEDULE", "TASK", "QUESTION"));
         request.addProperty("itemType", itemType);
       }
     };

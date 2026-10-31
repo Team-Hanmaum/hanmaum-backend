@@ -1,5 +1,7 @@
 package com.hanmaum.backend.carespace.service;
 
+import com.hanmaum.backend.careitem.service.CareItemApplicationService;
+import com.hanmaum.backend.careitem.service.EditLockService;
 import com.hanmaum.backend.carespace.code.CareSpaceErrorCode;
 import com.hanmaum.backend.carespace.dto.CareSpaceAccess;
 import com.hanmaum.backend.carespace.dto.CareSpaceRole;
@@ -38,7 +40,8 @@ public class MembershipLifecycleService {
   private final CommandReceiptRepository receipts;
   private final CommandDigest digests;
   private final Clock clock;
-  private final com.hanmaum.backend.careitem.service.EditLockService editLocks;
+  private final EditLockService editLocks;
+  private final CareItemApplicationService items;
 
   public MembershipLifecycleService(
       CareSpaceAccessService access,
@@ -46,7 +49,9 @@ public class MembershipLifecycleService {
       CommandReceiptRepository receipts,
       CommandDigest digests,
       Clock clock,
-      com.hanmaum.backend.careitem.service.EditLockService editLocks) {
+      EditLockService editLocks,
+      CareItemApplicationService items) {
+    this.items = items;
     this.access = access;
     this.memberships = memberships;
     this.receipts = receipts;
@@ -104,6 +109,7 @@ public class MembershipLifecycleService {
     requireVersion(actor, version);
     Instant now = now();
     memberships.end(spaceId, actor.membershipId(), "LEFT", now);
+    items.releaseAssignments(spaceId, actor.membershipId(), actor.membershipId(), now);
     editLocks.releaseMembership(spaceId, actor.membershipId());
     var refs = Map.of("membershipId", actor.membershipId().toString(), "endedAt", now.toString());
     save(command, refs, now);
@@ -127,6 +133,7 @@ public class MembershipLifecycleService {
     if (!member.active() || target.equals(actor.membershipId())) throw stateConflict();
     Instant now = now();
     memberships.end(spaceId, target, "REMOVED", now);
+    items.releaseAssignments(spaceId, target, actor.membershipId(), now);
     editLocks.releaseMembership(spaceId, target);
     var refs =
         Map.of(

@@ -69,9 +69,9 @@ public class ChangeRequestController {
   @SecurityRequirement(name = "SessionCookie")
   @SecurityRequirement(name = "CsrfToken")
   @Operation(
-      summary = "구성원 AI 제안 변경 요청 제출",
+      summary = "구성원 변경 요청 제출",
       description =
-          "현재 MEMBER가 AI 제안 1~20개를 검증 후 승인 대기로 제출합니다. proposalId 필수이며 현재 항목은 변경하지 않습니다. "
+          "현재 MEMBER가 AI 제안 또는 직접 입력 1~20개를 검증 후 승인 대기로 제출합니다. AI 제안은 proposalId 필수, DIRECT_INPUT은 제안 없이 제출하며 현재 항목은 변경하지 않습니다. "
               + "기존 항목은 최신 버전·본인 편집 잠금이 필요하고 성공 시 잠금을 해제합니다. 같은 참여자·제안의 유효 대기 요청은 중복 제출할 수 없습니다. "
               + "동일 요청 재전송에는 기존 clientRequestId를 사용합니다. 본문 1 MiB, 문자열 10,000 UTF-16, 저장 요청 문서 합계 512 KiB 상한입니다.")
   @io.swagger.v3.oas.annotations.parameters.RequestBody(
@@ -250,8 +250,20 @@ public class ChangeRequestController {
   @Schema(name = "ChangeRequestSubmissionBody")
   public record SubmissionBody(
       UUID clientRequestId,
-      @ArraySchema(minItems = 1, maxItems = 20)
-          List<ProposalDecisionController.ApplicationEntry> entries) {}
+      @ArraySchema(minItems = 1, maxItems = 20) List<SubmissionEntry> entries) {}
+
+  public record SubmissionEntry(
+      @Schema(
+              allowableValues = {"AI_PROPOSAL", "DIRECT_INPUT"},
+              description = "생략 시 AI_PROPOSAL")
+          String sourceType,
+      UUID proposalId,
+      ProposalAction action,
+      String reviewToken,
+      UUID targetItemId,
+      String expectedItemVersion,
+      String leaseToken,
+      JsonNode values) {}
 
   @Schema(name = "ChangeRequestApplicationBody")
   public record ApplicationBody(
@@ -330,6 +342,7 @@ public class ChangeRequestController {
   @Schema(name = "ChangeRequestEntrySummary")
   public record EntrySummary(
       UUID requestEntryId,
+      String sourceType,
       ProposalAction action,
       UUID targetItemId,
       @Schema(allowableValues = {"PENDING", "APPLIED", "DECLINED", "CANCELED", "INVALIDATED"})
@@ -347,6 +360,7 @@ public class ChangeRequestController {
   @Schema(name = "ChangeRequestEntryDetail")
   public record EntryDetail(
       UUID requestEntryId,
+      String sourceType,
       ProposalAction action,
       UUID targetItemId,
       @Schema(allowableValues = {"PENDING", "APPLIED", "DECLINED", "CANCELED", "INVALIDATED"})

@@ -907,6 +907,278 @@ class ChangeRequestIntegrationTests {
         .hasSize(remaining - 10000);
   }
 
+  @Nested
+  class DirectInput {
+    @Autowired DirectCareItemUpdateService updates;
+
+    @Test
+    void concurrentSavesWithOneLeaseProduceOneVersionAndOneHistoryEntry() throws Exception {
+      UUID item = uuid(postData(member, "/items", create("TASK", memberMembership), 201), "itemId");
+      var first = change(member, item, 1).put("status", "IN_PROGRESS");
+      var second =
+          first
+              .deepCopy()
+              .put("clientRequestId", UUID.randomUUID().toString())
+              .put("status", "COMPLETED");
+      var start = new CountDownLatch(1);
+      try (var pool = Executors.newFixedThreadPool(2)) {
+        List<Future<String>> results = new ArrayList<>();
+        for (var command : List.of(first, second))
+          results.add(
+              pool.submit(
+                  () -> {
+                    start.await(5, TimeUnit.SECONDS);
+                    try {
+                      return updates.update(member, space, item, command, true).version();
+                    } catch (ApiException e) {
+                      return e.code().code();
+                    }
+                  }));
+        start.countDown();
+        assertThat(
+                List.of(
+                    results.get(0).get(10, TimeUnit.SECONDS),
+                    results.get(1).get(10, TimeUnit.SECONDS)))
+            .containsExactlyInAnyOrder("2", "VERSION_CONFLICT");
+      }
+      assertThat(count("care_item_history", "item_id", item)).isEqualTo(2);
+    }
+
+    @Test
+    void selfTaskErrorsNeverCreateAnItemOrCommandReceipt() throws Exception {
+      var tooLong = create("TASK", memberMembership).put("title", "a".repeat(10001));
+      postError(member, "/items", tooLong, 400, "INVALID_REQUEST");
+      postError(
+          member, "/items", tooLong.put("title", "a".repeat(1048576)), 413, "PAYLOAD_TOO_LARGE");
+      assertThat(count("care_item", "space_id", space)).isZero();
+    }
+
+    private ObjectNode create(String type, UUID assignee) {
+      var input = createValues(type, "직접 입력");
+      if (assignee != null)
+        input.withObject("fields").put("assigneeMembershipId", assignee.toString());
+      return input.put("clientRequestId", UUID.randomUUID().toString());
+    }
+
+    private ObjectNode change(UUID actor, UUID item, long version) {
+      return mapper
+          .createObjectNode()
+          .put("clientRequestId", UUID.randomUUID().toString())
+          .put("expectedItemVersion", Long.toString(version))
+          .put("leaseToken", locks.acquire(actor, space, item, version).leaseToken());
+    }
+
+    private JsonNode patchItem(
+        UUID actor, UUID item, String suffix, ObjectNode input, int status, String code)
+        throws Exception {
+      var response =
+          mvc.perform(
+                  patch(base() + "/items/" + item + suffix)
+                      .with(authentication(login(actor)))
+                      .with(csrf())
+                      .contentType(MediaType.APPLICATION_JSON)
+                      .content(input.toString()))
+              .andExpect(status().is(status))
+              .andExpect(jsonPath("$.code").value(code))
+              .andReturn()
+              .getResponse();
+      return mapper.readTree(response.getContentAsString()).path("data");
+    }
+
+    private ObjectNode submission(String action, JsonNode values) {
+      var input = batch();
+      input
+          .withArray("entries")
+          .addObject()
+          .put("sourceType", "DIRECT_INPUT")
+          .put("action", action)
+          .set("values", values);
+      return input;
+    }
+
+    @Test
+    void memberImmediatelyCreatesOnlyTheirOwnTaskAndMayOnlyChangeItsStatus() throws Exception {
+      var input = create("TASK", memberMembership);
+      var first = postData(member, "/items", input, 201);
+      UUID item = uuid(first, "itemId");
+      assertThat(postData(member, "/items", input, 201)).isEqualTo(first);
+      assertThat(getData(member, "/items/" + item).path("status").asText())
+          .isEqualTo("NOT_STARTED");
+      assertThat(count("change_request", "space_id", space)).isZero();
+      postError(member, "/items", create("TASK", null), 403, "FORBIDDEN");
+      postError(member, "/items", create("TASK", ownerMembership), 403, "FORBIDDEN");
+      postError(member, "/items", create("QUESTION", null), 403, "FORBIDDEN");
+      postError(owner, "/items", create("TASK", UUID.randomUUID()), 400, "INVALID_REQUEST");
+      var status = change(member, item, 1).put("status", "COMPLETED");
+      patchItem(
+          member, item, "/status", status.deepCopy().put("title", "권한 우회"), 400, "INVALID_REQUEST");
+      var content = status.deepCopy();
+      content.remove("status");
+      content.putObject("values").put("title", "권한 우회");
+      patchItem(member, item, "", content, 403, "FORBIDDEN");
+      var completion = patchItem(member, item, "/status", status, 200, "SUCCESS");
+      assertThat(patchItem(member, item, "/status", status, 200, "SUCCESS")).isEqualTo(completion);
+      var next = change(member, item, 2).put("status", "NOT_STARTED");
+      patchItem(member, item, "/status", next, 409, "ITEM_STATE_CONFLICT");
+      patchItem(member, item, "/status", next.put("status", "IN_PROGRESS"), 200, "SUCCESS");
+      var update = change(owner, item, 3);
+      update.putObject("values").putObject("fields").putNull("assigneeMembershipId");
+      patchItem(owner, item, "", update, 200, "SUCCESS");
+      patchItem(member, item, "/status", status, 403, "FORBIDDEN");
+      assertThat(itemQueries.detail(owner, space, item).version()).isEqualTo("4");
+    }
+
+    @Test
+    void memberAndOwnerCanFollowUnassignedTaskRequestWithoutAnAiProposal() throws Exception {
+      var body = submission("CREATE_ITEM", createValues("TASK", "구성원이 제출한 값"));
+      UUID request = uuid(postData(member, "/change-requests", body, 201), "requestId");
+      assertThat(count("care_item", "space_id", space)).isZero();
+      var pending = detail(owner, request).at("/entries/0");
+      assertThat(pending.path("sourceType").asText()).isEqualTo("DIRECT_INPUT");
+      assertThat(pending.path("proposalId").isNull()).isTrue();
+      assertThat(pending.path("status").asText()).isEqualTo("PENDING");
+      assertThat(getData(member, "/change-requests").at("/items/0/entries/0/sourceType").asText())
+          .isEqualTo("DIRECT_INPUT");
+      var approve = approval(request, 0, null);
+      var entry = (ObjectNode) approve.at("/entries/0");
+      entry.set("values", createValues("QUESTION", "유형 바꾸기"));
+      postError(owner, "/request-applications", approve, 400, "INVALID_REQUEST");
+      entry.set("values", createValues("TASK", "소유자 확정값"));
+      var applied = postData(owner, "/request-applications", approve, 200);
+      UUID item = uuid(applied.at("/results/0"), "itemId");
+      assertThat(postData(owner, "/request-applications", approve, 200)).isEqualTo(applied);
+      assertThat(getData(member, "/items/" + item).path("title").asText()).isEqualTo("소유자 확정값");
+      var result = detail(member, request).at("/entries/0");
+      assertThat(result.at("/requestedValues/title").asText()).isEqualTo("구성원이 제출한 값");
+      assertThat(result.at("/decision/appliedValues/title").asText()).isEqualTo("소유자 확정값");
+      assertThat(count("proposal_decision_batch", "space_id", space)).isZero();
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT submitted_by_membership_id FROM care_item_basis WHERE item_id=?",
+                  UUID.class,
+                  item))
+          .isEqualTo(memberMembership);
+      UUID source =
+          jdbc.queryForObject(
+              "SELECT direct_document_id FROM care_item_basis WHERE item_id=?", UUID.class, item);
+      new TransactionTemplate(transactions)
+          .executeWithoutResult(
+              tx -> {
+                jdbc.update(
+                    "UPDATE content_document SET body=NULL,redacted_at=now() WHERE id=?", source);
+                execution.invalidateDirectDocument(space, source);
+              });
+      var redacted = detail(member, request).at("/entries/0");
+      assertThat(redacted.path("requestedValues").isNull()).isTrue();
+      assertThat(redacted.at("/decision/appliedValues").isNull()).isTrue();
+      assertThat(itemQueries.detail(member, space, item).title()).isNull();
+    }
+
+    @Test
+    void pendingDirectUpdateIsUniqueUntilDecisionOrVersionChange() throws Exception {
+      var item = uuid(postData(owner, "/items", create("QUESTION", null), 201), "itemId");
+      var body = submission("UPDATE_ITEM", mapper.createObjectNode().put("title", "질문 수정"));
+      var entry = (ObjectNode) body.at("/entries/0");
+      entry
+          .put("targetItemId", item.toString())
+          .put("expectedItemVersion", "1")
+          .put("leaseToken", locks.acquire(member, space, item, 1).leaseToken());
+      UUID request = uuid(postData(member, "/change-requests", body, 201), "requestId");
+      var duplicate = body.deepCopy().put("clientRequestId", UUID.randomUUID().toString());
+      String memberLease = locks.acquire(member, space, item, 1).leaseToken();
+      ((ObjectNode) duplicate.at("/entries/0")).put("leaseToken", memberLease);
+      postError(member, "/change-requests", duplicate, 409, "CHANGE_REQUEST_ALREADY_PENDING");
+      locks.release(member, space, item, memberLease);
+      var ownerUpdate = change(owner, item, 1);
+      ownerUpdate.putObject("values").put("title", "새 질문");
+      var oldApproval = decisionEntry(detail(owner, request).at("/entries/0"));
+      patchItem(owner, item, "", ownerUpdate, 200, "SUCCESS");
+      assertThat(detail(owner, request).at("/entries/0/invalidReason").asText())
+          .isEqualTo("TARGET_VERSION_CHANGED");
+      var decision = batch();
+      decision.withArray("entries").add(oldApproval);
+      postError(owner, "/request-applications", decision, 409, "VERSION_CONFLICT");
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {true, false})
+    void leavingOrRemovalUnassignsOnlyUnfinishedTasksAndKeepsHistory(boolean leave)
+        throws Exception {
+      UUID work = uuid(postData(member, "/items", create("TASK", memberMembership), 201), "itemId");
+      UUID done = uuid(postData(member, "/items", create("TASK", memberMembership), 201), "itemId");
+      patchItem(
+          member,
+          done,
+          "/status",
+          change(member, done, 1).put("status", "COMPLETED"),
+          200,
+          "SUCCESS");
+      var held = change(owner, work, 1);
+      held.putObject("values").put("title", "오래된 편집");
+      var command = new MembershipChangeRequest("1", UUID.randomUUID());
+      if (leave) membershipChanges.depart(member, space, command);
+      else membershipChanges.remove(owner, space, memberMembership, command);
+      assertThat(itemQueries.detail(owner, space, work).version()).isEqualTo("2");
+      assertThat(itemQueries.detail(owner, space, work).editLock()).isNull();
+      patchItem(owner, work, "", held, 409, "VERSION_CONFLICT");
+      String assignmentSql =
+          "SELECT d.body #>> '{fields,assigneeMembershipId}' FROM care_item i JOIN content_document d ON d.id=i.current_document_id WHERE i.id=?";
+      assertThat(jdbc.queryForObject(assignmentSql, String.class, work)).isNull();
+      assertThat(jdbc.queryForObject(assignmentSql, String.class, done))
+          .isEqualTo(memberMembership.toString());
+      assertThat(
+              jdbc.queryForObject(
+                  "SELECT changed_by_membership_id FROM care_item_history WHERE item_id=? AND operation='UNASSIGN'",
+                  UUID.class,
+                  work))
+          .isEqualTo(leave ? memberMembership : ownerMembership);
+      patchItem(
+          owner,
+          done,
+          "/status",
+          change(owner, done, 2).put("status", "IN_PROGRESS"),
+          200,
+          "SUCCESS");
+      assertThat(jdbc.queryForObject(assignmentSql, String.class, done)).isNull();
+      join(member);
+      var replay =
+          mapper
+              .createObjectNode()
+              .put("expectedItemVersion", "2")
+              .put("clientRequestId", UUID.randomUUID().toString())
+              .put("leaseToken", "old")
+              .put("status", "IN_PROGRESS");
+      patchItem(member, work, "/status", replay, 403, "FORBIDDEN");
+    }
+
+    @Test
+    void directAndAiEntriesUseOneAtomicOwnerDecisionWithoutForgedProposalReferences()
+        throws Exception {
+      UUID proposal = createProposal();
+      var input = submission("CREATE_ITEM", createValues("QUESTION", "직접 질문"));
+      var injected = input.deepCopy();
+      ((ObjectNode) injected.at("/entries/0")).put("proposalId", proposal.toString());
+      postError(member, "/change-requests", injected, 400, "INVALID_REQUEST");
+      input
+          .withArray("entries")
+          .add(memberEntry(member, proposal, null, createValues("SCHEDULE", "AI 일정")));
+      UUID request = uuid(postData(member, "/change-requests", input, 201), "requestId");
+      var details = detail(owner, request).path("entries");
+      var choice = batch();
+      choice
+          .withArray("entries")
+          .add(decisionEntry(details.get(0)))
+          .add(decisionEntry(details.get(1)));
+      var broken = choice.deepCopy();
+      ((ObjectNode) broken.at("/entries/1")).put("reviewToken", "0".repeat(64));
+      postError(owner, "/request-applications", broken, 409, "CHANGE_REQUEST_STATE_CONFLICT");
+      assertThat(count("care_item", "space_id", space)).isZero();
+      var result = postData(owner, "/request-applications", choice, 200);
+      assertThat(result.path("results").size()).isEqualTo(2);
+      assertThat(count("proposal_decision", "space_id", space)).isEqualTo(1);
+    }
+  }
+
   private UUID join(UUID actor) {
     UUID id = UUID.randomUUID();
     jdbc.update(
