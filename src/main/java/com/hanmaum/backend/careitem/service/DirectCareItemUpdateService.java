@@ -70,13 +70,11 @@ public class DirectCareItemUpdateService {
     }
     String kind = statusOnly ? "CHANGE_ITEM_STATUS" : "EDIT_CARE_ITEM";
     String scope = "SPACE:" + space + ":ITEM:" + id;
+    String versionInput = Long.toString(expected);
+    String canonicalValues = mapper.writeValueAsString(CommandJson.canonical(mapper, values));
     String digest =
         digests.digest(
-            actor.toString(),
-            kind,
-            scope,
-            Long.toString(expected),
-            mapper.writeValueAsString(CommandJson.canonical(mapper, values)));
+            actor.toString(), key.toString(), kind, scope, versionInput, canonicalValues);
     if (!receipts.tryLock(actor, key)) throw new ApiException(CommonErrorCode.REQUEST_IN_PROGRESS);
     var member =
         statusOnly ? access.requireActiveMember(actor, space) : access.requireOwner(actor, space);
@@ -94,9 +92,13 @@ public class DirectCareItemUpdateService {
     var prior = receipts.find(actor, key);
     if (prior.isPresent()) {
       var stored = prior.get();
-      if (!kind.equals(stored.commandKind())
-          || !scope.equals(stored.scopeKey())
-          || !digest.equals(stored.requestDigest()))
+      if (!kind.equals(stored.commandKind()) || !scope.equals(stored.scopeKey()))
+        throw new ApiException(CommonErrorCode.IDEMPOTENCY_KEY_REUSED);
+      // Pre-fix receipts were keyed by (actor, request ID) but omitted the ID from the HMAC.
+      if (!digest.equals(stored.requestDigest())
+          && !digests
+              .digest(actor.toString(), kind, scope, versionInput, canonicalValues)
+              .equals(stored.requestDigest()))
         throw new ApiException(CommonErrorCode.IDEMPOTENCY_KEY_REUSED);
       var refs = stored.resultRefs();
       if (!member.membershipId().toString().equals(refs.get("membershipId")))

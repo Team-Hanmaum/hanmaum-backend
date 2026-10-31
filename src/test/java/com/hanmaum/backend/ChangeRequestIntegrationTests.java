@@ -13,6 +13,7 @@ import com.hanmaum.backend.careitem.dto.*;
 import com.hanmaum.backend.careitem.service.*;
 import com.hanmaum.backend.carespace.dto.*;
 import com.hanmaum.backend.carespace.service.*;
+import com.hanmaum.backend.global.command.CommandDigest;
 import com.hanmaum.backend.global.exception.ApiException;
 import com.hanmaum.backend.global.security.oauth.MemberOAuth2User;
 import com.hanmaum.backend.proposal.dto.*;
@@ -910,6 +911,7 @@ class ChangeRequestIntegrationTests {
   @Nested
   class DirectInput {
     @Autowired DirectCareItemUpdateService updates;
+    @Autowired CommandDigest digests;
 
     @Test
     void concurrentSavesWithOneLeaseProduceOneVersionAndOneHistoryEntry() throws Exception {
@@ -1002,6 +1004,7 @@ class ChangeRequestIntegrationTests {
       var first = postData(member, "/items", input, 201);
       UUID item = uuid(first, "itemId");
       assertThat(postData(member, "/items", input, 201)).isEqualTo(first);
+      assertThat(count("care_item", "space_id", space)).isEqualTo(1);
       assertThat(getData(member, "/items/" + item).path("status").asText())
           .isEqualTo("NOT_STARTED");
       assertThat(count("change_request", "space_id", space)).isZero();
@@ -1023,9 +1026,56 @@ class ChangeRequestIntegrationTests {
       patchItem(member, item, "/status", next.put("status", "IN_PROGRESS"), 200, "SUCCESS");
       var update = change(owner, item, 3);
       update.putObject("values").putObject("fields").putNull("assigneeMembershipId");
+      var mixed = update.deepCopy();
+      mixed.withObject("values").put("status", "COMPLETED");
+      patchItem(owner, item, "", mixed, 400, "INVALID_REQUEST");
       patchItem(owner, item, "", update, 200, "SUCCESS");
       patchItem(member, item, "/status", status, 403, "FORBIDDEN");
       assertThat(itemQueries.detail(owner, space, item).version()).isEqualTo("4");
+    }
+
+    @Test
+    void updateReceiptBindsItsRequestIdAndStillReplaysAnExistingLegacyReceipt() throws Exception {
+      UUID item = uuid(postData(owner, "/items", create("TASK", null), 201), "itemId");
+      var change = change(owner, item, 1).put("status", "IN_PROGRESS");
+      var result = patchItem(owner, item, "/status", change, 200, "SUCCESS");
+      UUID key = uuid(change, "clientRequestId");
+      UUID otherKey = UUID.randomUUID();
+      jdbc.update(
+          "UPDATE command_receipt SET client_request_id=? WHERE actor_user_id=? AND client_request_id=?",
+          otherKey,
+          owner,
+          key);
+      patchItem(
+          owner,
+          item,
+          "/status",
+          change.deepCopy().put("clientRequestId", otherKey.toString()),
+          409,
+          "IDEMPOTENCY_KEY_REUSED");
+
+      String legacyDigest =
+          digests.digest(
+              owner.toString(),
+              "CHANGE_ITEM_STATUS",
+              "SPACE:" + space + ":ITEM:" + item,
+              "1",
+              "{\"status\":\"IN_PROGRESS\"}");
+      jdbc.update(
+          "UPDATE command_receipt SET client_request_id=?,request_digest=? WHERE actor_user_id=? AND client_request_id=?",
+          key,
+          legacyDigest,
+          owner,
+          otherKey);
+      assertThat(patchItem(owner, item, "/status", change, 200, "SUCCESS")).isEqualTo(result);
+      patchItem(
+          owner,
+          item,
+          "/status",
+          change.deepCopy().put("status", "COMPLETED"),
+          409,
+          "IDEMPOTENCY_KEY_REUSED");
+      assertThat(count("care_item_history", "item_id", item)).isEqualTo(2);
     }
 
     @Test
@@ -1162,6 +1212,10 @@ class ChangeRequestIntegrationTests {
       input
           .withArray("entries")
           .add(memberEntry(member, proposal, null, createValues("SCHEDULE", "AI 일정")));
+      var unknown = input.deepCopy();
+      ((ObjectNode) unknown.at("/entries/1")).put("proposalId", UUID.randomUUID().toString());
+      postError(member, "/change-requests", unknown, 404, "RESOURCE_NOT_FOUND");
+      assertThat(count("change_request", "space_id", space)).isZero();
       UUID request = uuid(postData(member, "/change-requests", input, 201), "requestId");
       var details = detail(owner, request).path("entries");
       var choice = batch();
