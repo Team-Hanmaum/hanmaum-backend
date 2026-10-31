@@ -5,6 +5,7 @@ import com.hanmaum.backend.careitem.service.*;
 import com.hanmaum.backend.global.response.ApiResponse;
 import com.hanmaum.backend.global.security.*;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
@@ -81,7 +82,7 @@ public class CareItemController {
   @Operation(
       summary = "관리 항목 목록 조회",
       description =
-          "전체 조회, 생성 시각·ID 내림차순. itemType/status 필터, 일반 삭제 제외. scheduleView는 미지원 오류. 직접 등록 가능 유형은 SCHEDULE/TASK/QUESTION.")
+          "유형별 전체 조회. status 또는 view 중 하나를 사용합니다. 예정·지난 일정은 한국 시간 기준이며 재확인 항목은 별도 배열로 반환합니다.")
   @io.swagger.v3.oas.annotations.responses.ApiResponse(
       responseCode = "200",
       description = "목록 조회 성공, 빈 목록은 items=[]")
@@ -90,12 +91,17 @@ public class CareItemController {
       @PathVariable UUID spaceId,
       @RequestParam(required = false) String itemType,
       @RequestParam(required = false) String status,
-      @RequestParam(required = false) String scheduleView) {
+      @Parameter(
+              description =
+                  "SCHEDULE: UPCOMING/PAST/CLOSED, TASK: REMAINING/COMPLETED, QUESTION: UNCONFIRMED/CONFIRMED",
+              schema = @Schema(implementation = CareItemView.class))
+          @RequestParam(required = false)
+          String view,
+      @Parameter(hidden = true) @RequestParam(required = false) String scheduleView) {
+    if (scheduleView != null) throw CareItemInput.invalid("scheduleView", "view로 목록 구분을 전달해주세요.");
     return ResponseEntity.ok()
         .cacheControl(CacheControl.noStore())
-        .body(
-            ApiResponse.success(
-                queries.list(actor.userId(), spaceId, itemType, status, scheduleView)));
+        .body(ApiResponse.success(queries.list(actor.userId(), spaceId, itemType, status, view)));
   }
 
   public record ContentPatch(
