@@ -2,6 +2,7 @@ package com.hanmaum.backend.careitem.service;
 
 import com.hanmaum.backend.careitem.dto.*;
 import com.hanmaum.backend.careitem.repository.CareItemBrowseRepository;
+import com.hanmaum.backend.careitem.repository.CareItemHistoryRepository;
 import com.hanmaum.backend.careitem.repository.CareItemQueryRepository;
 import com.hanmaum.backend.carespace.service.CareSpaceQueryService;
 import com.hanmaum.backend.global.code.CommonErrorCode;
@@ -30,16 +31,19 @@ public class CareItemQueryService {
           Set.of());
   private final CareItemQueryRepository items;
   private final CareItemBrowseRepository browse;
+  private final CareItemHistoryRepository history;
   private final CareSpaceQueryService spaces;
   private final Clock clock;
 
   public CareItemQueryService(
       CareItemQueryRepository items,
       CareItemBrowseRepository browse,
+      CareItemHistoryRepository history,
       CareSpaceQueryService spaces,
       Clock clock) {
     this.items = items;
     this.browse = browse;
+    this.history = history;
     this.spaces = spaces;
     this.clock = clock;
   }
@@ -79,7 +83,8 @@ public class CareItemQueryService {
         preview(space, CareItemView.UPCOMING, asOf, 2),
         browse.pastCount(space, asOf),
         preview(space, CareItemView.REMAINING, asOf, 3),
-        preview(space, CareItemView.UNCONFIRMED, asOf, 2));
+        preview(space, CareItemView.UNCONFIRMED, asOf, 2),
+        history.recentChanges(space));
   }
 
   private CareItemSection preview(UUID space, CareItemView view, Instant asOf, int limit) {

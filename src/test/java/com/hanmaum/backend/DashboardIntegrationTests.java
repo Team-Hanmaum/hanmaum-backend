@@ -7,10 +7,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.hanmaum.backend.careitem.dto.*;
+import com.hanmaum.backend.careitem.repository.CareItemHistoryRepository;
 import com.hanmaum.backend.careitem.service.*;
 import com.hanmaum.backend.carespace.dto.*;
 import com.hanmaum.backend.carespace.service.CareSpaceCreationService;
-import com.hanmaum.backend.dashboard.repository.DashboardHistoryRepository;
 import com.hanmaum.backend.global.security.oauth.MemberOAuth2User;
 import java.sql.Timestamp;
 import java.time.*;
@@ -55,7 +55,7 @@ class DashboardIntegrationTests {
   @Autowired CareItemCreationService create;
   @Autowired DirectCareItemUpdateService update;
   @Autowired EditLockService locks;
-  @MockitoSpyBean DashboardHistoryRepository history;
+  @MockitoSpyBean CareItemHistoryRepository history;
   UUID owner, member, space, membership;
 
   @BeforeEach
@@ -174,7 +174,7 @@ class DashboardIntegrationTests {
   @Test
   void redactionReconfirmationAndConflictNeverLeakIntoCountsOrRecentChanges() throws Exception {
     UUID redacted = schedule("지울 제목", "2026-12-01", null);
-    UUID check = schedule("재확인 전 내용", "2026-11-02", null);
+    UUID check = schedule("재확인 전 내용", "2026-10-30", null);
     UUID visible = schedule("상충 일정", "2026-11-03", null);
     UUID deleted = schedule("삭제 항목", "2026-11-04", null);
     db.update(
@@ -190,6 +190,8 @@ class DashboardIntegrationTests {
     var up = list("SCHEDULE", "UPCOMING");
     assertThat(up.path("totalCount").asInt()).isOne();
     assertThat(up.path("reconfirmationItems").size()).isEqualTo(2);
+    assertThat(list("SCHEDULE", "PAST").path("reconfirmationItems"))
+        .isEqualTo(up.path("reconfirmationItems"));
     assertThat(up.toString()).doesNotContain("지울 제목", "재확인 전 내용", "삭제 항목");
     assertThat(home.toString())
         .doesNotContain(redacted.toString(), check.toString(), deleted.toString());
@@ -281,6 +283,43 @@ class DashboardIntegrationTests {
     assertThat(home.at("/recentChanges/totalCount").asLong()).isOne();
     assertThat(home.at("/recentChanges/items/0/version").asText()).isEqualTo("2");
     assertThat(home.toString()).doesNotContain("지워진 과거 제목").contains("다시 확인한 제목");
+  }
+
+  @Test
+  void previewSkipsNewestBlockedVersionsAndKeepsExactCountAcrossSharedDocuments() throws Exception {
+    UUID visible = schedule("확정", "2026-11-10", null);
+    UUID root = schedule("원본", "2026-11-11", null);
+    UUID derived = schedule("이미 복사된 제목", "2026-11-12", null);
+    db.update(
+        """
+        INSERT INTO care_item_document_parent(space_id,document_id,parent_document_id)
+        SELECT i.space_id,i.current_document_id,p.current_document_id FROM care_item i,care_item p
+        WHERE i.id=? AND p.id=?
+        """,
+        derived,
+        root);
+    db.update(
+        "UPDATE content_document SET body=NULL,redacted_at=now() WHERE id=(SELECT current_document_id FROM care_item WHERE id=?)",
+        root);
+    for (UUID item : List.of(visible, derived)) {
+      // LINK_EVIDENCE creates another version with the same document.
+      db.update(
+          """
+          INSERT INTO care_item_history(space_id,item_id,version,operation,document_id,status,changed_by_membership_id,changed_at)
+          SELECT i.space_id,i.id,v,'LINK_EVIDENCE',i.current_document_id,i.status,i.created_by_membership_id,
+                 CAST(? AS timestamptz) + v * interval '1 second'
+          FROM care_item i CROSS JOIN generate_series(2,512) v WHERE i.id=?
+          """,
+          Timestamp.from(item.equals(visible) ? NOW : NOW.plusSeconds(1000)),
+          item);
+      db.update("UPDATE care_item SET version=512 WHERE id=?", item);
+    }
+    var recent = data("/dashboard").path("recentChanges");
+    assertThat(recent.path("totalCount").asLong()).isEqualTo(512);
+    assertThat(recent.path("items"))
+        .extracting(row -> row.path("version").asText())
+        .containsExactly("512", "511", "510");
+    assertThat(recent.toString()).doesNotContain(derived.toString(), root.toString());
   }
 
   private void assertSection(JsonNode full, JsonNode preview, int cap) {

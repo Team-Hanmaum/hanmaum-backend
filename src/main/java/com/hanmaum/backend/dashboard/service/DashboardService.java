@@ -2,7 +2,6 @@ package com.hanmaum.backend.dashboard.service;
 
 import com.hanmaum.backend.careitem.service.CareItemQueryService;
 import com.hanmaum.backend.dashboard.dto.DashboardResponse;
-import com.hanmaum.backend.dashboard.repository.DashboardHistoryRepository;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.UUID;
@@ -12,13 +11,10 @@ import org.springframework.transaction.annotation.*;
 @Service
 public class DashboardService {
   private final CareItemQueryService items;
-  private final DashboardHistoryRepository history;
   private final Clock clock;
 
-  public DashboardService(
-      CareItemQueryService items, DashboardHistoryRepository history, Clock clock) {
+  public DashboardService(CareItemQueryService items, Clock clock) {
     this.items = items;
-    this.history = history;
     this.clock = clock;
   }
 
@@ -33,6 +29,6 @@ public class DashboardService {
         highlights.pastScheduleCount(),
         highlights.remainingTasks(),
         highlights.unconfirmedQuestions(),
-        history.recentChanges(space));
+        highlights.recentChanges());
   }
 }

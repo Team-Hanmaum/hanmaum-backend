@@ -4,4 +4,5 @@ public record CareItemHighlights(
     CareItemSection upcomingSchedules,
     long pastScheduleCount,
     CareItemSection remainingTasks,
-    CareItemSection unconfirmedQuestions) {}
+    CareItemSection unconfirmedQuestions,
+    RecentChanges recentChanges) {}
