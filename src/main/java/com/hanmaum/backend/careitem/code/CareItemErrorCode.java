@@ -4,6 +4,7 @@ import com.hanmaum.backend.global.code.ErrorCode;
 import org.springframework.http.HttpStatus;
 
 public enum CareItemErrorCode implements ErrorCode {
+  ITEM_STATE_CONFLICT(HttpStatus.CONFLICT, "현재 항목 상태에서 허용되지 않는 변경입니다."),
   ITEM_LOCKED(HttpStatus.CONFLICT, "다른 사용자가 해당 항목을 편집 중입니다."),
   EDIT_LOCK_EXPIRED(HttpStatus.CONFLICT, "편집 잠금이 만료되거나 변경되었습니다. 다시 확인해주세요.");
 

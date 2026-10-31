@@ -83,7 +83,7 @@ public class ChangeRequestQueryService {
     var rows = out.putArray("entries");
     for (var e : entries) {
       var row = summary(e);
-      row.put("proposalId", e.proposalId().toString());
+      row.put("proposalId", e.proposalId() == null ? null : e.proposalId().toString());
       row.put(
           "expectedItemVersion",
           e.expectedItemVersion() == null ? null : e.expectedItemVersion().toString());
@@ -172,6 +172,7 @@ public class ChangeRequestQueryService {
   private ObjectNode summary(Entry e) {
     return mapper
         .createObjectNode()
+        .put("sourceType", e.proposalId() == null ? "DIRECT_INPUT" : "AI_PROPOSAL")
         .put("requestEntryId", e.id().toString())
         .put("action", e.action())
         .put("targetItemId", e.targetItemId() == null ? null : e.targetItemId().toString())

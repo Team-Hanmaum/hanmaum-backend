@@ -25,7 +25,8 @@ public class ChangeRequestReviewToken {
     if (!"PENDING".equals(e.status()) || !e.memberActive() || e.values() == null) return null;
     UUID owner = requests.currentOwner(actor, space);
     if (owner == null || !requests.reviewable(space, e.id())) return null;
-    String proposal = proposals.issue(actor, space, e.proposalId());
+    String proposal =
+        e.proposalId() == null ? "DIRECT_INPUT" : proposals.issue(actor, space, e.proposalId());
     if (proposal == null) return null;
     return digests.digest(
         "CHANGE_REQUEST_REVIEW",

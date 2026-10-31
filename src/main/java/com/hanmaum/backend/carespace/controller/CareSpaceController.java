@@ -28,7 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping(value = "/api/spaces", produces = MediaType.APPLICATION_JSON_VALUE)
-@Tag(name = "CareSpace", description = "돌봄 공간 생성·참여 공간 조회")
+@Tag(name = "CareSpace", description = "돌봄 공간 생성·조회, 초대·참여, 구성원·소유권 관리")
 public class CareSpaceController {
   private final CareSpaceCreationService creation;
   private final CareSpaceQueryService queries;

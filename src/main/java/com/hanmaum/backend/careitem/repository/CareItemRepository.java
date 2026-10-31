@@ -20,7 +20,15 @@ public class CareItemRepository {
   }
 
   public void insert(
-      UUID item, UUID space, UUID member, UUID actor, UUID request, String body, Instant now) {
+      UUID item,
+      UUID space,
+      UUID member,
+      UUID actor,
+      UUID request,
+      String body,
+      String type,
+      String status,
+      Instant now) {
     UUID document = UUID.randomUUID();
     jdbc.update(
         """
@@ -36,12 +44,14 @@ public class CareItemRepository {
             """
         INSERT INTO care_item (id, space_id, item_type, version, current_document_id,
           status, created_by_membership_id, created_at, updated_at, create_command_id)
-        SELECT ?, ?, 'SCHEDULE', 1, ?, 'SCHEDULED', ?, ?, ?, id FROM command_receipt
+        SELECT ?, ?, ?, 1, ?, ?, ?, ?, ?, id FROM command_receipt
         WHERE actor_user_id = ? AND client_request_id = ? AND command_kind = 'CREATE_CARE_ITEM'
         """,
             item,
             space,
+            type,
             document,
+            status,
             member,
             Timestamp.from(now),
             Timestamp.from(now),
@@ -63,11 +73,12 @@ public class CareItemRepository {
     jdbc.update(
         """
         INSERT INTO care_item_history (space_id, item_id, version, operation, document_id,
-          status, changed_by_membership_id, changed_at) VALUES (?, ?, 1, 'CREATE', ?, 'SCHEDULED', ?, ?)
+          status, changed_by_membership_id, changed_at) VALUES (?, ?, 1, 'CREATE', ?, ?, ?, ?)
         """,
         space,
         item,
         document,
+        status,
         member,
         Timestamp.from(now));
   }

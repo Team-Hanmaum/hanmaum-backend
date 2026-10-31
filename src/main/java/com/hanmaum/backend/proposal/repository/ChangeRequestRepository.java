@@ -115,9 +115,10 @@ public class ChangeRequestRepository {
     var body = mapper.createObjectNode();
     body.set("values", values == null ? mapper.nullNode() : values);
     jdbc.update(
-        "INSERT INTO content_document(id,space_id,kind,body,created_at) VALUES (?,?,'CHANGE_REQUEST',?::jsonb,?)",
+        "INSERT INTO content_document(id,space_id,kind,body,created_at) VALUES (?,?,?,?::jsonb,?)",
         id,
         space,
+        proposalDocument == null ? "DIRECT_INPUT" : "CHANGE_REQUEST",
         mapper.writeValueAsString(body),
         Timestamp.from(now));
     jdbc.update(
@@ -149,8 +150,8 @@ public class ChangeRequestRepository {
       UUID document) {
     jdbc.update(
         """
-        INSERT INTO change_request_entry(id,space_id,request_id,ordinal_no,proposal_id,action,target_item_id,expected_item_version,request_document_id)
-        VALUES (?,?,?,?,?,?,?,?,?)
+        INSERT INTO change_request_entry(id,space_id,request_id,ordinal_no,proposal_id,action,target_item_id,expected_item_version,request_document_id,source_type)
+        VALUES (?,?,?,?,?,?,?,?,?,?)
         """,
         id,
         space,
@@ -160,7 +161,8 @@ public class ChangeRequestRepository {
         e.action().name(),
         e.targetItemId(),
         e.expectedItemVersion(),
-        document);
+        document,
+        e.proposalId() == null ? "DIRECT_INPUT" : "AI_PROPOSAL");
   }
 
   private static final String ENTRY_SELECT =
@@ -282,6 +284,24 @@ public class ChangeRequestRepository {
             space,
             member,
             proposal));
+  }
+
+  public boolean hasPendingDirect(
+      UUID space, UUID member, UUID target, String action, long version) {
+    return Boolean.TRUE.equals(
+        jdbc.queryForObject(
+            """
+      SELECT EXISTS(SELECT 1 FROM change_request_entry e JOIN change_request r ON r.space_id=e.space_id AND r.id=e.request_id
+        WHERE e.space_id=? AND r.submitted_by_membership_id=? AND e.source_type='DIRECT_INPUT'
+        AND e.target_item_id=? AND e.action=? AND e.expected_item_version=? AND e.status='PENDING'
+        AND change_request_entry_invalid_reason(e.id) IS NULL)
+      """,
+            Boolean.class,
+            space,
+            member,
+            target,
+            action,
+            version));
   }
 
   public void batch(UUID space, UUID id, UUID member, String decision, Instant now) {

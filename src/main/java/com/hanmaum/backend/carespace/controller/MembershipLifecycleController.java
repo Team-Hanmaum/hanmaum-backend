@@ -75,7 +75,7 @@ public class MembershipLifecycleController {
   @Operation(
       summary = "돌봄 공간 나가기",
       description =
-          "소유자는 먼저 소유권을 이전해야 합니다. 성공 재전송은 공간 접근 종료 후에도 본인의 종료 참여 ID·시각만 반환합니다. 담당 할 일·잠금 연동은 CareItem 후속 구현입니다.",
+          "소유자는 먼저 소유권을 이전해야 합니다. 성공 재전송은 공간 접근 종료 후에도 본인의 종료 참여 ID·시각만 반환합니다. 미완료 담당 할 일은 미지정으로 전환하고 편집 잠금을 해제합니다.",
       security = @SecurityRequirement(name = "SessionCookie"))
   @ApiResponses({
     @io.swagger.v3.oas.annotations.responses.ApiResponse(
@@ -113,7 +113,7 @@ public class MembershipLifecycleController {
   @Operation(
       summary = "구성원 내보내기",
       description =
-          "현재 소유자가 다른 구성원을 내보냅니다. 성공 재전송에도 현재 소유권과 원래 참여를 검증합니다. 담당 할 일·잠금 연동은 CareItem 후속 구현입니다.",
+          "현재 소유자가 다른 구성원을 내보냅니다. 성공 재전송에도 현재 소유권과 원래 참여를 검증합니다. 미완료 담당 할 일은 미지정으로 전환하고 편집 잠금을 해제합니다.",
       security = @SecurityRequirement(name = "SessionCookie"))
   @ApiResponses({
     @io.swagger.v3.oas.annotations.responses.ApiResponse(

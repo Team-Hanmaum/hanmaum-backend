@@ -28,7 +28,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequestMapping(produces = MediaType.APPLICATION_JSON_VALUE)
-@Tag(name = "CareSpace", description = "돌봄 공간·초대·참여·구성원")
+@Tag(name = "CareSpace")
 public class InvitationController {
   private final InvitationService invitations;
   private final SpaceMemberQueryService members;

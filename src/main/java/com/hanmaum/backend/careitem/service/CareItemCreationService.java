@@ -2,6 +2,7 @@ package com.hanmaum.backend.careitem.service;
 
 import com.hanmaum.backend.careitem.dto.*;
 import com.hanmaum.backend.careitem.repository.CareItemRepository;
+import com.hanmaum.backend.carespace.dto.CareSpaceRole;
 import com.hanmaum.backend.carespace.service.CareSpaceAccessService;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.command.*;
@@ -25,6 +26,7 @@ public class CareItemCreationService {
   private final CommandDigest digests;
   private final ObjectMapper mapper;
   private final Clock clock;
+  private final CareItemApplicationService applications;
 
   public CareItemCreationService(
       CareItemRepository items,
@@ -32,7 +34,9 @@ public class CareItemCreationService {
       CommandReceiptRepository receipts,
       CommandDigest digests,
       ObjectMapper mapper,
-      Clock clock) {
+      Clock clock,
+      CareItemApplicationService applications) {
+    this.applications = applications;
     this.items = items;
     this.access = access;
     this.receipts = receipts;
@@ -43,7 +47,18 @@ public class CareItemCreationService {
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public CreateCareItemResponse create(UUID actor, UUID space, CreateCareItemRequest request) {
-    CareItemInput.validate(request);
+    if (request == null || request.clientRequestId() == null)
+      throw CareItemInput.invalid("clientRequestId", "요청 ID를 입력해주세요.");
+    var input =
+        mapper
+            .createObjectNode()
+            .put("itemType", request.itemType())
+            .put("title", request.title())
+            .put("description", request.description());
+    input.set("fields", mapper.valueToTree(request.fields()));
+    CareMutationInput.text(input.path("itemType"), "itemType", true);
+    CareMutationSizeLimits.strings(input, "body");
+    CareMutationSizeLimits.bytes(mapper, input, CareMutationSizeLimits.REQUEST_BYTES, "body");
     Map<String, Object> values = new LinkedHashMap<>();
     values.put("title", request.title());
     values.put("description", request.description());
@@ -54,6 +69,13 @@ public class CareItemCreationService {
     String digest =
         digests.digest(actor.toString(), key.toString(), KIND, scope, request.itemType(), body);
     if (!receipts.tryLock(actor, key)) throw new ApiException(CommonErrorCode.REQUEST_IN_PROGRESS);
+    var current = access.requireActiveMember(actor, space);
+    boolean selfTask =
+        "TASK".equals(request.itemType())
+            && request.fields() instanceof CreateCareItemRequest.TaskFields t
+            && current.membershipId().toString().equalsIgnoreCase(t.assigneeMembershipId());
+    if (current.role() != CareSpaceRole.OWNER && !selfTask)
+      throw new ApiException(CommonErrorCode.FORBIDDEN);
     var previous = receipts.find(actor, key);
     if (previous.isPresent()) {
       var receipt = previous.get();
@@ -61,15 +83,14 @@ public class CareItemCreationService {
           || !scope.equals(receipt.scopeKey())
           || !digest.equals(receipt.requestDigest()))
         throw new ApiException(CommonErrorCode.IDEMPOTENCY_KEY_REUSED);
-      var current = access.requireOwner(actor, space);
       if (!current.membershipId().toString().equals(receipt.resultRefs().get("membershipId")))
         throw new ApiException(CommonErrorCode.FORBIDDEN);
       return items
           .replay(space, UUID.fromString(receipt.resultRefs().get("itemId")))
           .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND));
     }
-    var current = access.requireOwner(actor, space);
-    UUID item = UUID.randomUUID();
+    var prepared = applications.prepareDirect(space, null, input, "body");
+    UUID item = prepared.item();
     var now = clock.instant().truncatedTo(ChronoUnit.MICROS);
     receipts.saveSuccess(
         actor,
@@ -80,7 +101,16 @@ public class CareItemCreationService {
             digest,
             Map.of("itemId", item.toString(), "membershipId", current.membershipId().toString())),
         now);
-    items.insert(item, space, current.membershipId(), actor, key, body, now);
-    return new CreateCareItemResponse(item, "SCHEDULE", "1", now);
+    items.insert(
+        item,
+        space,
+        current.membershipId(),
+        actor,
+        key,
+        mapper.writeValueAsString(prepared.body()),
+        prepared.type(),
+        prepared.status(),
+        now);
+    return new CreateCareItemResponse(item, prepared.type(), "1", now);
   }
 }
