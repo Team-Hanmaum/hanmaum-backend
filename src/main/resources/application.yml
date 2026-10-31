@@ -47,6 +47,7 @@ springdoc:
     enabled: false
   swagger-ui:
     enabled: false
+    operations-sorter: method
 
 app:
   care-items:

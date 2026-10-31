@@ -13,6 +13,10 @@ import io.swagger.v3.oas.models.media.Schema;
 import io.swagger.v3.oas.models.responses.ApiResponses;
 import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.tags.Tag;
+import java.util.Comparator;
+import java.util.List;
+import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springdoc.core.properties.SpringDocConfigProperties;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
@@ -22,6 +26,34 @@ import org.springframework.core.io.ResourceLoader;
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "springdoc.api-docs.enabled", havingValue = "true")
 public class OpenApiConfig {
+  private static final List<String> DOMAIN_ORDER =
+      List.of(
+          "Auth",
+          "User",
+          "CareSpace",
+          "Record",
+          "Analysis",
+          "Proposal",
+          "CareItem",
+          "Dashboard",
+          "Sharing");
+
+  @Bean
+  OpenApiCustomizer orderDomainTags() {
+    return api -> {
+      var tags = api.getTags();
+      if (tags != null) {
+        api.setTags(
+            tags.stream().sorted(Comparator.comparingInt(OpenApiConfig::domainOrder)).toList());
+      }
+    };
+  }
+
+  private static int domainOrder(Tag tag) {
+    int position = DOMAIN_ORDER.indexOf(tag.getName());
+    return position < 0 ? DOMAIN_ORDER.size() : position;
+  }
+
   @Bean
   OpenAPI hanmaumOpenApi(SpringDocConfigProperties properties, ResourceLoader resourceLoader) {
     var components =
