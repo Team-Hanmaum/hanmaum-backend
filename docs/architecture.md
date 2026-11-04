@@ -203,7 +203,9 @@ v2 실행별 계약 버전·입력 근거 캡처·네 작업의 저장·공개 �
 
 - 개발: 로컬 Java·Python 프로세스와 Docker PostgreSQL
 - 초기 배포: 외부 LLM API를 사용하는 소규모 MVP, Lightsail Linux 2 vCPU·4GB급에서 시작
-- Nginx를 통해 동일 도메인·HTTPS 제공, Spring·AI·DB 내부 통신
+- 최초 배포는 Vercel `https://hanmaum.site`, Nginx 뒤의 BE `https://api.hanmaum.site` 구성. 동일 사이트·서로 다른 Origin에 맞춰 credentials와 CORS 설정
+- DB·로그인·HTTPS 검증용 운영 파일은 [배포 안내](deployment.md) 참조. AI worker는 초기 비활성이고 AI 운영 TLS·영속 저장소·호출 범위 검증 후 별도 활성화
+- CD는 dev에서 GitHub Actions 수동 실행, production 환경의 Secrets, GHCR digest, AWS OIDC와 러너 IP/32 임시 SSH 허용 사용. Swagger·OpenAPI 문서는 공개하며 실제 API 세션·권한·CSRF 유지
 - 운영 DB 비밀값은 환경변수로 주입하고 DB 백업은 별도 저장소에 보관
 - 단일 서버 장애 시 전체 서비스가 중단될 수 있으므로 실제 이용 규모에 맞춰 DB·애플리케이션 분리 검토
 - 합성 기록으로 먼저 검증하고, 실제 부모님 정보를 사용하기 전 동의·열람 범위·공유 내용·데이터 보관 정책 구체화

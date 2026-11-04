@@ -1,0 +1,175 @@
+# Lightsail 운영 배포 — GitHub Secrets와 Actions
+
+대상은 Sydney `ap-southeast-2`의 `hanmaum-server-01`(Ubuntu 24.04 amd64, 2 vCPU·4GB)이다. FE는 `https://hanmaum.site`(Vercel), API는 `https://api.hanmaum.site`, 고정 IPv4는 `16.178.232.151`이다. 이 문서는 이전 PC 이미지 save/load·서버 환경변수 수동 입력 절차를 대체한다.
+
+**작성·로컬 검사와 실제 배포 완료는 다르다.** 아래 외부 설정과 코드의 dev 반영 후 Actions를 실행해야 HTTPS·Swagger가 열린다. 실제 OAuth 로그인은 브라우저에서 별도로 확인한다.
+
+## 구성
+
+`Run workflow → 선택한 커밋 검증 → GHCR 게시 → AWS OIDC 임시 인증 → 러너 IPv4/32만 SSH 허용 → Secrets·설정 전송 → 서버 교체·health/Swagger 검사 → 임시 SSH 규칙 제거`.
+
+GitHub Secrets는 관리 원본, 서버 `.env.prod`는 실행용 사본이다. 이미지에 비밀값을 넣지 않는다. AWS 장기 Access Key·서버용 장기 GHCR PAT·Tailscale 계정은 이 구성에 필요하지 않다. GHCR은 해당 workflow의 `GITHUB_TOKEN`으로 인증하고 임시 인증 파일을 정리한다.
+
+PostgreSQL 17.11은 관리자·앱 역할을 분리하고 전용 영속 볼륨을 쓴다. BE는 `prod,oauth`, `hanmaum_app` 역할로 실행한다. DB 5432·BE 8080은 미공개이며 Nginx 공식 이미지에 설정을 연결하여 80·443만 공개한다. Certbot 인증서·개인키는 서버의 전용 볼륨에 유지한다. 메모리 상한은 BE 1536MiB·DB 768MiB·Nginx 128MiB·일시 실행 Certbot 256MiB다. 이는 부하 검증 결과가 아닌 초기 설정이다. 단일 서버 구성이라 **배포 중 짧은 중단**이 있다. 기존 로컬 `docker-compose.yml`은 유지한다.
+
+**AI는 첫 배포에 포함하지 않는다.** worker는 `false`, AI 주소는 예약된 `https://ai.invalid`다. 분석은 QUEUED에 머문다. FE 실제 API 연결·AI 운영 연결도 별도 작업이다.
+
+## 1. AWS 계정·네트워크 확인
+
+현재 배포 계정은 AWS 새 가입 방식에서 OIDC 목록 조회가 조직 정책(SCP)의 명시적 Deny로 차단된 것을 확인한 뒤, 사용자가 유료 플랜 전환과 고급 기능 활성화를 진행했다. 기존 `Hanmaum` 계정에서 Lightsail과 배포용 IAM 리소스를 계속 관리한다. 자동 추가된 `Identity Delegated Admin`은 사용자 접근 관리용 계정이다.
+
+새 계정에 이 절차를 적용한다면 **IAM 서비스 지원 여부와 OIDC 기능 권한을 별도로 확인**한다. IAM의 **ID 제공업체(Identity providers)**와 역할 생성이 허용되어야 한다. SCP의 명시적 Deny는 IAM Allow 정책 추가로 해제되지 않는다. 고급 기능 활성화는 유료 플랜 전환을 선행하며 되돌릴 수 없고 지출 한도가 제거되므로, 조직 정책·과금 조건을 확인한 후 계정 소유자가 결정한다. 기존 정책을 일괄 삭제하지 않는다. 전환 후에는 비용 알림과 크레딧 잔액·만료일을 확인한다.
+
+- `uname -m`은 `x86_64`여야 하며 Docker Engine·Compose·Python 3·curl이 있어야 한다.
+- Lightsail 방화벽: HTTP 80·HTTPS 443 공개, SSH 22는 본인 IP/32 + 필요 시 브라우저 SSH. SSH에 `0.0.0.0/0` 또는 `::/0`가 있으면 CD가 거부한다. 5432·8080·8000은 열지 않는다.
+- 가비아 `api` A 레코드와 고정 IP 연결을 확인한다. 사용하지 않는 AAAA가 다른 서버를 가리키지 않아야 한다.
+- Vercel `hanmaum.site`는 Production에 직접 연결한다. `www`를 유지한다면 `www → hanmaum.site`로 이동시킨다. 최종 주소는 CORS와 같아야 한다.
+- 호스트에 Nginx를 중복 설치하지 않는다. 컨테이너가 80·443을 사용한다.
+
+프로젝트 계정 CloudShell에서 계정 ID와 인스턴스 ARN을 조회한다. AWS Settings 관리 계정 ID와 혼동하지 않는다.
+
+```bash
+aws sts get-caller-identity --query Account --output text
+aws lightsail get-instance --region ap-southeast-2 \
+  --instance-name hanmaum-server-01 --query instance.arn --output text
+```
+
+## 2. AWS OIDC provider·배포 역할
+
+1. IAM **ID 제공업체(Identity providers) → 공급자 추가(Add provider) → OpenID Connect**. URL은 `https://token.actions.githubusercontent.com`, Audience는 `sts.amazonaws.com`. 동일 provider는 재사용한다.
+2. `deploy/aws/permissions.json`의 `REPLACE_WITH_LIGHTSAIL_INSTANCE_ARN`을 조회한 ARN으로 치환하여 고객 관리 정책 `HanmaumDeployFirewall`을 만든다.
+3. `deploy/aws/trust.json`의 `REPLACE_WITH_PROJECT_ACCOUNT_ID`를 프로젝트 계정 ID로 치환한다. **Roles → Create role → Custom trust policy**에 넣고 위 정책을 연결하여 `HanmaumGitHubDeploy` 역할을 만든다.
+4. 역할 ARN을 다음 단계의 `AWS_DEPLOY_ROLE_ARN`에 등록한다.
+
+`GetInstancePortStates`는 리소스 범위를 지원하지 않아 `Resource: *` + 시드니 조건을 쓴다. 수정 권한은 지정 인스턴스의 Open/CloseInstancePublicPorts 두 개뿐이다. IAM은 인스턴스까지 제한하며 **포트 22·러너 /32 제한은 코드가 적용**한다.
+
+이 저장소는 2026-09-26 생성이며 trust 예시는 GitHub immutable subject를 사용한다.
+
+```text
+repo:Team-Hanmaum@334170065/hanmaum-backend@1389141115:environment:production
+```
+
+OIDC subject를 별도 사용자화했다면 실제 형식과 일치시킨다. 인증 오류를 와일드카드 허용으로 해결하지 않는다. Environment 토큰에는 브랜치 대신 환경 이름이 들어가므로 아래 **production의 dev 전용 제한**이 필요하다.
+
+## 3. 배포 전용 SSH 키
+
+PC PowerShell에서 기존 개인 키와 별개로 생성한다. 기존 파일은 덮어쓰지 않는다. passphrase에는 두 번 Enter를 입력한다.
+
+```powershell
+$deployKey = Join-Path $env:USERPROFILE '.ssh\hanmaum-actions'
+ssh-keygen -t ed25519 -C 'hanmaum-actions' -f $deployKey
+```
+
+신뢰하는 Lightsail 브라우저 SSH에서 Ubuntu 사용자의 `~/.ssh/authorized_keys`에 `.pub` 공개키 한 줄을 추가한다. 기존 키는 유지하고 앞에 `restrict `를 붙인다.
+
+```text
+restrict ssh-ed25519 실제_공개키_내용 hanmaum-actions
+```
+
+`.ssh`는 700, `authorized_keys`는 600이어야 한다. `sudo -n true` 성공을 확인한다. CD는 Ubuntu의 비밀번호 없는 sudo로 서버를 변경하므로 배포 개인키를 production Secret으로 보관한다. 같은 신뢰하는 콘솔에서 **호스트 공개키**를 확인한다.
+
+```bash
+awk '{print "16.178.232.151", $1, $2}' /etc/ssh/ssh_host_ed25519_key.pub
+```
+
+이 한 줄이 `DEPLOY_SSH_KNOWN_HOSTS`다. 호스트 개인키 파일은 읽거나 복사하지 않는다. Actions는 `ssh-keyscan`으로 즉석 신뢰하지 않고 이 값을 엄격히 검증한다. 서버 재생성 후에는 재확인한다.
+
+## 4. GitHub production 환경과 값 등록
+
+저장소 **Settings → Environments → New environment → production**. **Deployment branches and tags → Selected branches and tags → Branch dev만** 등록한다. 모든 브랜치를 허용하지 않는다. 일반 PR 검사에는 운영 Secrets를 전달하지 않는다.
+
+이 환경의 **Environment secrets**에 11개를 등록한다. Repository Secrets에 미리 넣었다면 같은 이름의 환경 Secret으로 옮겨 관리 위치를 통일한다.
+
+| Secret | 값 |
+| --- | --- |
+| `DEPLOY_SSH_PRIVATE_KEY` | PC hanmaum-actions 개인키 전체, BEGIN/END 포함. `.pub` 아님 |
+| `DEPLOY_SSH_KNOWN_HOSTS` | 위 서버 IP + 호스트 공개키 한 줄 |
+| `POSTGRES_ADMIN_PASSWORD` | 새 DB 관리자 난수 비밀번호 |
+| `DB_PASSWORD` | 위 값과 다른 앱 DB 비밀번호 |
+| `GOOGLE_CLIENT_ID` | 웹 OAuth 클라이언트 ID |
+| `GOOGLE_CLIENT_SECRET` | 같은 Google 클라이언트 Secret |
+| `KAKAO_CLIENT_ID` | 카카오 REST API 키, JavaScript/Admin 키 아님 |
+| `KAKAO_CLIENT_SECRET` | 같은 카카오 로그인 앱 Client Secret |
+| `COMMAND_DIGEST_KEY` | 별도 난수 키, 최소 32바이트 |
+| `INVITATION_ENCRYPTION_KEY` | 별도 난수 정확히 32바이트의 Base64 |
+| `AI_INTERNAL_API_KEY` | 별도 내부 인증키, OpenAI API 키 아님 |
+
+DB 비밀번호 두 개와 내부 키 세 개는 `openssl rand -base64 32`를 각각 별도로 총 다섯 번 실행해 생성할 수 있다. 출력을 채팅·이슈에 공유하지 않는다. Secret에는 값 자체만 넣고 dotenv용 따옴표를 붙이지 않는다. SSH 개인키 외 앱 값에는 줄바꿈을 넣지 않는다.
+
+**Environment variables**에는 아래 세 개를 등록한다.
+
+| Variable | 값 |
+| --- | --- |
+| `AWS_DEPLOY_ROLE_ARN` | 2단계의 역할 ARN |
+| `DEPLOY_HOST` | `16.178.232.151` |
+| `ACME_EMAIL` | 인증서 계정에 사용할 실제 이메일 |
+
+`BACKEND_IMAGE`는 Actions가 계산하므로 등록하지 않는다. 리전·인스턴스 이름·SSH 사용자는 workflow에 명시된다. PC `.env`는 로컬 개발용으로 유지한다. `.env.prod.example`은 비밀값 없는 목록이다. **서버 환경파일을 먼저 만들 필요가 없다.** 이전 수동 안내로 만든 파일은 CD가 사용하지 않는다. 이미 DB까지 실행했다면 기존 비밀번호·키와 일치시키는 작업부터 한다.
+
+Google/Kakao 리디렉션은 각각 `https://api.hanmaum.site/login/oauth2/code/google`, `https://api.hanmaum.site/login/oauth2/code/kakao`다.
+
+## 5. Actions·GHCR와 코드 반영
+
+- Settings → Actions → General에서 Actions 사용을 허용한다. 조직 제한이 있으면 workflow의 `actions/*`, `gradle/actions/*`, `docker/*`, `aws-actions/*` 고정 버전을 허용한다.
+- 빌드 job은 `packages: write`, 배포 job은 `packages: read`, `id-token: write`를 명시한다. 일반 CI 권한을 일괄 확장하지 않는다.
+- GHCR source label로 이 저장소를 연결한다. 동일 이름의 기존 패키지가 있다면 패키지 Settings → Manage Actions access에서 이 저장소의 읽기·쓰기를 허용한다. 인증 문제를 해결하려고 이미지를 공개로 바꾸지 않는다.
+- 코드 리뷰·검증·커밋 후 팀원 승인과 필수 검사를 거쳐 PR을 dev에 반영한다. **로컬 파일만 있으면 Actions에 나타나지 않는다.**
+- 기본 브랜치는 dev이며 CD도 dev에서만 실행된다. push·PR마다 자동 배포하지 않는다.
+
+## 6. 첫 배포·Swagger
+
+1. [Let’s Encrypt 약관](https://letsencrypt.org/repository/)을 확인한다. DNS·80/443·Secrets·IAM·SSH 설정이 끝나 있어야 한다.
+2. Actions → Deploy backend → Run workflow → Branch: dev를 선택한다.
+3. 인증서가 처음이라면 `bootstrap_https`를 선택한다. 설명대로 약관에 동의하는 실행이다. 이후에는 선택하지 않는다.
+4. Build·Deploy job을 확인한다. 첫 실행에는 이미지 다운로드·DB 초기화·Flyway·인증서 발급이 포함된다.
+5. `/actuator/health`의 UP, `/swagger-ui.html` 화면, `/v3/api-docs` JSON, 로그인 전 `/api/users/me`의 401을 확인한다. 모두 `https://api.hanmaum.site` 아래 경로다.
+
+문서는 공개되지만 실제 API 세션·업무 권한·CSRF는 유지한다. 같은 브라우저로 Google/Kakao 로그인 후 Swagger로 돌아와 테스트한다. 변경 요청은 `GET /api/auth/csrf`의 token을 Authorize → CsrfToken에 입력하고 로그인·로그아웃 후 재발급한다. Swagger 쿠키 입력만으로 로그인되지 않는다.
+
+CD는 실제 제공자 로그인이나 유료 AI를 호출하지 않는다. 실제 로그인·FE 연결은 사람이 확인한다. FE API base URL은 `https://api.hanmaum.site`이며 `/api`를 중복 추가하지 않는다. Mock 화면만으로 전체 연결을 판단하지 않는다.
+
+## 서버 상태와 장애 처리
+
+릴리스는 `/opt/hanmaum/releases/<git-sha>-<run-id>-<attempt>/`에 `.env.prod`(root 600)와 deploy/를 저장한다. `current`는 마지막 성공 릴리스, `previous`는 이전 성공 릴리스를 가리킨다. 현재 환경파일은 `/opt/hanmaum/current/.env.prod`다. `credential-baseline.env`는 첫 DB 생성 시 키·암호 비교 기준이고 root 600이다. 과거 릴리스에도 비밀값 사본이 있으므로 상위 디렉터리를 root 전용으로 유지한다. 보관·디스크 정리 정책은 별도로 정한다.
+
+```bash
+sudo bash /opt/hanmaum/current/deploy/compose.sh ps
+sudo systemctl list-timers hanmaum-cert-renew.timer
+sudo bash /opt/hanmaum/current/deploy/renew-certificates.sh --dry-run
+```
+
+timer는 하루 두 번 갱신하고 Nginx를 재로딩한다. Nginx는 원문 URI·query·쿠키·본문을 access log에 기록하지 않고 원문 URL이 붙을 수 있는 error log도 비활성화했다. 정제된 BE 로그·health·상태 코드·nginx -t로 진단한다. Compose 검사는 실제 비밀값이 출력되지 않는 `config --quiet`를 쓴다.
+
+실패하면 후보 릴리스 경로를 표시한다. **DB 마이그레이션 역적용·자동 롤백은 하지 않는다.** current가 이전 성공을 가리켜도 실행 컨테이너까지 같은 버전이라는 보장은 없다. 후보·컨테이너·Flyway를 함께 확인하고 DB 호환성이 검증된 경우에만 이전 설정으로 재기동한다.
+
+동시 배포는 Actions concurrency와 서버 flock으로 제한한다. 일반 실패·취소에서는 임시 SSH 규칙 정리를 시도하지만 러너 장애·강제 종료·AWS 장애까지 보장하지 않는다. 이때 Lightsail Networking에서 로그의 `Deployment SSH source: x.x.x.x/32`만 제거하고 관리자 IP·브라우저 SSH는 유지한다. 임시 업로드 정리 경고가 있으면 표시된 `/tmp/hanmaum-cd.*`를 서버에서 확인 후 정리한다.
+
+DB 비밀번호·명령 해시 키·초대 암호화 키·내부 공유키는 매 배포 재생성하지 않는다. 첫 DB 생성 이후 변경되면 CD가 거부한다. GitHub 값 변경만으로 기존 DB 역할 비밀번호가 바뀌지 않는다. 교체는 기존 데이터·AI 연결을 고려한 별도 작업이다.
+
+## 백업·검증과 AI 후속
+
+기존 DB가 있으면 앱 교체 전 custom-format pg_dump를 만든다. 수동 백업은 `sudo bash /opt/hanmaum/current/deploy/backup-db.sh`다. `/opt/hanmaum/backups/` 덤프를 보호된 서버 밖 저장소에 복제하고 암호화 키는 별도 보관한다. 외부 저장 위치·주기·보관 기간을 운영 전에 정한다. 같은 서버의 덤프만으로 서버 삭제에 대비할 수 없다.
+
+복원 연습은 격리 PostgreSQL 17 또는 별도 DB에서 수행한다. 소유자는 hanmaum_app, `pg_restore --no-owner --no-acl --exit-on-error` 후 Flyway·합성 데이터를 확인한다. 실복구에는 호환 이미지·설정·키가 필요하다. down -v·운영 DB 초기화·일괄 volume prune은 배포 절차에 없다.
+
+```powershell
+.\gradlew.bat check bootJar
+python -m unittest discover -s deploy/tests -v
+python deploy/validate.py --nginx --postgres
+```
+
+모든 deploy/*.sh의 bash -n도 검사한다. Docker Engine·OpenSSL이 필요하다. Nginx는 임시 인증서로 구문만 검사하며 DB는 네트워크·호스트 포트·영속 볼륨 없는 임시 컨테이너에서 합성 데이터만 검사한다. 방화벽 테스트는 AWS API 모의 응답이다. 실제 AWS·GHCR·인증서 발급 검증을 대신하지 않는다.
+
+CI/CD는 `deploy/tests/activation_smoke.py`도 폐기되는 Python Linux 컨테이너에서 실행한다. Docker·HTTP·systemd를 모의하여 최초 TLS 분기, 파일 권한, 키 변경 차단, 백업, 실패 시 current 유지, 성공 시 이전 릴리스 보존을 검사한다. 이 파일은 실제 서버에서 직접 실행하지 않는다.
+
+AI 운영 전에는 AI TLS, UID 10001로 쓸 SQLite 수신 기록 영속 볼륨·초기화 CLI를 준비하고 AI 저장소 docs/v2-integration.md를 따른다. OpenAI 키는 AI에만 전달한다. worker 동시 수·확인 간격·lease·비용과 호출 범위를 합의하고 기존 QUEUED 작업을 확인한다. 합성 데이터로 접수→AI→제안 저장·조회·중복 방지를 검증한 뒤 버전·worker·AI 주소를 명시적으로 전환한다.
+
+## 공식 참고
+
+- [AWS 새 가입 방식 지원 서비스](https://docs.aws.amazon.com/accounts/latest/reference/supported-services-sign-up-new.html)
+- [AWS 고급 기능 활성화와 계정 변경](https://docs.aws.amazon.com/accounts/latest/reference/activate-advanced-features.html)
+- [GitHub OIDC와 immutable subject](https://docs.github.com/en/actions/how-tos/secure-your-work/security-harden-deployments/oidc-in-aws)
+- [Lightsail 방화벽 API](https://docs.aws.amazon.com/cli/latest/reference/lightsail/open-instance-public-ports.html)
+- [GitHub Secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
+- [GHCR 인증·Actions 접근](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
+- [Certbot webroot·갱신](https://eff-certbot.readthedocs.io/en/stable/using.html)

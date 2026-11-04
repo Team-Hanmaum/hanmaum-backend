@@ -206,7 +206,7 @@ const headers = {
 };
 ```
 
-로그인 성공·로그아웃 후에는 CSRF 토큰을 다시 받습니다. 로그아웃은 토큰을 포함한 `POST /api/auth/logout`입니다. 운영에서는 Nginx가 프론트와 백엔드를 같은 도메인으로 제공하도록 구성합니다.
+로그인 성공·로그아웃 후에는 CSRF 토큰을 다시 받습니다. 로그아웃은 토큰을 포함한 `POST /api/auth/logout`입니다. 최초 운영 구성은 Vercel의 `https://hanmaum.site`와 Nginx 뒤의 `https://api.hanmaum.site`를 사용합니다. 두 주소는 같은 사이트의 서로 다른 Origin이므로 FE의 credentials와 BE의 정확한 CORS 허용을 함께 설정합니다.
 
 ## API 공통 규격
 
@@ -315,9 +315,9 @@ V12는 구성원 요청 제출·목록·상세·취소와 소유자 선택 반�
 docker build -t hanmaum-backend:local .
 ```
 
-Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 실행합니다. `.env`, Git 메타데이터, 로컬 빌드 결과는 이미지 빌드 컨텍스트에서 제외합니다. 컨테이너 실행 시 `SPRING_PROFILES_ACTIVE=prod`와 운영 환경변수를 주입합니다.
+Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 실행합니다. `.env`, Git 메타데이터, 로컬 빌드 결과는 이미지 빌드 컨텍스트에서 제외합니다. 소셜 로그인을 사용하는 운영 컨테이너에는 `SPRING_PROFILES_ACTIVE=prod,oauth`와 운영 환경변수를 주입합니다.
 
-첫 배포는 Lightsail 서울 리전의 2 vCPU·4GB급 Linux 서버와 Docker Compose를 기준으로 계획합니다. Nginx·Spring·FastAPI·PostgreSQL을 별도 컨테이너로 실행하고, DB 및 AI 포트는 외부에 공개하지 않습니다. HTTPS, 외부 DB 백업과 복원 검증, 자원 사용량 확인은 실제 배포 단계에서 구성합니다. 현재 `docker-compose.yml`은 **로컬 DB용**이며 클라우드 리소스를 생성하지 않습니다.
+첫 배포는 Lightsail 시드니 리전의 Ubuntu 24.04·2 vCPU·4GB 서버를 사용합니다. [운영 배포 안내](docs/deployment.md)에 GitHub production Secrets·AWS OIDC·SSH·최초 HTTPS·DB 백업/복구 설정 순서를 정리했습니다. Deploy backend Actions를 dev에서 수동 실행하면 검증한 GHCR 이미지 digest와 설정을 배포하고 임시 SSH 규칙을 정리합니다. `deploy/compose.prod.yml`은 Nginx·Spring·PostgreSQL을 구성하고 외부에는 80·443만 공개합니다. 운영 Swagger는 `https://api.hanmaum.site/swagger-ui.html`에서 공개하고 API 세션·CSRF는 유지합니다. 첫 배포에서는 AI worker를 활성화하지 않습니다. 로컬 검사와 실제 AWS 배포·OAuth·외부 백업 검증은 구분합니다. 기존 `docker-compose.yml`은 **로컬 DB용**으로 유지합니다.
 
 ## 구현 범위
 
@@ -326,4 +326,4 @@ Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 �
 - [돌봄 현황판](docs/api-conventions.md#돌봄-현황판): `GET /api/spaces/{spaceId}/dashboard`. 돌봄 탭은 기존 `GET /api/spaces/{spaceId}/items`에 `itemType`과 `view`를 전달합니다.
 - [항목 근거·이력](docs/care-item-provenance.md): 현재 근거, 확정 버전 목록 및 변경 전후 조회. 제거된 내용은 비교에서도 가리고 메타데이터만 유지
 - 후속: 계정 연결·회원 탈퇴, 공간 수정/삭제, 원본 삭제 공개 API, 일반 항목 삭제, 가족 답변 제출, 카카오톡 공유
-- 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. GitHub Actions CI 설정을 포함하며 운영 배포는 별도 작업입니다.
+- 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. CI와 수동 실행 CD를 포함하며 실제 배포에는 안내된 외부 설정이 필요합니다.
