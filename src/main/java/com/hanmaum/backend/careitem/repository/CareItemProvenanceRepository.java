@@ -6,11 +6,28 @@ import java.time.Instant;
 import java.util.*;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.jdbc.support.SqlArrayValue;
 import org.springframework.stereotype.Repository;
 
 /** Reads retained provenance, never recreating a past link from today's item values. */
 @Repository
 public class CareItemProvenanceRepository {
+  // Shared by current evidence and history IDs; unavailable content never leaves the DB.
+  private static final String BASIS_JOINS =
+      """
+        LEFT JOIN evidence e ON e.space_id=b.space_id AND e.id=b.source_evidence_id
+        LEFT JOIN source_record r ON r.space_id=e.space_id AND r.id=e.record_id
+        LEFT JOIN content_document d ON d.space_id=b.space_id AND d.id=b.direct_document_id
+      """;
+  private static final String BASIS_AVAILABILITY =
+      """
+        CASE WHEN b.source_evidence_id IS NOT NULL THEN
+          e.quote IS NOT NULL AND e.redacted_at IS NULL AND r.lifecycle='ACTIVE'
+          AND r.body IS NOT NULL AND r.version=e.record_version
+          AND NOT (e.id=ANY(:unavailable))
+        ELSE d.body IS NOT NULL AND d.redacted_at IS NULL AND care_document_available(d.id)
+        END IS TRUE
+      """;
   private final NamedParameterJdbcTemplate jdbc;
 
   public CareItemProvenanceRepository(NamedParameterJdbcTemplate jdbc) {
@@ -27,7 +44,14 @@ public class CareItemProvenanceRepository {
         .findFirst();
   }
 
-  public List<Evidence> evidence(UUID space, UUID item) {
+  public List<UUID> sourceEvidenceIds(UUID space, UUID item) {
+    return jdbc.query(
+        "SELECT source_evidence_id FROM care_item_basis WHERE space_id=:space AND item_id=:item AND source_evidence_id IS NOT NULL",
+        params(space, item),
+        (rs, n) -> rs.getObject(1, UUID.class));
+  }
+
+  public List<Evidence> evidence(UUID space, UUID item, Set<UUID> unavailable) {
     return jdbc.query(
         """
         SELECT COALESCE(e.id,b.id) evidence_id,
@@ -41,25 +65,24 @@ public class CareItemProvenanceRepository {
           CASE WHEN author.user_id IS NOT NULL THEN author.id END author_id,
           CASE WHEN b.source_evidence_id IS NOT NULL THEN r.recorded_at ELSE b.created_at END created_at
         FROM care_item_basis b
-        LEFT JOIN evidence e ON e.space_id=b.space_id AND e.id=b.source_evidence_id
-        LEFT JOIN source_record r ON r.space_id=e.space_id AND r.id=e.record_id
-        LEFT JOIN content_document d ON d.space_id=b.space_id AND d.id=b.direct_document_id
-        LEFT JOIN ai_proposal p ON p.space_id=b.space_id AND p.primary_evidence_id=e.id
+        """
+            + BASIS_JOINS
+            + """
         LEFT JOIN space_membership author ON author.space_id=b.space_id
           AND author.id=CASE WHEN b.source_evidence_id IS NOT NULL THEN r.author_membership_id
             ELSE b.submitted_by_membership_id END
         CROSS JOIN LATERAL (
-          SELECT CASE WHEN b.source_evidence_id IS NOT NULL THEN
-            e.quote IS NOT NULL AND e.redacted_at IS NULL AND r.lifecycle='ACTIVE'
-            AND r.body IS NOT NULL AND r.version=e.record_version
-            AND (p.id IS NULL OR care_document_available(p.output_document_id))
-          ELSE d.body IS NOT NULL AND d.redacted_at IS NULL AND care_document_available(d.id)
-          END IS TRUE AS available
+          SELECT
+        """
+            + BASIS_AVAILABILITY
+            + """
+          AS available
         ) visible
         WHERE b.space_id=:space AND b.item_id=:item
-        ORDER BY b.created_at ASC,b.id ASC
+        ORDER BY b.created_at ASC,evidence_id ASC
         """,
-        params(space, item),
+        params(space, item)
+            .addValue("unavailable", new SqlArrayValue("uuid", unavailable.toArray())),
         (rs, n) ->
             new Evidence(
                 rs.getObject("evidence_id", UUID.class),
@@ -115,13 +138,25 @@ public class CareItemProvenanceRepository {
                 rs.getTimestamp("changed_at").toInstant()));
   }
 
-  public List<UUID> historyEvidence(UUID space, UUID item, long version) {
+  public List<UUID> historyEvidence(
+      UUID space,
+      UUID item,
+      long version,
+      Collection<UUID> appliedEvidence,
+      Set<UUID> unavailable) {
     return jdbc.query(
         """
         SELECT DISTINCT COALESCE(b.source_evidence_id,b.id) id
         FROM care_item_history h
         JOIN care_item_basis b ON b.space_id=h.space_id AND b.item_id=h.item_id
+        """
+            + BASIS_JOINS
+            + """
         WHERE h.space_id=:space AND h.item_id=:item AND h.version=:version AND (
+        """
+            + BASIS_AVAILABILITY
+            + """
+        ) AND (
           (h.operation<>'LINK_EVIDENCE' AND b.direct_document_id IS NOT NULL AND (
             b.direct_document_id=h.document_id OR (
               EXISTS (SELECT 1 FROM care_item_document_parent parent WHERE parent.space_id=h.space_id
@@ -129,18 +164,13 @@ public class CareItemProvenanceRepository {
               AND NOT EXISTS (SELECT 1 FROM care_item_history earlier WHERE earlier.space_id=h.space_id
                 AND earlier.item_id=h.item_id AND earlier.version<h.version
                 AND earlier.document_id=b.direct_document_id))))
-          OR b.source_evidence_id IN (
-            SELECT p.primary_evidence_id FROM proposal_decision decision
-            JOIN ai_proposal p ON p.space_id=decision.space_id AND p.id=decision.proposal_id
-            WHERE decision.space_id=h.space_id AND decision.item_id=h.item_id AND decision.item_version=h.version
-            UNION
-            SELECT p.primary_evidence_id FROM change_request_entry entry
-            JOIN ai_proposal p ON p.space_id=entry.space_id AND p.id=entry.proposal_id
-            WHERE entry.space_id=h.space_id AND entry.result_item_id=h.item_id
-              AND entry.result_item_version=h.version AND entry.status='APPLIED'
-          )) ORDER BY id
+          OR b.source_evidence_id=ANY(:applied)
+          ) ORDER BY id
         """,
-        params(space, item).addValue("version", version),
+        params(space, item)
+            .addValue("version", version)
+            .addValue("applied", new SqlArrayValue("uuid", appliedEvidence.toArray()))
+            .addValue("unavailable", new SqlArrayValue("uuid", unavailable.toArray())),
         (rs, n) -> rs.getObject(1, UUID.class));
   }
 

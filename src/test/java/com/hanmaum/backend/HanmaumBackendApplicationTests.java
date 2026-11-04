@@ -2,6 +2,7 @@ package com.hanmaum.backend;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import java.util.UUID;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,6 +12,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.session.Session;
 import org.springframework.session.SessionRepository;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Import(TestcontainersConfiguration.class)
 @SpringBootTest
@@ -20,10 +23,11 @@ class HanmaumBackendApplicationTests {
   @Autowired Flyway flyway;
   @Autowired JdbcTemplate jdbcTemplate;
   @Autowired SessionRepository<?> sessions;
+  @Autowired PlatformTransactionManager transactions;
 
   @Test
   void appliesAndValidatesMigrationsOnPostgresql() {
-    assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("14");
+    assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("15");
     flyway.validate();
     assertThat(jdbcTemplate.queryForObject("SELECT version()", String.class))
         .contains("PostgreSQL 17.11");
@@ -32,6 +36,31 @@ class HanmaumBackendApplicationTests {
   @Test
   void persistsAndDeletesSessionsInPostgresql() {
     assertSessionRoundTrip(sessions);
+  }
+
+  @Test
+  void provenanceDecisionIndexesSupportBothItemVersionLookups() {
+    new TransactionTemplate(transactions)
+        .executeWithoutResult(
+            tx -> {
+              // Check index eligibility independent of the planner's legitimate small-table seq
+              // scans.
+              jdbcTemplate.execute("SET LOCAL enable_seqscan=off");
+              var plan =
+                  jdbcTemplate.queryForObject(
+                      "EXPLAIN (FORMAT JSON,COSTS OFF) SELECT proposal_id FROM proposal_decision WHERE space_id=? AND item_id=? AND item_version=1",
+                      String.class,
+                      UUID.randomUUID(),
+                      UUID.randomUUID());
+              assertThat(plan).contains("proposal_decision_item_version_ix");
+              var requests =
+                  jdbcTemplate.queryForObject(
+                      "EXPLAIN (FORMAT JSON,COSTS OFF) SELECT proposal_id FROM change_request_entry WHERE space_id=? AND result_item_id=? AND result_item_version=1 AND status='APPLIED' AND proposal_id IS NOT NULL",
+                      String.class,
+                      UUID.randomUUID(),
+                      UUID.randomUUID());
+              assertThat(requests).contains("change_request_applied_item_version_ix");
+            });
   }
 
   private <S extends Session> void assertSessionRoundTrip(SessionRepository<S> repository) {

@@ -221,6 +221,8 @@ class CareItemProvenanceIntegrationTests {
     var detail = data(member, item, "/history/2");
     assertThat(detail.path("before").isNull()).isTrue();
     assertThat(detail.path("after").isNull()).isTrue();
+    assertThat(detail.path("evidenceIds").isEmpty()).isTrue();
+    assertThat(data(member, item, "/history/1").path("evidenceIds").isEmpty()).isTrue();
     assertThat(detail.path("redactedFields"))
         .extracting(JsonNode::asText)
         .containsExactly("before", "after");
@@ -324,6 +326,98 @@ class CareItemProvenanceIntegrationTests {
         "UPDATE ai_proposal SET invalidated_at=now() WHERE run_id=?",
         second.analysis().analysisId());
     assertThat(data(member, item, "/evidence").at("/items/1/text").isNull()).isTrue();
+    assertThat(data(member, item, "/history/2").path("evidenceIds").isEmpty()).isTrue();
+    assertThat(data(member, item, "/history/1").path("evidenceIds"))
+        .extracting(JsonNode::asText)
+        .containsExactly(initial);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"QUOTE", "SOURCE_VERSION", "SOURCE_ERASED", "PROPOSAL", "PROPOSAL_DOCUMENT"})
+  void historyOmitsUnavailableEvidenceWhileKeepingChangeMetadata(String invalidation)
+      throws Exception {
+    var source = propose("CREATE", null);
+    UUID item = apply(source, null);
+    var original = data(member, item, "/history/1");
+    UUID evidence = UUID.fromString(original.at("/evidenceIds/0").asText());
+    switch (invalidation) {
+      case "QUOTE" ->
+          db.update("UPDATE evidence SET quote=NULL,redacted_at=now() WHERE id=?", evidence);
+      case "SOURCE_VERSION" ->
+          db.update("UPDATE source_record SET version=version+1 WHERE id=?", source.recordId());
+      case "SOURCE_ERASED" ->
+          db.update(
+              "UPDATE source_record SET lifecycle='ERASED',body=NULL,erased_at=now() WHERE id=?",
+              source.recordId());
+      case "PROPOSAL" ->
+          db.update(
+              "UPDATE ai_proposal SET invalidated_at=now() WHERE run_id=?",
+              source.analysis().analysisId());
+      case "PROPOSAL_DOCUMENT" ->
+          db.update(
+              "UPDATE content_document SET body=NULL,redacted_at=now() WHERE id=(SELECT output_document_id FROM ai_proposal WHERE run_id=?)",
+              source.analysis().analysisId());
+      default -> throw new IllegalArgumentException(invalidation);
+    }
+    var after = data(member, item, "/history/1");
+    assertThat(after.path("evidenceIds").isEmpty()).isTrue();
+    assertThat(after.path("changedBy")).isEqualTo(original.path("changedBy"));
+    assertThat(after.path("changedAt")).isEqualTo(original.path("changedAt"));
+    assertThat(data(member, item, "/evidence").at("/items/0/status").asText())
+        .isEqualTo("REDACTED");
+  }
+
+  @Test
+  void tiedEvidenceConnectionsSortByPublicEvidenceId() throws Exception {
+    UUID item = schedule("정렬 확인");
+    var source =
+        records.create(
+            member, space, new CreateSourceRecordRequest("첫 번째 근거와 두 번째 근거", UUID.randomUUID()));
+    List<UUID> evidenceIds =
+        List.of(
+            UUID.fromString("00000000-0000-4000-8000-000000000001"),
+            UUID.fromString("00000000-0000-4000-8000-000000000002"));
+    for (int i = 0; i < 2; i++) {
+      db.update(
+          "INSERT INTO evidence(id,space_id,record_id,record_version,quote,created_at) VALUES (?,?,?,1,'근거',now())",
+          evidenceIds.get(i),
+          space,
+          source.recordId());
+      db.update(
+          "INSERT INTO care_item_basis(id,space_id,item_id,source_evidence_id,created_at) VALUES (?,?,?,?,?::timestamptz)",
+          UUID.fromString("00000000-0000-4000-8000-00000000000" + (9 - i)),
+          space,
+          item,
+          evidenceIds.get(i),
+          "2099-01-01T00:00:00Z");
+    }
+    var rows = data(member, item, "/evidence").path("items");
+    assertThat(rows.size()).isEqualTo(3);
+    assertThat(rows.get(1).path("evidenceId").asText()).isEqualTo(evidenceIds.get(0).toString());
+    assertThat(rows.get(2).path("evidenceId").asText()).isEqualTo(evidenceIds.get(1).toString());
+  }
+
+  @Test
+  void databaseRejectsMultipleProposalsSharingOnePrimaryEvidence() {
+    var source = propose("CREATE", null);
+    UUID extraDocument = UUID.randomUUID();
+    db.update(
+        "INSERT INTO content_document(id,space_id,kind,body,created_at) VALUES (?,?,'AI_OUTPUT','{}',now())",
+        extraDocument,
+        space);
+    assertThatThrownBy(
+            () ->
+                db.update(
+                    """
+        INSERT INTO ai_proposal(id,space_id,run_id,ordinal_no,ai_operation,item_type,output_document_id,primary_evidence_id,resolution,created_at)
+        SELECT gen_random_uuid(),space_id,run_id,ordinal_no+1000,ai_operation,item_type,?,primary_evidence_id,resolution,now()
+        FROM ai_proposal WHERE run_id=?
+        """,
+                    extraDocument,
+                    source.analysis().analysisId()))
+        .isInstanceOf(org.springframework.dao.DuplicateKeyException.class)
+        .hasMessageContaining("ai_proposal_primary_evidence_id_key");
   }
 
   @ParameterizedTest
@@ -428,6 +522,11 @@ class CareItemProvenanceIntegrationTests {
     if (sourceType.equals("DIRECT_INPUT")) {
       assertThat(evidence.path("createdByMembershipId").asText()).isEqualTo(membership.toString());
       assertThat(evidence.path("text").asText()).contains("구성원 입력");
+    } else {
+      db.update(
+          "UPDATE evidence SET quote=NULL,redacted_at=now() WHERE id=?",
+          UUID.fromString(evidence.path("evidenceId").asText()));
+      assertThat(data(member, item, "/history/1").path("evidenceIds").isEmpty()).isTrue();
     }
   }
 

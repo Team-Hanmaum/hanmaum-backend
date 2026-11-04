@@ -10,7 +10,7 @@
 
 ## 현재 근거
 
-행은 `evidenceId, kind, status, recordId, text, createdByMembershipId, createdAt, fieldPaths`다. 근거 연결 생성 시각·ID 오름차순 전체 조회이며 별도 페이지 상한은 없다.
+행은 `evidenceId, kind, status, recordId, text, createdByMembershipId, createdAt, fieldPaths`다. 근거 연결 생성 시각, 응답의 evidenceId 오름차순 전체 조회이며 별도 페이지 상한은 없다. 연결 시각이 같아도 내부 근거 행 ID와 공개 인용 ID를 혼동하지 않는다.
 
 - `RECORD_QUOTE`: 소식 원본의 인용. evidenceId는 기존 evidence ID이고 작성자·시각은 반영자가 아닌 원본 기록자·등록 시각이다.
 - `DIRECT_INPUT`: 이전 문서를 부모로 갖지 않는 직접 입력. evidenceId는 care_item_basis ID, text는 저장된 입력 JSON의 문자열 표현이다. 문자열 값의 공백·줄바꿈·내용은 보존하지만 최초 HTTP JSON의 공백·키 순서를 재현하지 않는다.
@@ -30,7 +30,7 @@
 - 상세는 `itemId, version, previousVersion, before, after, changedBy, changedAt, evidenceIds, redactedFields`다. before/after는 당시 title·description·유형별 fields·status, 질문의 confirmedAnswer만 제공한다. 내부 AI 제안·요청 문서를 그대로 반환하지 않는다.
 - 최초 버전은 previousVersion과 before가 null이다. 그 외에는 선택 버전보다 작은 가장 최근 저장 버전과 비교한다. 과거 담당자 ID는 현재 담당자로 바꿔 쓰거나 현재 참여 여부 때문에 지우지 않는다.
 - 제거된 문서와 그 문서를 복사한 파생 문서는 DB의 `care_document_available`로 가린다. before/after를 각각 검증하여 읽을 수 없는 쪽은 null, redactedFields에 `before` 또는 `after`를 넣는다. 목록에도 같은 표시를 제공하고 버전·변경자·시각은 유지한다. 현재 문서의 가시성 상실만으로 독립적인 과거 이력까지 모두 숨기지 않는다.
-- evidenceIds는 **저장된 결정의 항목/버전 및 직접 문서 연결로 해당 변경과의 관계를 확인할 수 있는, 현재 남아 있는 근거 연결만** 제공한다. LINK_EVIDENCE는 같은 문서를 재사용하더라도 해당 버전의 결정에 연결된 인용만 제공한다. 현재 근거 전체를 과거 버전에 복사하거나 시각으로 과거 연결을 추정하지 않는다. 연결이 제거되었거나 관계를 입증할 수 없는 기존 데이터는 빈 배열일 수 있다. 과거 근거 연결 전체의 불변 스냅샷 저장을 의미하지 않는다.
+- evidenceIds는 **저장된 결정의 항목/버전 및 직접 문서 연결로 해당 변경과의 관계를 확인할 수 있고 현재 유효한 근거 연결만** 제공한다. 현재 근거와 동일한 원본·인용·버전·제안·문서/조상 문서 가용성 검사를 적용하며, REDACTED 근거의 ID는 이력 상세에서 제외한다. 변경자·시각 등 이력 메타데이터는 유지한다. LINK_EVIDENCE는 같은 문서를 재사용하더라도 해당 버전의 결정에 연결된 인용만 제공한다. 현재 근거 전체를 과거 버전에 복사하거나 시각으로 과거 연결을 추정하지 않는다. 연결이 제거되었거나 관계를 입증할 수 없는 기존 데이터는 빈 배열일 수 있다. 과거 근거 연결 전체의 불변 스냅샷 저장을 의미하지 않는다.
 
 ## 권한·일관성·오류
 
@@ -42,4 +42,10 @@
 - 404 RESOURCE_NOT_FOUND: 공간 없음/비활성, 항목의 공간 불일치·항목 없음·요청한 확정 버전 없음
 - 500 INTERNAL_ERROR: 조회 실패. 일부 결과만 성공으로 반환하지 않는다.
 
-V14까지의 기존 저장 구조를 조회하며 새 마이그레이션은 없다. 삭제 실행·가족 답변·재확인 입력 및 필드별 근거 추적은 별도 범위다. 노션 초안의 미정 표현과 현재 지원 범위를 구분하며 프론트에서는 REDACTED 근거 링크를 비활성화하고 null 비교값을 삭제된 내용으로 표시한다.
+Proposal의 유효성 및 확정 근거 연결은 `ProposalProvenanceService`를 통해 ID만 조회한다. 이 Service는 호출자가 현재 참여·항목 소속을 확인한 동일 트랜잭션에 참여하며 독립 트랜잭션이나 별도 공개 API를 만들지 않는다. CareItem Repository는 Proposal 테이블을 직접 조회하지 않고, 받은 무효 ID와 공통 근거 가용성 조건으로 DB에서 본문 노출을 차단한다. ID 묶음은 UUID 배열 파라미터로 전달하여 개별 ID마다 SQL 바인드 변수를 늘리지 않는다.
+
+V15는 `proposal_decision(space_id,item_id,item_version)`와 적용된 AI 변경 요청의 `(space_id,result_item_id,result_item_version)` 조회 인덱스를 추가한다. 기존 V1~V14는 변경하지 않는다. 일반 트랜잭션 인덱스 생성이므로 해당 테이블의 쓰기를 중지한 유지보수 구간에서 적용하고, 성공·인덱스 유효성 확인 후 호환 BE와 worker를 재개한다. 여러 인스턴스 중 하나의 worker만 끄는 것은 쓰기 중지를 대신하지 않는다.
+
+목록의 페이지네이션·최대 결과 수는 별도 합의 대상이다. 현재 전체 조회 계약을 임의로 자르거나 미합의 기본 상한을 추가하지 않는다. 대량 이력이 계속 누적되는 경우 응답·쿼리 비용이 증가하며 실제 규모·부하 보장은 별도 검증 대상이다.
+
+삭제 실행·가족 답변·재확인 입력 및 필드별 근거 추적은 별도 범위다. 노션 초안의 미정 표현과 현재 지원 범위를 구분하며 프론트에서는 REDACTED 근거 링크를 비활성화하고 null 비교값을 삭제된 내용으로 표시한다.

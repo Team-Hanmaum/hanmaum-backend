@@ -6,6 +6,7 @@ import com.hanmaum.backend.careitem.repository.CareItemProvenanceRepository.Hist
 import com.hanmaum.backend.carespace.service.CareSpaceQueryService;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.exception.ApiException;
+import com.hanmaum.backend.proposal.service.ProposalProvenanceService;
 import java.util.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
@@ -31,17 +32,23 @@ public class CareItemProvenanceService {
   private final CareSpaceQueryService spaces;
   private final CareItemProvenanceRepository repository;
   private final ObjectMapper mapper;
+  private final ProposalProvenanceService proposals;
 
   public CareItemProvenanceService(
-      CareSpaceQueryService spaces, CareItemProvenanceRepository repository, ObjectMapper mapper) {
+      CareSpaceQueryService spaces,
+      CareItemProvenanceRepository repository,
+      ObjectMapper mapper,
+      ProposalProvenanceService proposals) {
     this.spaces = spaces;
     this.repository = repository;
     this.mapper = mapper;
+    this.proposals = proposals;
   }
 
   public CareItemEvidenceResponse evidence(UUID actor, UUID space, UUID item) {
     requireItem(actor, space, item);
-    return new CareItemEvidenceResponse(repository.evidence(space, item));
+    return new CareItemEvidenceResponse(
+        repository.evidence(space, item, unavailableEvidence(space, item)));
   }
 
   public CareItemHistoryResponse history(UUID actor, UUID space, UUID item) {
@@ -74,7 +81,12 @@ public class CareItemProvenanceService {
         values(row.body(), row.status(), type),
         row.author(),
         row.changedAt(),
-        repository.historyEvidence(space, item, parsed),
+        repository.historyEvidence(
+            space,
+            item,
+            parsed,
+            proposals.appliedEvidence(space, item, parsed),
+            unavailableEvidence(space, item)),
         redactions(row));
   }
 
@@ -83,6 +95,10 @@ public class CareItemProvenanceService {
     return repository
         .itemType(space, item)
         .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND));
+  }
+
+  private Set<UUID> unavailableEvidence(UUID space, UUID item) {
+    return proposals.unavailableEvidence(space, repository.sourceEvidenceIds(space, item));
   }
 
   private List<String> redactions(History row) {
