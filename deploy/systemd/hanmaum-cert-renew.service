@@ -3,6 +3,7 @@ Description=Renew Hanmaum API TLS certificate and reload Nginx
 Wants=network-online.target
 After=network-online.target docker.service
 Requires=docker.service
+ConditionPathExists=/opt/hanmaum/current/deploy/renew-certificates.sh
 
 [Service]
 Type=oneshot

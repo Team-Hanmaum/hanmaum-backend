@@ -35,6 +35,7 @@ mkdir "$work_dir/payload"
 # Transfer only committed deployment files, never the working tree or a developer .env.
 git archive "$GITHUB_SHA" deploy | tar -x -C "$work_dir/payload"
 python3 deploy/release_env.py write "$work_dir/payload/.env.prod"
+"${BACKUP_PYTHON:?Backup SDK interpreter required}" deploy/prepare_backup.py "$work_dir/payload/backup-upload.json"
 printf '%s' "$GH_TOKEN" > "$work_dir/payload/registry-token"
 python3 - "$work_dir/payload/release.json" <<'PY'
 import json, os, re, sys

@@ -31,7 +31,12 @@ def require(condition, message):
 
 
 def run(args, env=None):
-    return subprocess.run(args, env=env, capture_output=True, text=True, check=False)
+    # Audited call sites pass argv lists: fixed docker/openssl commands, repository paths,
+    # UUID names and synthetic settings. No shell parses these argument values.
+    # shlex.quote/escape would corrupt argv; only explicit in-container sh -ec uses fixed code.
+    if not isinstance(args, list) or not args or args[0] not in ("docker", "openssl"):
+        raise ValueError("Validation accepts only docker/openssl argv lists")
+    return subprocess.run(args, env=env, shell=False, capture_output=True, text=True, check=False)
 
 
 def compose_args(filename):

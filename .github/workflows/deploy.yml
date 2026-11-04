@@ -105,8 +105,14 @@ jobs:
           python3 deploy/firewall.py open
           --state "$RUNNER_TEMP/hanmaum-ssh-rule.json"
           --region "$AWS_REGION" --instance "$LIGHTSAIL_INSTANCE"
+      - name: Prepare backup SDK
+        run: |
+          python3 -m venv "$RUNNER_TEMP/backup-sdk"
+          "$RUNNER_TEMP/backup-sdk/bin/pip" install boto3==1.43.123
       - name: Transfer secrets and activate release
         env:
+          BACKUP_S3_BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
+          BACKUP_PYTHON: ${{ runner.temp }}/backup-sdk/bin/python
           BACKEND_IMAGE: ${{ needs.build.outputs.image }}
           BOOTSTRAP_HTTPS: ${{ inputs.bootstrap_https }}
           ACME_EMAIL: ${{ vars.ACME_EMAIL }}
