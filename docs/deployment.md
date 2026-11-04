@@ -6,7 +6,7 @@
 
 ## 구성
 
-`Run workflow → 선택한 커밋 검증 → GHCR 게시 → AWS OIDC 임시 인증 → 러너 IPv4/32만 SSH 허용 → Secrets·설정 전송 → 서버 교체·health/Swagger 검사 → 임시 SSH 규칙 제거`.
+`Run workflow → 선택한 커밋 검증 → GHCR 게시 → AWS OIDC 임시 인증 → 러너 IPv4/32만 SSH 허용 → 최신 dev 확인·Secrets 전송 → S3 백업 확인 → 서버 교체·health/Swagger 검사 → 임시 SSH 규칙 제거`.
 
 GitHub Secrets는 관리 원본, 서버 `.env.prod`는 실행용 사본이다. 이미지에 비밀값을 넣지 않는다. AWS 장기 Access Key·서버용 장기 GHCR PAT·Tailscale 계정은 이 구성에 필요하지 않다. GHCR은 해당 workflow의 `GITHUB_TOKEN`으로 인증하고 임시 인증 파일을 정리한다.
 
@@ -34,14 +34,22 @@ aws lightsail get-instance --region ap-southeast-2 \
   --instance-name hanmaum-server-01 --query instance.arn --output text
 ```
 
-## 2. AWS OIDC provider·배포 역할
+## 2. 비공개 S3 백업과 AWS OIDC 배포 역할
+
+이미 IAM·GitHub 설정을 완료했다면 이번 변경으로 **S3 버킷 1개, 기존 역할의 S3 권한 추가, GitHub Variable 1개**가 추가로 필요하다. 아래 코드는 리소스를 자동 생성하지 않는다.
+
+S3 → 버킷 만들기에서 일반 용도 버킷을 Sydney `ap-southeast-2`에 생성한다. 전역에서 고유한 소문자·숫자·하이픈 이름을 사용하고 점은 넣지 않는다. 객체 소유권은 Bucket owner enforced, 퍼블릭 액세스 차단은 네 항목 모두 활성화, 버전 관리는 활성화, 기본 암호화는 SSE-S3를 선택한다. 기존 버킷이면 동일 설정을 확인한다. 저장 공간과 요청은 별도 과금되며 백업이 AWS 크레딧으로 무제한 보장되는 의미가 아니다.
+
+배포 역할에는 백업 prefix의 업로드·확인 권한만 부여하며 삭제 권한은 주지 않는다. 버킷 삭제·버전 삭제는 별도 관리 권한으로만 수행한다. 원격 백업의 보관 기간과 삭제 정책은 운영 데이터 정책에 맞춰 별도 합의하며, 이 코드가 S3 객체를 자동 삭제하지 않는다.
 
 1. IAM **ID 제공업체(Identity providers) → 공급자 추가(Add provider) → OpenID Connect**. URL은 `https://token.actions.githubusercontent.com`, Audience는 `sts.amazonaws.com`. 동일 provider는 재사용한다.
-2. `deploy/aws/permissions.json`의 `REPLACE_WITH_LIGHTSAIL_INSTANCE_ARN`을 조회한 ARN으로 치환하여 고객 관리 정책 `HanmaumDeployFirewall`을 만든다.
+2. `deploy/aws/permissions.json`의 `REPLACE_WITH_LIGHTSAIL_INSTANCE_ARN`과 `REPLACE_WITH_BACKUP_BUCKET`을 실제 값으로 치환하여 고객 관리 정책 `HanmaumDeployFirewall`을 만든다. 이미 만들었다면 기존 인스턴스 권한을 유지하고 S3 세 statement를 추가한 새 정책 버전을 기본값으로 지정한다.
 3. `deploy/aws/trust.json`의 `REPLACE_WITH_PROJECT_ACCOUNT_ID`를 프로젝트 계정 ID로 치환한다. **Roles → Create role → Custom trust policy**에 넣고 위 정책을 연결하여 `HanmaumGitHubDeploy` 역할을 만든다.
 4. 역할 ARN을 다음 단계의 `AWS_DEPLOY_ROLE_ARN`에 등록한다.
 
-`GetInstancePortStates`는 리소스 범위를 지원하지 않아 `Resource: *` + 시드니 조건을 쓴다. 수정 권한은 지정 인스턴스의 Open/CloseInstancePublicPorts 두 개뿐이다. IAM은 인스턴스까지 제한하며 **포트 22·러너 /32 제한은 코드가 적용**한다.
+`GetInstancePortStates`는 리소스 범위를 지원하지 않아 `Resource: *` + 시드니 조건을 쓴다. Lightsail 수정 권한은 지정 인스턴스의 Open/CloseInstancePublicPorts 두 개뿐이다. IAM은 인스턴스까지 제한하며 **포트 22·러너 /32 제한은 코드가 적용**한다. S3는 지정 버킷의 위치·공개 차단·버전 관리 조회, `hanmaum/postgres/*`의 암호화 업로드와 HEAD 검증용 GetObject 권한으로 제한한다.
+
+Actions가 OIDC 단기 자격 증명으로 해당 덤프 하나의 PUT·HEAD URL을 생성한다. 서버에는 1시간 이내의 URL만 전송하고 AWS Access Key는 보내지 않는다. 서버는 TLS로 업로드 후 크기·SSE-S3·버전 ID를 확인하고 로컬 SHA-256과 함께 영수증을 기록한다. 업로드 또는 검증 실패 시 앱 교체를 중단하고 로컬 덤프를 보존한다. AWS SDK는 러너의 임시 가상환경에만 설치한다.
 
 이 저장소는 2026-09-26 생성이며 trust 예시는 GitHub immutable subject를 사용한다.
 
@@ -96,13 +104,14 @@ awk '{print "16.178.232.151", $1, $2}' /etc/ssh/ssh_host_ed25519_key.pub
 
 DB 비밀번호 두 개와 내부 키 세 개는 `openssl rand -base64 32`를 각각 별도로 총 다섯 번 실행해 생성할 수 있다. 출력을 채팅·이슈에 공유하지 않는다. Secret에는 값 자체만 넣고 dotenv용 따옴표를 붙이지 않는다. SSH 개인키 외 앱 값에는 줄바꿈을 넣지 않는다.
 
-**Environment variables**에는 아래 세 개를 등록한다.
+**Environment variables**에는 아래 네 개를 등록한다.
 
 | Variable | 값 |
 | --- | --- |
 | `AWS_DEPLOY_ROLE_ARN` | 2단계의 역할 ARN |
 | `DEPLOY_HOST` | `16.178.232.151` |
 | `ACME_EMAIL` | 인증서 계정에 사용할 실제 이메일 |
+| `BACKUP_S3_BUCKET` | 위에서 생성한 비공개·버전 관리 S3 버킷 이름 |
 
 `BACKEND_IMAGE`는 Actions가 계산하므로 등록하지 않는다. 리전·인스턴스 이름·SSH 사용자는 workflow에 명시된다. PC `.env`는 로컬 개발용으로 유지한다. `.env.prod.example`은 비밀값 없는 목록이다. **서버 환경파일을 먼저 만들 필요가 없다.** 이전 수동 안내로 만든 파일은 CD가 사용하지 않는다. 이미 DB까지 실행했다면 기존 비밀번호·키와 일치시키는 작업부터 한다.
 
@@ -128,19 +137,28 @@ Google/Kakao 리디렉션은 각각 `https://api.hanmaum.site/login/oauth2/code/
 
 CD는 실제 제공자 로그인이나 유료 AI를 호출하지 않는다. 실제 로그인·FE 연결은 사람이 확인한다. FE API base URL은 `https://api.hanmaum.site`이며 `/api`를 중복 추가하지 않는다. Mock 화면만으로 전체 연결을 판단하지 않는다.
 
+서버는 배포 시작과 서비스 변경 직전에 GitHub의 최신 `dev` SHA를 확인한다. 빌드 도중 dev가 변경됐거나 과거 실행의 Re-run이면 중단될 수 있다. 이때 최신 dev에서 **새 Run workflow**를 시작한다. 옛 코드를 복구하려면 DB 스키마 호환성을 검토한 revert PR을 dev에 반영하고 새 실행으로 배포한다. 과거 실행 재실행이나 symlink 변경을 롤백 수단으로 사용하지 않는다.
+
 ## 서버 상태와 장애 처리
 
-릴리스는 `/opt/hanmaum/releases/<git-sha>-<run-id>-<attempt>/`에 `.env.prod`(root 600)와 deploy/를 저장한다. `current`는 마지막 성공 릴리스, `previous`는 이전 성공 릴리스를 가리킨다. 현재 환경파일은 `/opt/hanmaum/current/.env.prod`다. `credential-baseline.env`는 첫 DB 생성 시 키·암호 비교 기준이고 root 600이다. 과거 릴리스에도 비밀값 사본이 있으므로 상위 디렉터리를 root 전용으로 유지한다. 보관·디스크 정리 정책은 별도로 정한다.
+릴리스는 `/opt/hanmaum/releases/<git-sha>-<run-id>-<attempt>/`에 `.env.prod`(root 600)와 deploy/를 저장한다. `current`는 서비스 변경을 시도하는 **설정 대상**, `last-successful`은 마지막 성공, `previous`는 그 이전 성공 릴리스다. `deployment-state.json`의 `applying/failed/succeeded`가 완료 여부를 표시한다. 강제 종료 시 applying이 남을 수 있으므로 current만 보고 성공으로 판단하지 않는다. Compose 교체가 여러 단계이므로 실패 시 컨테이너별 실제 설정 경로도 확인한다.
+
+`credential-baseline.env`는 DB healthy와 관리자·앱 계정의 TCP 인증을 확인한 뒤 저장하며 root 600이다. DB 초기화 전 실패한 빈 볼륨은 값 수정 후 재시도할 수 있다. 초기화가 일부 진행된 경우 이미 저장된 DB 암호는 그대로 필요하며, 정상 앱 역할 생성·접속이 확인될 때까지 기준 파일을 확정하지 않는다. 운영자가 출처를 알 수 없는 기존 DB를 발견하면 자동으로 받아들이지 않는다.
 
 ```bash
 sudo bash /opt/hanmaum/current/deploy/compose.sh ps
+sudo cat /opt/hanmaum/deployment-state.json
+sudo docker ps -a --filter label=com.docker.compose.project=hanmaum-prod \
+  --format '{{.Names}} {{.Label "com.docker.compose.project.config_files"}}'
 sudo systemctl list-timers hanmaum-cert-renew.timer
 sudo bash /opt/hanmaum/current/deploy/renew-certificates.sh --dry-run
 ```
 
 timer는 하루 두 번 갱신하고 Nginx를 재로딩한다. Nginx는 원문 URI·query·쿠키·본문을 access log에 기록하지 않고 원문 URL이 붙을 수 있는 error log도 비활성화했다. 정제된 BE 로그·health·상태 코드·nginx -t로 진단한다. Compose 검사는 실제 비밀값이 출력되지 않는 `config --quiet`를 쓴다.
 
-실패하면 후보 릴리스 경로를 표시한다. **DB 마이그레이션 역적용·자동 롤백은 하지 않는다.** current가 이전 성공을 가리켜도 실행 컨테이너까지 같은 버전이라는 보장은 없다. 후보·컨테이너·Flyway를 함께 확인하고 DB 호환성이 검증된 경우에만 이전 설정으로 재기동한다.
+실패하면 설정 대상과 failed 상태를 남기며 마지막 성공 포인터는 유지한다. **DB 마이그레이션 역적용·자동 롤백은 하지 않는다.** incomplete 상태에서는 compose.sh의 조회(ps/logs/config) 외 수동 명령을 차단하고 인증서 갱신도 실행하지 않는다. 최신 dev의 수정 배포는 잠금 안에서 재시도 가능하다. 긴급 수동 복구는 컨테이너 경로·Flyway·DB 호환성을 확인한 뒤 `sudo env HANMAUM_RECOVERY=1 bash /opt/hanmaum/current/deploy/compose.sh ...`로 명시적으로 진행한다. 이전 앱을 무조건 실행하면 새 DB 스키마와 충돌할 수 있다.
+
+필수 systemd unit 설치·daemon-reload·timer enable은 서비스 변경 전에 검증한다. 이 단계 실패는 서비스 교체나 성공 포인터 갱신 전에 중단된다. 최종 성공 표시는 HTTPS·문서·인증 확인 뒤에만 기록한다.
 
 동시 배포는 Actions concurrency와 서버 flock으로 제한한다. 일반 실패·취소에서는 임시 SSH 규칙 정리를 시도하지만 러너 장애·강제 종료·AWS 장애까지 보장하지 않는다. 이때 Lightsail Networking에서 로그의 `Deployment SSH source: x.x.x.x/32`만 제거하고 관리자 IP·브라우저 SSH는 유지한다. 임시 업로드 정리 경고가 있으면 표시된 `/tmp/hanmaum-cd.*`를 서버에서 확인 후 정리한다.
 
@@ -148,19 +166,27 @@ DB 비밀번호·명령 해시 키·초대 암호화 키·내부 공유키는 �
 
 ## 백업·검증과 AI 후속
 
-기존 DB가 있으면 앱 교체 전 custom-format pg_dump를 만든다. 수동 백업은 `sudo bash /opt/hanmaum/current/deploy/backup-db.sh`다. `/opt/hanmaum/backups/` 덤프를 보호된 서버 밖 저장소에 복제하고 암호화 키는 별도 보관한다. 외부 저장 위치·주기·보관 기간을 운영 전에 정한다. 같은 서버의 덤프만으로 서버 삭제에 대비할 수 없다.
+매 배포에서 DB 접속 확인 후, 앱 교체와 Flyway 실행 전에 custom-format pg_dump를 생성하고 비공개 S3로 복제한다. 첫 배포의 백업은 아직 업무 테이블이 없는 초기 DB일 수 있다. `.env.prod`와 암호화 키는 S3 덤프에 포함하지 않으며 별도로 보호해 보관한다. GitHub Secrets 원본 값을 다시 조회할 수 없으므로 복구용 키 보관도 필요하다.
+
+현재 업로드는 단일 PUT으로 5 GiB 미만의 덤프만 지원한다. 이 크기를 넘으면 앱 교체 전에 중단되며 대용량 multipart 백업 경로가 필요하다.
+
+로컬 캐시는 최근 릴리스 3개·덤프 3개를 기준으로 정리한다. current·last-successful·previous와 실제 컨테이너가 참조하는 릴리스는 개수와 관계없이 보존한다. 덤프는 S3 검증 영수증과 로컬 SHA-256이 일치하는 경우만 삭제한다. 업로드 실패본은 자동 삭제하지 않는다. 제거한 릴리스만 쓰던 BE image digest만 `docker image rm`으로 제거하며 강제 삭제·일괄 prune·볼륨 삭제는 하지 않는다. 최소 2 GiB 여유 공간과 덤프 생성 예상 공간이 없으면 배포를 중단한다. 보존 예외나 다른 서비스 데이터가 누적될 수 있으므로 디스크 모니터링은 계속 필요하다.
+
+이 구성은 **배포 시점 백업**이며 일일 예약 백업은 아직 없다. 운영 데이터 입력을 시작하기 전 별도 백업 주기를 설정하고 복원 연습을 수행한다. 수동 실행 역시 임시 AWS 인증 환경에서 `prepare_backup.py`로 만든 일회성 upload JSON이 필요하며 `sudo bash /opt/hanmaum/current/deploy/backup-db.sh <upload-json>`으로 실행한다. 만료된 URL은 재사용하지 않고 파일은 실행 후 삭제한다. 업로드 실패본의 별도 재전송은 새 URL 설정으로 `upload_backup.py <dump> <upload-json>`을 실행한다. URL JSON은 자격 증명이므로 로그·채팅에 출력하지 않는다.
 
 복원 연습은 격리 PostgreSQL 17 또는 별도 DB에서 수행한다. 소유자는 hanmaum_app, `pg_restore --no-owner --no-acl --exit-on-error` 후 Flyway·합성 데이터를 확인한다. 실복구에는 호환 이미지·설정·키가 필요하다. down -v·운영 DB 초기화·일괄 volume prune은 배포 절차에 없다.
 
 ```powershell
 .\gradlew.bat check bootJar
-python -m unittest discover -s deploy/tests -v
+python -m unittest discover -s deploy/tests -p test_release.py -v
 python deploy/validate.py --nginx --postgres
 ```
 
+Linux/CI에서는 `python3 -m unittest discover -s deploy/tests -v`로 모든 Python 검사를 실행한다. Windows에서는 symlink·Linux 파일 권한 검사를 위해 `test_deployment_safety.py`와 `activation_smoke.py`를 CI와 같은 폐기 Python Linux 컨테이너에서 실행한다.
+
 모든 deploy/*.sh의 bash -n도 검사한다. Docker Engine·OpenSSL이 필요하다. Nginx는 임시 인증서로 구문만 검사하며 DB는 네트워크·호스트 포트·영속 볼륨 없는 임시 컨테이너에서 합성 데이터만 검사한다. 방화벽 테스트는 AWS API 모의 응답이다. 실제 AWS·GHCR·인증서 발급 검증을 대신하지 않는다.
 
-CI/CD는 `deploy/tests/activation_smoke.py`도 폐기되는 Python Linux 컨테이너에서 실행한다. Docker·HTTP·systemd를 모의하여 최초 TLS 분기, 파일 권한, 키 변경 차단, 백업, 실패 시 current 유지, 성공 시 이전 릴리스 보존을 검사한다. 이 파일은 실제 서버에서 직접 실행하지 않는다.
+CI/CD는 `deploy/tests/activation_smoke.py`도 폐기되는 Python Linux 컨테이너에서 실행한다. Docker·GitHub/S3 HTTP·systemd를 모의하여 과거 SHA 차단, timer 실패, DB 초기화 재시도, 영속 키 보호, 외부 백업 실패, 부분 교체 실패 상태와 성공 포인터 보존을 검사한다. 이 파일은 실제 서버에서 직접 실행하지 않는다. 실제 S3 권한·서명 URL 수신 및 복구는 운영 준비 단계에서 별도 검증한다.
 
 AI 운영 전에는 AI TLS, UID 10001로 쓸 SQLite 수신 기록 영속 볼륨·초기화 CLI를 준비하고 AI 저장소 docs/v2-integration.md를 따른다. OpenAI 키는 AI에만 전달한다. worker 동시 수·확인 간격·lease·비용과 호출 범위를 합의하고 기존 QUEUED 작업을 확인한다. 합성 데이터로 접수→AI→제안 저장·조회·중복 방지를 검증한 뒤 버전·worker·AI 주소를 명시적으로 전환한다.
 
@@ -173,3 +199,6 @@ AI 운영 전에는 AI TLS, UID 10001로 쓸 SQLite 수신 기록 영속 볼륨�
 - [GitHub Secrets](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets)
 - [GHCR 인증·Actions 접근](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry)
 - [Certbot webroot·갱신](https://eff-certbot.readthedocs.io/en/stable/using.html)
+- [S3 일회성 URL 업로드](https://docs.aws.amazon.com/AmazonS3/latest/userguide/PresignedUrlUploadObject.html)
+- [S3 SSE-S3 암호화](https://docs.aws.amazon.com/AmazonS3/latest/userguide/UsingServerSideEncryption.html)
+- [GitHub 재실행의 원래 SHA 유지](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs)
