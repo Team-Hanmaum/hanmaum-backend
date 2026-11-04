@@ -1,0 +1,19 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadFirewallState",
+      "Effect": "Allow",
+      "Action": "lightsail:GetInstancePortStates",
+      "Resource": "*",
+      "Condition": {"StringEquals": {"aws:RequestedRegion": "ap-southeast-2"}}
+    },
+    {
+      "Sid": "ChangeOnlyTheDeploymentInstanceFirewall",
+      "Effect": "Allow",
+      "Action": ["lightsail:OpenInstancePublicPorts", "lightsail:CloseInstancePublicPorts"],
+      "Resource": "REPLACE_WITH_LIGHTSAIL_INSTANCE_ARN",
+      "Condition": {"StringEquals": {"aws:RequestedRegion": "ap-southeast-2"}}
+    }
+  ]
+}

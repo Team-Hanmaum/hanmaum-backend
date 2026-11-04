@@ -10,6 +10,7 @@ HELP.md
 .env
 .env.*
 !.env.example
+!deploy/.env.prod.example
 *.jks
 *.p12
 *.pem
@@ -41,3 +42,7 @@ Thumbs.db
 # Local database backups
 backups/
 *.dump
+
+# Python deployment tooling
+__pycache__/
+*.pyc

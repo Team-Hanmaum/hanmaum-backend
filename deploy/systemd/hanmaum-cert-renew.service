@@ -1,0 +1,11 @@
+[Unit]
+Description=Renew Hanmaum API TLS certificate and reload Nginx
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/hanmaum/current
+ExecStart=/bin/bash /opt/hanmaum/current/deploy/renew-certificates.sh

@@ -18,7 +18,7 @@ jobs:
   build-and-test:
     name: Build and test
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -41,6 +41,15 @@ jobs:
 
       - name: Check formatting, test and build
         run: ./gradlew check bootJar --no-daemon
+
+      - name: Validate deployment configuration
+        run: |
+          for script in deploy/*.sh; do bash -n "$script"; done
+          python3 -m unittest discover -s deploy/tests -v
+          docker run --rm --network none \
+            --mount "type=bind,src=$PWD,dst=/src,readonly" \
+            python:3.13-slim-bookworm python /src/deploy/tests/activation_smoke.py
+          python3 deploy/validate.py --nginx --postgres
 
       - name: Upload test reports
         if: ${{ !cancelled() }}
