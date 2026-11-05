@@ -102,6 +102,7 @@ jobs:
     # Only eligible releases enter this queue. A failed CI must not replace a pending deploy.
     concurrency:
       group: hanmaum-production-deployment
+      queue: max
       cancel-in-progress: false
     # Configure this environment to allow ONLY the dev branch before adding secrets.
     environment: production
