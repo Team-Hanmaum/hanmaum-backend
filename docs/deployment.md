@@ -6,7 +6,11 @@
 
 ## 구성
 
-`Run workflow → 선택한 커밋 검증 → GHCR 게시 → AWS OIDC 임시 인증 → 러너 IPv4/32만 SSH 허용 → 최신 dev 확인·Secrets 전송 → S3 백업 확인 → 서버 교체·health/Swagger 검사 → 임시 SSH 규칙 제거`.
+`dev push의 Backend CI 성공 또는 Run workflow → 배포 대상 커밋 선택 → 같은 커밋 검증 → GHCR 게시 → AWS OIDC 임시 인증 → 러너 IPv4/32만 SSH 허용 → 최신 dev 확인·Secrets 전송 → S3 백업 확인 → 서버 교체·health/Swagger 검사 → 임시 SSH 규칙 제거`.
+
+`prepare`는 읽기 전용 권한으로 이벤트·커밋을 확인하고, `build`가 검증·이미지 게시를 마쳐야 `deploy`가 실행된다. 자동 시작은 이 저장소의 `dev` push에 대한 `Backend CI`가 성공한 경우만 허용한다. PR·다른 브랜치·다른 저장소·실패·취소된 CI는 배포하지 않는다. 수동 실행은 CI 완료 여부와 무관하게 선택한 최신 dev 커밋을 기존처럼 다시 검사한다.
+
+자동 실행의 배포 SHA는 `workflow_run.head_sha`, 수동 실행은 선택한 `github.sha`다. `workflow_run`의 기본 `github.sha`를 배포 SHA로 사용하지 않는다. 선택한 `RELEASE_SHA`를 두 job의 checkout·이미지 태그/라벨·전송 파일·릴리스 정보·S3 백업 식별자에 공통 적용한다. CI 완료 후 dev가 바뀌었으면 prepare에서 build/deploy를 건너뛰며, 새 dev를 대신 배포하지 않는다. 빌드 중이나 대기 중 dev가 바뀐 경우에는 기존 서버 잠금 안의 최신 dev 검사가 오래된 배포를 차단한다.
 
 GitHub Secrets는 관리 원본, 서버 `.env.prod`는 실행용 사본이다. 이미지에 비밀값을 넣지 않는다. AWS 장기 Access Key·서버용 장기 GHCR PAT·Tailscale 계정은 이 구성에 필요하지 않다. GHCR은 해당 workflow의 `GITHUB_TOKEN`으로 인증하고 임시 인증 파일을 정리한다.
 
@@ -123,15 +127,20 @@ Google/Kakao 리디렉션은 각각 `https://api.hanmaum.site/login/oauth2/code/
 - 빌드 job은 `packages: write`, 배포 job은 `packages: read`, `id-token: write`를 명시한다. 일반 CI 권한을 일괄 확장하지 않는다.
 - GHCR source label로 이 저장소를 연결한다. 동일 이름의 기존 패키지가 있다면 패키지 Settings → Manage Actions access에서 이 저장소의 읽기·쓰기를 허용한다. 인증 문제를 해결하려고 이미지를 공개로 바꾸지 않는다.
 - 코드 리뷰·검증·커밋 후 팀원 승인과 필수 검사를 거쳐 PR을 dev에 반영한다. **로컬 파일만 있으면 Actions에 나타나지 않는다.**
-- 기본 브랜치는 dev이며 CD도 dev에서만 실행된다. push·PR마다 자동 배포하지 않는다.
+- 기본 브랜치는 dev이며 CD도 dev에서만 실행된다. workflow_run은 기본 브랜치의 워크플로우로 실행되므로 기본 브랜치·production 브랜치 제한을 바꿀 때 함께 검토한다.
+- 이 변경이 dev에 반영된 뒤 해당 커밋의 Backend CI가 성공하면 자동 배포가 시작된다. 새로운 AWS 리소스·Secrets는 필요하지 않지만 기존 외부 설정과 최초 인증서가 준비되어 있어야 한다. dev 머지가 실제 `api.hanmaum.site` 변경으로 이어진다는 점을 팀에서 공유한다.
 
 ## 6. 첫 배포·Swagger
+
+새 서버의 최초 인증서 발급은 아래 수동 절차를 사용한다. 자동 실행은 `bootstrap_https=false`로 고정하고 인증서 발급 약관에 대신 동의하지 않는다. 인증서가 준비된 이후에는 dev CI 성공 후 자동 배포된다.
 
 1. [Let’s Encrypt 약관](https://letsencrypt.org/repository/)을 확인한다. DNS·80/443·Secrets·IAM·SSH 설정이 끝나 있어야 한다.
 2. Actions → Deploy backend → Run workflow → Branch: dev를 선택한다.
 3. 인증서가 처음이라면 `bootstrap_https`를 선택한다. 설명대로 약관에 동의하는 실행이다. 이후에는 선택하지 않는다.
 4. Build·Deploy job을 확인한다. 첫 실행에는 이미지 다운로드·DB 초기화·Flyway·인증서 발급이 포함된다.
 5. `/actuator/health`의 UP, `/swagger-ui.html` 화면, `/v3/api-docs` JSON, 로그인 전 `/api/users/me`의 401을 확인한다. 모두 `https://api.hanmaum.site` 아래 경로다.
+
+자동 배포 결과는 Actions → Deploy backend에서 `prepare → build → deploy`로 확인한다. CI 실패·취소 또는 오래된 커밋은 prepare의 사유와 build/deploy의 skipped 상태를 확인한다. 수동 재배포는 최신 dev의 Run workflow로 실행하며 최초 발급 체크는 끈다. CI 재실행도 성공한 커밋이 최신 dev인 경우에만 자동 배포 대상이 된다.
 
 문서는 공개되지만 실제 API 세션·업무 권한·CSRF는 유지한다. 같은 브라우저로 Google/Kakao 로그인 후 Swagger로 돌아와 테스트한다. 변경 요청은 `GET /api/auth/csrf`의 token을 Authorize → CsrfToken에 입력하고 로그인·로그아웃 후 재발급한다. Swagger 쿠키 입력만으로 로그인되지 않는다.
 
@@ -160,7 +169,7 @@ timer는 하루 두 번 갱신하고 Nginx를 재로딩한다. Nginx는 원문 U
 
 필수 systemd unit 설치·daemon-reload·timer enable은 서비스 변경 전에 검증한다. 이 단계 실패는 서비스 교체나 성공 포인터 갱신 전에 중단된다. 최종 성공 표시는 HTTPS·문서·인증 확인 뒤에만 기록한다.
 
-동시 배포는 Actions concurrency와 서버 flock으로 제한한다. 일반 실패·취소에서는 임시 SSH 규칙 정리를 시도하지만 러너 장애·강제 종료·AWS 장애까지 보장하지 않는다. 이때 Lightsail Networking에서 로그의 `Deployment SSH source: x.x.x.x/32`만 제거하고 관리자 IP·브라우저 SSH는 유지한다. 임시 업로드 정리 경고가 있으면 표시된 `/tmp/hanmaum-cd.*`를 서버에서 확인 후 정리한다.
+동시 배포는 deploy job의 Actions concurrency와 서버 flock으로 제한한다. 빌드는 병렬 실행될 수 있지만 자동·수동 서버 배포는 같은 그룹으로 직렬화하며 진행 중인 배포를 취소하지 않는다. 배포 대상이 아닌 CI 결과는 이 대기열에 들어가지 않는다. 일반 실패·취소에서는 임시 SSH 규칙 정리를 시도하지만 러너 장애·강제 종료·AWS 장애까지 보장하지 않는다. 이때 Lightsail Networking에서 로그의 `Deployment SSH source: x.x.x.x/32`만 제거하고 관리자 IP·브라우저 SSH는 유지한다. 임시 업로드 정리 경고가 있으면 표시된 `/tmp/hanmaum-cd.*`를 서버에서 확인 후 정리한다.
 
 DB 비밀번호·명령 해시 키·초대 암호화 키·내부 공유키는 매 배포 재생성하지 않는다. 첫 DB 생성 이후 변경되면 CD가 거부한다. GitHub 값 변경만으로 기존 DB 역할 비밀번호가 바뀌지 않는다. 교체는 기존 데이터·AI 연결을 고려한 별도 작업이다.
 
@@ -185,6 +194,8 @@ python deploy/validate.py --nginx --postgres
 ```
 
 Linux/CI에서는 `python3 -m unittest discover -s deploy/tests -v`로 모든 Python 검사를 실행한다. Windows에서는 symlink·Linux 파일 권한 검사를 위해 `test_deployment_safety.py`와 `activation_smoke.py`를 CI와 같은 폐기 Python Linux 컨테이너에서 실행한다.
+
+`test_release_selection.py`는 성공한 dev push·수동 실행의 SHA 선택, PR·실패·취소·외부 저장소 차단, 오래된 CI/조회 실패 시 배포 출력 차단, 선택한 SHA를 사용하는 S3 백업 식별자를 실제 GitHub·AWS 호출 없이 검사한다.
 
 모든 deploy/*.sh의 bash -n도 검사한다. Docker Engine·OpenSSL이 필요하다. Nginx는 임시 인증서로 구문만 검사하며 DB는 네트워크·호스트 포트·영속 볼륨 없는 임시 컨테이너에서 합성 데이터만 검사한다. 방화벽 테스트는 AWS API 모의 응답이다. 실제 AWS·GHCR·인증서 발급 검증을 대신하지 않는다.
 

@@ -5,7 +5,7 @@
 ## 개발 기준
 
 - 개발 기준 브랜치: `dev`
-- 배포 기준 브랜치: `main`
+- 현재 Lightsail 배포 기준 브랜치: `dev` (`main` 전용 서버·배포는 미구성)
 - 작업 브랜치: `타입/이슈번호-기능명`
 - 커밋: `타입: 변경 내용 (#이슈번호)` 및 상세 본문
 - PR: `Type(#이슈번호): 핵심 작업 내용` 형식, `dev` 대상으로 생성하고 팀원 1명 이상의 승인 및 저장소 필수 검사 충족 후 병합
@@ -135,7 +135,7 @@ Docker 없이 AI HTTP 계약 테스트만 실행할 때는 다음 명령을 사�
 
 CI 파일 추가만으로 머지 제한이 설정되지는 않습니다. 첫 GitHub 실행을 확인한 뒤 `dev`·`main` 대상 Ruleset에서 `Build and test`를 필수 상태 검사로 등록하고 **Require branches to be up to date before merging**을 활성화해야 합니다. 이 저장소 설정은 별도 적용 대상이며, 스택 PR의 중간 대상 브랜치까지 자동으로 보호하지는 않습니다.
 
-CI에는 배포나 머지 자동 취소를 포함하지 않습니다. 머지 후 검사 실패는 로그를 확인해 수정 PR 또는 revert PR로 처리합니다.
+CI는 검증을 담당하고, `dev` push의 CI가 성공하면 별도 `Deploy backend`가 같은 커밋을 자동 배포합니다. PR·`main` CI나 실패·취소된 CI는 배포하지 않습니다. 머지 후 검사 실패는 로그를 확인해 수정 PR 또는 revert PR로 처리합니다.
 
 ## 환경 설정
 
@@ -319,7 +319,7 @@ docker build -t hanmaum-backend:local .
 
 Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 실행합니다. `.env`, Git 메타데이터, 로컬 빌드 결과는 이미지 빌드 컨텍스트에서 제외합니다. 소셜 로그인을 사용하는 운영 컨테이너에는 `SPRING_PROFILES_ACTIVE=prod,oauth`와 운영 환경변수를 주입합니다.
 
-첫 배포는 Lightsail 시드니 리전의 Ubuntu 24.04·2 vCPU·4GB 서버를 사용합니다. [운영 배포 안내](docs/deployment.md)에 GitHub production Secrets·AWS OIDC·SSH·최초 HTTPS·DB 백업/복구 설정 순서를 정리했습니다. Deploy backend Actions를 dev에서 수동 실행하면 검증한 GHCR 이미지 digest와 설정을 배포하고 임시 SSH 규칙을 정리합니다. `deploy/compose.prod.yml`은 Nginx·Spring·PostgreSQL을 구성하고 외부에는 80·443만 공개합니다. 운영 Swagger는 `https://api.hanmaum.site/swagger-ui.html`에서 공개하고 API 세션·CSRF는 유지합니다. 첫 배포에서는 AI worker를 활성화하지 않습니다. 로컬 검사와 실제 AWS 배포·OAuth·외부 백업 검증은 구분합니다. 기존 `docker-compose.yml`은 **로컬 DB용**으로 유지합니다.
+Lightsail 시드니 리전의 Ubuntu 24.04·2 vCPU·4GB 서버를 사용합니다. [운영 배포 안내](docs/deployment.md)에 GitHub production Secrets·AWS OIDC·SSH·최초 HTTPS·DB 백업/복구 설정 순서를 정리했습니다. `dev`에 머지한 뒤 `Backend CI`가 성공하면 `Deploy backend`가 검사한 커밋의 GHCR 이미지 digest와 설정을 자동 배포합니다. 최초 HTTPS 발급·재배포용 `Run workflow`도 유지합니다. 자동·수동 실행 모두 최신 `dev`만 허용하며, 진행 중인 배포는 새 머지 때문에 취소하지 않습니다. `deploy/compose.prod.yml`은 Nginx·Spring·PostgreSQL을 구성하고 외부에는 80·443만 공개합니다. 운영 Swagger는 `https://api.hanmaum.site/swagger-ui.html`에서 공개하고 API 세션·CSRF는 유지합니다. 첫 배포에서는 AI worker를 활성화하지 않습니다. 로컬 검사와 실제 AWS 배포·OAuth·외부 백업 검증은 구분합니다. 기존 `docker-compose.yml`은 **로컬 DB용**으로 유지합니다.
 
 ## 구현 범위
 
@@ -328,4 +328,4 @@ Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 �
 - [돌봄 현황판](docs/api-conventions.md#돌봄-현황판): `GET /api/spaces/{spaceId}/dashboard`. 돌봄 탭은 기존 `GET /api/spaces/{spaceId}/items`에 `itemType`과 `view`를 전달합니다.
 - [항목 근거·이력](docs/care-item-provenance.md): 현재 근거, 확정 버전 목록 및 변경 전후 조회. 제거된 내용은 비교에서도 가리고 메타데이터만 유지
 - 후속: 계정 연결·회원 탈퇴, 공간 수정/삭제, 원본 삭제 공개 API, 일반 항목 삭제, 가족 답변 제출, 카카오톡 공유
-- 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. CI와 수동 실행 CD를 포함하며 실제 배포에는 안내된 외부 설정이 필요합니다.
+- 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. CI와 dev CI 성공 후 자동 실행·수동 실행 CD를 포함하며 실제 배포에는 안내된 외부 설정이 필요합니다.
