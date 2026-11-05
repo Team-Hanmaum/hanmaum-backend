@@ -4,7 +4,8 @@ umask 077
 
 : "${RUNNER_TEMP:?}" "${DEPLOY_HOST:?}" "${DEPLOY_USER:?}" "${GH_TOKEN:?}"
 : "${DEPLOY_SSH_PRIVATE_KEY:?}" "${DEPLOY_SSH_KNOWN_HOSTS:?}"
-[[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+[[ "$RELEASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+[[ "$(git rev-parse HEAD)" == "$RELEASE_SHA" ]]
 [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ && "$GITHUB_RUN_ATTEMPT" =~ ^[0-9]+$ ]]
 [[ "$DEPLOY_USER" == ubuntu ]]
 python3 -c 'import ipaddress,os; assert ipaddress.ip_address(os.environ["DEPLOY_HOST"]).version == 4'
@@ -33,7 +34,7 @@ ssh-keygen -y -P '' -f "$work_dir/key" > /dev/null
 ssh-keygen -F "$DEPLOY_HOST" -f "$work_dir/known_hosts" > /dev/null
 mkdir "$work_dir/payload"
 # Transfer only committed deployment files, never the working tree or a developer .env.
-git archive "$GITHUB_SHA" deploy | tar -x -C "$work_dir/payload"
+git archive "$RELEASE_SHA" deploy | tar -x -C "$work_dir/payload"
 python3 deploy/release_env.py write "$work_dir/payload/.env.prod"
 "${BACKUP_PYTHON:?Backup SDK interpreter required}" deploy/prepare_backup.py "$work_dir/payload/backup-upload.json"
 printf '%s' "$GH_TOKEN" > "$work_dir/payload/registry-token"
@@ -44,8 +45,8 @@ email = os.environ.get("ACME_EMAIL", "")
 if bootstrap and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
     sys.exit("ACME_EMAIL is required for the first certificate")
 with open(sys.argv[1], "x", encoding="utf-8") as stream:
-    json.dump({"id": f'{os.environ["GITHUB_SHA"]}-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}',
-               "sha": os.environ["GITHUB_SHA"], "registry_user": os.environ["GITHUB_ACTOR"],
+    json.dump({"id": f'{os.environ["RELEASE_SHA"]}-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}',
+               "sha": os.environ["RELEASE_SHA"], "registry_user": os.environ["GITHUB_ACTOR"],
                "bootstrap": bootstrap, "email": email}, stream)
 PY
 

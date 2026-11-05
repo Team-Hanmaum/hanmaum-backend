@@ -1,6 +1,10 @@
 name: Deploy backend
 
 on:
+  workflow_run:
+    workflows: ['Backend CI']
+    branches: [dev]
+    types: [completed]
   workflow_dispatch:
     inputs:
       bootstrap_https:
@@ -11,13 +15,29 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: hanmaum-production-deployment
-  cancel-in-progress: false
-
 jobs:
-  build:
+  prepare:
     if: github.ref == 'refs/heads/dev' && github.repository == 'Team-Hanmaum/hanmaum-backend'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      sha: ${{ steps.release.outputs.sha }}
+    steps:
+      # workflow_run uses the default branch here, never the triggering PR's code.
+      - name: Checkout trusted release selector
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Select successful dev CI commit or manual release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 deploy/select_release.py
+
+  build:
+    needs: prepare
+    if: needs.prepare.outputs.sha != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -25,10 +45,13 @@ jobs:
       packages: write
     outputs:
       image: ghcr.io/team-hanmaum/hanmaum-backend@${{ steps.image.outputs.digest }}
+    env:
+      RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
     steps:
       - name: Checkout selected commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.RELEASE_SHA }}
           persist-credentials: false
       - name: Set up Java 21
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -62,10 +85,10 @@ jobs:
           context: .
           platforms: linux/amd64
           push: true
-          tags: ghcr.io/team-hanmaum/hanmaum-backend:${{ github.sha }}
+          tags: ghcr.io/team-hanmaum/hanmaum-backend:${{ env.RELEASE_SHA }}
           labels: |
             org.opencontainers.image.source=https://github.com/Team-Hanmaum/hanmaum-backend
-            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.revision=${{ env.RELEASE_SHA }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Log out of GHCR
@@ -73,9 +96,14 @@ jobs:
         run: docker logout ghcr.io
 
   deploy:
-    needs: build
+    needs: [prepare, build]
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    # Only eligible releases enter this queue. A failed CI must not replace a pending deploy.
+    concurrency:
+      group: hanmaum-production-deployment
+      queue: max
+      cancel-in-progress: false
     # Configure this environment to allow ONLY the dev branch before adding secrets.
     environment: production
     permissions:
@@ -83,6 +111,7 @@ jobs:
       packages: read
       id-token: write
     env:
+      RELEASE_SHA: ${{ needs.prepare.outputs.sha }}
       AWS_REGION: ap-southeast-2
       LIGHTSAIL_INSTANCE: hanmaum-server-01
       DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
@@ -91,6 +120,7 @@ jobs:
       - name: Checkout the same release commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ env.RELEASE_SHA }}
           persist-credentials: false
       - name: Obtain short-lived AWS permissions
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
@@ -114,7 +144,7 @@ jobs:
           BACKUP_S3_BUCKET: ${{ vars.BACKUP_S3_BUCKET }}
           BACKUP_PYTHON: ${{ runner.temp }}/backup-sdk/bin/python
           BACKEND_IMAGE: ${{ needs.build.outputs.image }}
-          BOOTSTRAP_HTTPS: ${{ inputs.bootstrap_https }}
+          BOOTSTRAP_HTTPS: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap_https || false }}
           ACME_EMAIL: ${{ vars.ACME_EMAIL }}
           GH_TOKEN: ${{ github.token }}
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}

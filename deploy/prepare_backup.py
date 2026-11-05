@@ -44,7 +44,7 @@ if __name__ == "__main__":
         client = boto3.client("s3", region_name="ap-southeast-2",
                               config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}))
         account = boto3.client("sts").get_caller_identity()["Account"]
-        release_id = f'{os.environ["GITHUB_SHA"]}-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}'
+        release_id = f'{os.environ["RELEASE_SHA"]}-{os.environ["GITHUB_RUN_ID"]}-{os.environ["GITHUB_RUN_ATTEMPT"]}'
         data = prepare(client, os.environ.get("BACKUP_S3_BUCKET", ""), account, release_id)
         descriptor = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:

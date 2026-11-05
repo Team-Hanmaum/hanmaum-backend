@@ -25,20 +25,27 @@ def point(root, name, release):
     os.replace(temporary, root / name)
 
 
-def require_latest(sha, token_file):
-    if not re.fullmatch(r"[0-9a-f]{40}", sha):
-        raise ValueError("Invalid release SHA")
+def current_dev_sha(token):
     request = urllib.request.Request(
         "https://api.github.com/repos/Team-Hanmaum/hanmaum-backend/git/ref/heads/dev",
         headers={"Accept": "application/vnd.github+json", "User-Agent": "hanmaum-deploy",
-                 "Authorization": "Bearer " + Path(token_file).read_text(encoding="utf-8").strip(),
+                 "Authorization": "Bearer " + token.strip(),
                  "Cache-Control": "no-cache"},
     )
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             head = json.load(response)["object"]["sha"]
+        if not isinstance(head, str) or not re.fullmatch(r"[0-9a-f]{40}", head):
+            raise ValueError("Invalid dev SHA")
     except Exception:
         raise ValueError("Cannot verify current dev head; deployment stopped") from None
+    return head
+
+
+def require_latest(sha, token_file):
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        raise ValueError("Invalid release SHA")
+    head = current_dev_sha(Path(token_file).read_text(encoding="utf-8"))
     if sha != head:
         raise ValueError("Stale release rejected: start a NEW workflow on current dev; "
                          "restore old behavior with a reviewed revert, not an old run rerun")
