@@ -82,6 +82,8 @@ docker compose up -d --wait
 
 기존 `.env`가 있다면 복사하지 않고 필요한 값을 확인합니다. 기본 프로필은 `local`입니다.
 
+로컬 `docker-compose.yml`은 PostgreSQL 공식 이미지를 직접 사용해 DB만 실행하며, BE는 PC의 Gradle/JDK로 실행합니다. 루트 `Dockerfile`은 Actions가 BE 배포 이미지를 만드는 데 사용합니다. 운영 Compose의 Nginx·HTTPS·S3 백업·배포 스크립트는 이 로컬 실행 경로와 분리됩니다. Java 21·PostgreSQL 17.11과 애플리케이션 소스·Flyway 마이그레이션은 공통으로 유지합니다.
+
 - 상태 확인: `http://localhost:8080/actuator/health`
 - API 문서: `http://localhost:8080/swagger-ui/index.html`
 - OpenAPI JSON: `http://localhost:8080/v3/api-docs`

@@ -172,6 +172,8 @@ DB 비밀번호·명령 해시 키·초대 암호화 키·내부 공유키는 �
 
 로컬 캐시는 최근 릴리스 3개·덤프 3개를 기준으로 정리한다. current·last-successful·previous와 실제 컨테이너가 참조하는 릴리스는 개수와 관계없이 보존한다. 덤프는 S3 검증 영수증과 로컬 SHA-256이 일치하는 경우만 삭제한다. 업로드 실패본은 자동 삭제하지 않는다. 제거한 릴리스만 쓰던 BE image digest만 `docker image rm`으로 제거하며 강제 삭제·일괄 prune·볼륨 삭제는 하지 않는다. 최소 2 GiB 여유 공간과 덤프 생성 예상 공간이 없으면 배포를 중단한다. 보존 예외나 다른 서비스 데이터가 누적될 수 있으므로 디스크 모니터링은 계속 필요하다.
 
+릴리스 복사 중 중단되어 `.env.prod`가 없거나 불완전한 폴더는 위 포인터와 컨테이너가 참조하지 않는 경우에만 다음 배포에서 정리한다. 보호 대상의 환경파일이 손상된 경우에는 자동 삭제하지 않고 정리를 중단하므로 해당 릴리스를 먼저 확인한다. 서버 활성화는 Python 바이트코드 캐시 생성을 끄고 실행하여, root가 만든 `__pycache__` 때문에 Ubuntu 사용자의 임시 업로드 폴더 삭제가 실패하지 않도록 한다.
+
 이 구성은 **배포 시점 백업**이며 일일 예약 백업은 아직 없다. 운영 데이터 입력을 시작하기 전 별도 백업 주기를 설정하고 복원 연습을 수행한다. 수동 실행 역시 임시 AWS 인증 환경에서 `prepare_backup.py`로 만든 일회성 upload JSON이 필요하며 `sudo bash /opt/hanmaum/current/deploy/backup-db.sh <upload-json>`으로 실행한다. 만료된 URL은 재사용하지 않고 파일은 실행 후 삭제한다. 업로드 실패본의 별도 재전송은 새 URL 설정으로 `upload_backup.py <dump> <upload-json>`을 실행한다. URL JSON은 자격 증명이므로 로그·채팅에 출력하지 않는다.
 
 복원 연습은 격리 PostgreSQL 17 또는 별도 DB에서 수행한다. 소유자는 hanmaum_app, `pg_restore --no-owner --no-acl --exit-on-error` 후 Flyway·합성 데이터를 확인한다. 실복구에는 호환 이미지·설정·키가 필요하다. down -v·운영 DB 초기화·일괄 volume prune은 배포 절차에 없다.
@@ -186,7 +188,7 @@ Linux/CI에서는 `python3 -m unittest discover -s deploy/tests -v`로 모든 Py
 
 모든 deploy/*.sh의 bash -n도 검사한다. Docker Engine·OpenSSL이 필요하다. Nginx는 임시 인증서로 구문만 검사하며 DB는 네트워크·호스트 포트·영속 볼륨 없는 임시 컨테이너에서 합성 데이터만 검사한다. 방화벽 테스트는 AWS API 모의 응답이다. 실제 AWS·GHCR·인증서 발급 검증을 대신하지 않는다.
 
-CI/CD는 `deploy/tests/activation_smoke.py`도 폐기되는 Python Linux 컨테이너에서 실행한다. Docker·GitHub/S3 HTTP·systemd를 모의하여 과거 SHA 차단, timer 실패, DB 초기화 재시도, 영속 키 보호, 외부 백업 실패, 부분 교체 실패 상태와 성공 포인터 보존을 검사한다. 이 파일은 실제 서버에서 직접 실행하지 않는다. 실제 S3 권한·서명 URL 수신 및 복구는 운영 준비 단계에서 별도 검증한다.
+CI/CD는 `deploy/tests/activation_smoke.py`도 폐기되는 Python Linux 컨테이너에서 실행한다. Docker·GitHub/S3 HTTP·systemd를 모의하여 미완성 릴리스 정리 후 재시도, 과거 SHA 차단, timer 실패, DB 초기화 재시도, 영속 키 보호, 외부 백업 실패, 부분 교체 실패 상태와 성공 포인터 보존을 검사한다. 업로드 파일은 UID 1000 소유로 준비하고 root 활성화 후 같은 일반 사용자 권한으로 실제 삭제하여 임시 폴더 정리 권한도 검사한다. 이 파일은 실제 서버에서 직접 실행하지 않는다. 실제 S3 권한·서명 URL 수신 및 복구는 운영 준비 단계에서 별도 검증한다.
 
 AI 운영 전에는 AI TLS, UID 10001로 쓸 SQLite 수신 기록 영속 볼륨·초기화 CLI를 준비하고 AI 저장소 docs/v2-integration.md를 따른다. OpenAI 키는 AI에만 전달한다. worker 동시 수·확인 간격·lease·비용과 호출 범위를 합의하고 기존 QUEUED 작업을 확인한다. 합성 데이터로 접수→AI→제안 저장·조회·중복 방지를 검증한 뒤 버전·worker·AI 주소를 명시적으로 전환한다.
 

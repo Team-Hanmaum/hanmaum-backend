@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
+# The SSH uploader must be able to remove its directory after this sudo process exits.
+export PYTHONDONTWRITEBYTECODE=1
 
 [[ "$EUID" == 0 ]] || { echo 'Run this deployment as root.' >&2; exit 1; }
 incoming="${1:?Private upload directory required}"

@@ -99,6 +99,40 @@ class BackupTests(unittest.TestCase):
 
 
 class RetentionTests(unittest.TestCase):
+    def test_incomplete_unreferenced_releases_are_removed_before_selecting_retained_releases(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "backups").mkdir()
+            complete, missing, truncated = [root / "releases" / f'{char * 40}-1-1' for char in "abc"]
+            for path in (complete, missing, truncated):
+                path.mkdir(parents=True)
+            (complete / ".env.prod").write_text(release_env.render(example_values()))
+            (truncated / ".env.prod").write_text('BACKEND_IMAGE="unfinished')
+            (root / "current").symlink_to(complete)
+            removed_images = []
+            retention.prune(root, set(), removed_images.append)
+            self.assertEqual(set((root / "releases").iterdir()), {complete})
+            self.assertEqual(removed_images, [])
+            # The next attempt's image-retention pass can read every remaining release.
+            with patch("retention.subprocess.check_output", return_value=""):
+                retention.prune_cached_images(root)
+
+    def test_incomplete_protected_releases_stop_cleanup_without_deleting_any_release(self):
+        for reference in ("current", "last-successful", "previous", "mounted"):
+            with self.subTest(reference=reference), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "backups").mkdir()
+                protected, unreferenced = [root / "releases" / f'{char * 40}-1-1' for char in "ab"]
+                for path in (protected, unreferenced):
+                    path.mkdir(parents=True)
+                mounted = {protected} if reference == "mounted" else set()
+                if reference != "mounted":
+                    (root / reference).symlink_to(protected)
+                with self.assertRaisesRegex(ValueError, "Protected release"):
+                    retention.prune(root, mounted, lambda image: self.fail("Unexpected image removal"))
+                self.assertTrue(protected.exists())
+                self.assertTrue(unreferenced.exists())
+
     @patch("retention.subprocess.run")
     @patch("retention.subprocess.check_output")
     def test_orphaned_pulls_are_retried_without_pruning_other_repositories(self, output, run):

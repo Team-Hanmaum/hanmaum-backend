@@ -115,10 +115,15 @@ def activate(attempt, changed=None, sha='a' * 40):
         'bucket': 'test-backups', 'key': 'hanmaum/postgres/test.dump',
         'put': endpoint, 'head': endpoint, 'headers': {},
     }))
+    # SSH uploads belong to ubuntu; activation uses sudo, cleanup uses ubuntu again.
+    for path in (incoming, *incoming.rglob('*')):
+        path.chmod(0o700 if path.is_dir() else 0o600)
+        os.chown(path, 1000, 1000)
     result = subprocess.run(["bash", str(incoming / "deploy/activate-release.sh"), str(incoming)],
                             env={**environment, 'RELEASE_SHA': sha}, capture_output=True, text=True)
-    # send-release.sh's caller cleanup is separate from the server activation.
-    shutil.rmtree(incoming)
+    cleanup = subprocess.run(['rm', '-rf', '--', str(incoming)], user=1000, group=1000,
+                             extra_groups=(), capture_output=True, text=True)
+    assert cleanup.returncode == 0 and not incoming.exists(), cleanup.stderr
     return result, Path("/opt/hanmaum/releases") / release_id
 
 
@@ -129,10 +134,14 @@ def phase():
     return json.loads((root / 'deployment-state.json').read_text())['phase']
 
 
+# A prior process can die between creating the release directory and copying its dotenv.
+incomplete = root / 'releases' / ('d' * 40 + '-1-1')
+incomplete.mkdir(parents=True)
 Path('/fail-systemd').touch()
 failure, _ = activate(1)
 assert failure.returncode != 0 and not (root / 'current').exists()
 assert not (root / 'credential-baseline.env').exists()
+assert not incomplete.exists()
 Path('/fail-systemd').unlink()
 Path('/fail-postgres').touch()
 failure, failed_db = activate(2)
@@ -201,4 +210,4 @@ assert not list(Path('/tmp').glob('hanmaum-registry.*'))
 for line in Path("/events").read_text().splitlines():
     command = json.loads(line)
     assert "down" not in command and "prune" not in command
-print("Activation failures: stale SHA, timer, empty DB retry, secret rotation, off-host backup, partial apply and recovery passed.")
+print("Activation failures: incomplete release retry, unprivileged upload cleanup, stale SHA, timer, empty DB retry, secret rotation, off-host backup, partial apply and recovery passed.")

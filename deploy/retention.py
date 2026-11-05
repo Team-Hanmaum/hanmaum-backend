@@ -45,11 +45,25 @@ def prune(root, mounted, remove_image, keep_releases=3, keep_backups=3):
                        if path.is_dir() and not path.is_symlink()
                        and re.fullmatch(RELEASE_ID, path.name)),
                       key=lambda path: path.stat().st_mtime_ns, reverse=True)
+    images, incomplete = {}, []
+    for path in releases:
+        try:
+            images[path] = read_generated(path / ".env.prod")["BACKEND_IMAGE"]
+        except (FileNotFoundError, ValueError):
+            # Copying a candidate can be interrupted before its dotenv is complete.
+            # A referenced release might contain live configuration: never discard it.
+            if path in protected:
+                raise ValueError(f"Protected release has an incomplete environment: {path.name}; "
+                                 "reconcile it before cleanup") from None
+            incomplete.append(path)
+    # Validate every protected release before deleting any interrupted candidate.
+    for path in incomplete:
+        shutil.rmtree(path)
+    releases = [path for path in releases if path in images]
     retained = set(protected)
     for path in releases:
         if len(retained) < keep_releases:
             retained.add(path)
-    images = {path: read_generated(path / ".env.prod")["BACKEND_IMAGE"] for path in releases}
     kept_images = {image for path, image in images.items() if path in retained}
     removed_images = set()
     for path in releases:
