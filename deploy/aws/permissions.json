@@ -1,0 +1,38 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "ReadFirewallState",
+      "Effect": "Allow",
+      "Action": "lightsail:GetInstancePortStates",
+      "Resource": "*",
+      "Condition": {"StringEquals": {"aws:RequestedRegion": "ap-southeast-2"}}
+    },
+    {
+      "Sid": "ChangeOnlyTheDeploymentInstanceFirewall",
+      "Effect": "Allow",
+      "Action": ["lightsail:OpenInstancePublicPorts", "lightsail:CloseInstancePublicPorts"],
+      "Resource": "REPLACE_WITH_LIGHTSAIL_INSTANCE_ARN",
+      "Condition": {"StringEquals": {"aws:RequestedRegion": "ap-southeast-2"}}
+    },
+    {
+      "Sid": "CheckPrivateVersionedBackupBucket",
+      "Effect": "Allow",
+      "Action": ["s3:GetBucketLocation", "s3:GetBucketPublicAccessBlock", "s3:GetBucketVersioning"],
+      "Resource": "arn:aws:s3:::REPLACE_WITH_BACKUP_BUCKET"
+    },
+    {
+      "Sid": "UploadEncryptedDatabaseBackups",
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": "arn:aws:s3:::REPLACE_WITH_BACKUP_BUCKET/hanmaum/postgres/*",
+      "Condition": {"StringEquals": {"s3:x-amz-server-side-encryption": "AES256"}}
+    },
+    {
+      "Sid": "VerifyUploadedDatabaseBackups",
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::REPLACE_WITH_BACKUP_BUCKET/hanmaum/postgres/*"
+    }
+  ]
+}

@@ -1,0 +1,139 @@
+name: hanmaum-prod
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:17.11
+    restart: unless-stopped
+    mem_limit: 768m
+    shm_size: 128m
+    environment:
+      POSTGRES_DB: hanmaum
+      POSTGRES_USER: hanmaum_admin
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=trust"
+      POSTGRES_PASSWORD: ${POSTGRES_ADMIN_PASSWORD:?Set POSTGRES_ADMIN_PASSWORD in .env.prod}
+      HANMAUM_APP_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.prod}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./postgres/10-app-role.sql:/docker-entrypoint-initdb.d/10-app-role.sql:ro
+    networks:
+      - database
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    stop_grace_period: 60s
+    logging: *logging
+
+  backend:
+    image: ${BACKEND_IMAGE:?Set BACKEND_IMAGE to the verified GHCR digest}
+    # CD explicitly pulls this immutable digest before replacing any running application.
+    pull_policy: never
+    restart: unless-stopped
+    init: true
+    mem_limit: 1536m
+    read_only: true
+    tmpfs:
+      - /tmp:size=134217728,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      SPRING_PROFILES_ACTIVE: prod,oauth
+      SERVER_PORT: "8080"
+      DB_URL: jdbc:postgresql://postgres:5432/hanmaum
+      DB_USERNAME: hanmaum_app
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.prod}
+      FRONTEND_URL: https://hanmaum.site
+      INVITATION_URL_PREFIX: https://hanmaum.site/invitations/
+      SPRING_APPLICATION_JSON: '{"app":{"security":{"allowed-origins":["https://hanmaum.site"]}}}'
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID in .env.prod}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?Set GOOGLE_CLIENT_SECRET in .env.prod}
+      KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:?Set KAKAO_CLIENT_ID to the Kakao REST API key}
+      KAKAO_CLIENT_SECRET: ${KAKAO_CLIENT_SECRET:?Set KAKAO_CLIENT_SECRET in .env.prod}
+      COMMAND_DIGEST_KEY: ${COMMAND_DIGEST_KEY:?Set a separate stable COMMAND_DIGEST_KEY}
+      INVITATION_ENCRYPTION_KEY: ${INVITATION_ENCRYPTION_KEY:?Set a stable 32-byte Base64 INVITATION_ENCRYPTION_KEY}
+      AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY:?Set a separate AI_INTERNAL_API_KEY}
+      # This first deployment validates DB/OAuth/HTTPS only. Do not run queued model jobs.
+      AI_BASE_URL: https://ai.invalid
+      ANALYSIS_CONTRACT_VERSION: v1
+      ANALYSIS_WORKER_ENABLED: "false"
+      AI_V2_MAX_REQUEST_BYTES: "1048576"
+      AI_V2_MAX_RESPONSE_BYTES: "524288"
+    volumes:
+      - ./backend-healthcheck.sh:/opt/hanmaum/backend-healthcheck.sh:ro
+    networks:
+      - edge
+      - database
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bash", "/opt/hanmaum/backend-healthcheck.sh"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 60s
+    stop_grace_period: 45s
+    logging: *logging
+
+  nginx:
+    image: nginx:1.30.6-alpine
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    restart: unless-stopped
+    mem_limit: 128m
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/https.conf:/etc/nginx/nginx.conf:ro
+      - acme-webroot:/var/www/certbot:ro
+      - letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - edge
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "nginx", "-t", "-q"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 30s
+    logging: *logging
+
+  certbot:
+    image: certbot/certbot:v5.9.0
+    profiles: [tools]
+    mem_limit: 256m
+    volumes:
+      - acme-webroot:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+    networks:
+      - edge
+    logging: *logging
+
+networks:
+  edge:
+  database:
+    internal: true
+
+volumes:
+  postgres-data:
+  acme-webroot:
+  letsencrypt:

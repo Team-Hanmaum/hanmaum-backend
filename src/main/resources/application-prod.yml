@@ -8,6 +8,12 @@ spring:
 server:
   forward-headers-strategy: framework
 
+springdoc:
+  api-docs:
+    enabled: true
+  swagger-ui:
+    enabled: true
+
 app:
   invitations:
     encryption-key: ${INVITATION_ENCRYPTION_KEY}
@@ -16,6 +22,8 @@ app:
     digest-key: ${COMMAND_DIGEST_KEY}
   security:
     login-success-url: ${FRONTEND_URL}
+    # Publish API documentation; API session authentication and CSRF still apply.
+    public-docs: true
   ai:
     base-url: ${AI_BASE_URL}
     api-key: ${AI_INTERNAL_API_KEY}

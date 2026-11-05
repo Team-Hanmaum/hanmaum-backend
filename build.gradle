@@ -81,7 +81,10 @@ spotless {
         target '*.gradle', '*.md', '*.yml', '.editorconfig', '.gitignore', '.gitattributes',
             '.github/**/*.md', '.github/workflows/*.yml', '.github/workflows/*.yaml',
             '.githooks/*', '.vscode/*.json', 'docs/**/*.md',
-            'src/**/*.yml', 'src/**/*.sql'
+            'src/**/*.yml', 'src/**/*.sql',
+            'deploy/**/*.yml', 'deploy/**/*.conf', 'deploy/**/*.sh', 'deploy/**/*.sql',
+            'deploy/**/*.service', 'deploy/**/*.timer', 'deploy/**/*.json',
+            'deploy/.env.prod.example'
         leadingTabsToSpaces(4)
         trimTrailingWhitespace()
         endWithNewline()

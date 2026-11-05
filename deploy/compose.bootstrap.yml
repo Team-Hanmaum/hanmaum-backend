@@ -1,0 +1,39 @@
+# Only for the first certificate, before the production stack exists.
+# Keep the project name and certificate volumes identical to compose.prod.yml.
+name: hanmaum-prod
+
+services:
+  nginx:
+    image: nginx:1.30.6-alpine
+    entrypoint: ["nginx", "-g", "daemon off;"]
+    restart: unless-stopped
+    mem_limit: 128m
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx/http.conf:/etc/nginx/nginx.conf:ro
+      - acme-webroot:/var/www/certbot:ro
+    networks:
+      - edge
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  certbot:
+    image: certbot/certbot:v5.9.0
+    profiles: [tools]
+    mem_limit: 256m
+    volumes:
+      - acme-webroot:/var/www/certbot
+      - letsencrypt:/etc/letsencrypt
+    networks:
+      - edge
+
+networks:
+  edge:
+
+volumes:
+  acme-webroot:
+  letsencrypt:
