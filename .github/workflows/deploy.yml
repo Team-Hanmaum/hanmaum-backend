@@ -72,6 +72,7 @@ jobs:
             --mount "type=bind,src=$PWD,dst=/src,readonly" \
             python:3.13-slim-bookworm python /src/deploy/tests/activation_smoke.py
           python3 deploy/validate.py --nginx --postgres
+          python3 deploy/tests/ai_tls_smoke.py
       - name: Log in to GHCR
         env:
           GH_TOKEN: ${{ github.token }}

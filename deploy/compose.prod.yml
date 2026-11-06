@@ -34,6 +34,8 @@ services:
 
   backend:
     image: ${BACKEND_IMAGE:?Set BACKEND_IMAGE to the verified GHCR digest}
+    entrypoint: ["bash", "/opt/hanmaum/backend-entrypoint.sh"]
+    command: ["-XX:MaxRAMPercentage=65.0", "-jar", "/app/app.jar"]
     # CD explicitly pulls this immutable digest before replacing any running application.
     pull_policy: never
     restart: unless-stopped
@@ -62,17 +64,26 @@ services:
       COMMAND_DIGEST_KEY: ${COMMAND_DIGEST_KEY:?Set a separate stable COMMAND_DIGEST_KEY}
       INVITATION_ENCRYPTION_KEY: ${INVITATION_ENCRYPTION_KEY:?Set a stable 32-byte Base64 INVITATION_ENCRYPTION_KEY}
       AI_INTERNAL_API_KEY: ${AI_INTERNAL_API_KEY:?Set a separate AI_INTERNAL_API_KEY}
-      # This first deployment validates DB/OAuth/HTTPS only. Do not run queued model jobs.
-      AI_BASE_URL: https://ai.invalid
-      ANALYSIS_CONTRACT_VERSION: v1
+      AI_BASE_URL: https://hanmaum-ai:8443
+      AI_VERIFY_ON_STARTUP: "true"
+      ANALYSIS_CONTRACT_VERSION: v2
+      # Connection verification does not authorize queued or paid model jobs.
       ANALYSIS_WORKER_ENABLED: "false"
       AI_V2_MAX_REQUEST_BYTES: "1048576"
       AI_V2_MAX_RESPONSE_BYTES: "524288"
     volumes:
       - ./backend-healthcheck.sh:/opt/hanmaum/backend-healthcheck.sh:ro
+      - ./backend-entrypoint.sh:/opt/hanmaum/backend-entrypoint.sh:ro
+      - type: bind
+        source: /opt/hanmaum-ai/tls/ca.crt
+        target: /run/hanmaum-ai/ca.crt
+        read_only: true
+        bind:
+          create_host_path: false
     networks:
       - edge
       - database
+      - ai-link
     depends_on:
       postgres:
         condition: service_healthy
@@ -129,6 +140,9 @@ services:
     logging: *logging
 
 networks:
+  ai-link:
+    external: true
+    name: hanmaum-ai-link
   edge:
   database:
     internal: true

@@ -42,6 +42,8 @@ if a[0] == 'inspect':
                       for key in a[1:]])); sys.exit(0)
 if a[:2] == ['volume', 'inspect']:
     sys.exit(0 if Path('/volume-exists').exists() else 1)
+if a[:2] == ['network', 'inspect']:
+    print('[{"Driver":"bridge","Internal":true}]'); sys.exit(0)
 if a[0] == 'run' and 'PG_VERSION' in a[-1]:
     sys.exit(0 if Path('/database-initialized').exists() else 1)
 if a[:2] == ['image', 'inspect']:
@@ -128,6 +130,13 @@ def activate(attempt, changed=None, sha='a' * 40):
 
 
 root = Path("/opt/hanmaum")
+ai_root = Path("/opt/hanmaum-ai")
+(ai_root / "data").mkdir(parents=True)
+(ai_root / "tls").mkdir()
+(ai_root / "initialized").touch()
+(ai_root / "data/receipts.sqlite3").touch()
+(ai_root / "tls/ca.crt").write_text("synthetic-public-ca")
+(ai_root / "deployment-state.json").write_text('{"phase":"succeeded"}')
 
 
 def phase():
@@ -137,6 +146,12 @@ def phase():
 # A prior process can die between creating the release directory and copying its dotenv.
 incomplete = root / 'releases' / ('d' * 40 + '-1-1')
 incomplete.mkdir(parents=True)
+# Fail before changing an existing BE when the AI prerequisites are absent.
+(ai_root / 'initialized').unlink()
+missing_ai, _ = activate(90)
+assert missing_ai.returncode != 0 and not (root / 'current').exists()
+assert not Path('/services.json').exists()
+(ai_root / 'initialized').touch()
 Path('/fail-systemd').touch()
 failure, _ = activate(1)
 assert failure.returncode != 0 and not (root / 'current').exists()

@@ -72,7 +72,20 @@ def validate_compose():
     settings = backend["environment"]
     require(settings["SPRING_PROFILES_ACTIVE"] == "prod,oauth", "Production OAuth profile missing")
     require(settings["ANALYSIS_WORKER_ENABLED"] == "false", "Model jobs must remain disabled")
-    require(settings["AI_BASE_URL"] == "https://ai.invalid", "First deployment must not call AI")
+    require(settings["AI_BASE_URL"] == "https://hanmaum-ai:8443", "AI must use internal HTTPS")
+    require(settings["AI_VERIFY_ON_STARTUP"] == "true", "AI readiness must gate startup")
+    require(settings["ANALYSIS_CONTRACT_VERSION"] == "v2", "New analyses must use v2")
+    require(config["networks"]["ai-link"]["external"] and
+            config["networks"]["ai-link"]["name"] == "hanmaum-ai-link", "AI network mismatch")
+    require(set(backend["networks"]) == {"edge", "database", "ai-link"}, "BE networks mismatch")
+    require(all("ai-link" not in service["networks"] for name, service in services.items()
+                if name != "backend"), "Only BE may join the AI network")
+    ca = [mount for mount in backend["volumes"] if mount["target"] == "/run/hanmaum-ai/ca.crt"]
+    require(len(ca) == 1 and ca[0]["source"] == "/opt/hanmaum-ai/tls/ca.crt"
+            and ca[0]["read_only"] and not ca[0]["bind"].get("create_host_path", False),
+            "Only the existing public CA may be mounted read-only")
+    require(backend["entrypoint"] == ["bash", "/opt/hanmaum/backend-entrypoint.sh"],
+            "AI trust bootstrap is required")
     require(settings["DB_USERNAME"] != services["postgres"]["environment"]["POSTGRES_USER"],
             "Application must not use the database administrator")
     require(backend["pull_policy"] == "never", "Release must use the explicitly loaded image")

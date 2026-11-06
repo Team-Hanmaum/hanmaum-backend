@@ -16,7 +16,38 @@ GitHub Secrets는 관리 원본, 서버 `.env.prod`는 실행용 사본이다. �
 
 PostgreSQL 17.11은 관리자·앱 역할을 분리하고 전용 영속 볼륨을 쓴다. BE는 `prod,oauth`, `hanmaum_app` 역할로 실행한다. DB 5432·BE 8080은 미공개이며 Nginx 공식 이미지에 설정을 연결하여 80·443만 공개한다. Certbot 인증서·개인키는 서버의 전용 볼륨에 유지한다. 메모리 상한은 BE 1536MiB·DB 768MiB·Nginx 128MiB·일시 실행 Certbot 256MiB다. 이는 부하 검증 결과가 아닌 초기 설정이다. 단일 서버 구성이라 **배포 중 짧은 중단**이 있다. 기존 로컬 `docker-compose.yml`은 유지한다.
 
-**AI는 첫 배포에 포함하지 않는다.** worker는 `false`, AI 주소는 예약된 `https://ai.invalid`다. 분석은 QUEUED에 머문다. FE 실제 API 연결·AI 운영 연결도 별도 작업이다.
+AI 컨테이너는 `hanmaum-ai` 저장소에서 별도로 배포한다. 현재 BE 배포는 그 AI의 내부 HTTPS 연결을 전제로 한다. 새 분석 계약은 `v2`, worker는 `false`여서 분석은 QUEUED에 머문다. 아래 AI 연결 절차와 실제 분석 활성화 전 확인 사항을 따른다.
+
+## BE와 배포된 AI 연결
+
+AI 최초 배포 성공 후 이 BE 변경을 dev에 머지하면 기존 CD가 BE를 자동 재배포한다. 기존 IAM 역할·SSH 키·GitHub Secrets를 유지하며 이 연결만을 위한 새 Variable·Secret·DNS·공개 포트는 필요하지 않다. `AI_INTERNAL_API_KEY`는 두 서버가 공유하는 기존 값을 보존한다. OpenAI 키·HMAC 키는 AI에만 둔다.
+
+- 서버 사전 검사: `/opt/hanmaum-ai/initialized`, 수신 DB, 성공한 배포 상태, 공개 CA와 internal bridge `hanmaum-ai-link` 확인. 누락·불완전한 AI 배포는 BE 서비스 변경 전에 중단하며 AI 파일을 생성하거나 수정하지 않는다.
+- 운영 Compose의 BE만 `hanmaum-ai-link`에 참여하고 `https://hanmaum-ai:8443`을 호출한다. PostgreSQL·Nginx는 이 네트워크에 참여하지 않는다.
+- `/opt/hanmaum-ai/tls/ca.crt`만 읽기 전용 마운트한다. 인증서 개인키와 AI 수신 DB는 BE에 마운트하지 않는다.
+- BE 시작 스크립트는 이미지의 Java 기본 공인 CA 목록을 tmpfs에 복사하고 AI CA를 추가한다. OAuth 등 외부 HTTPS의 신뢰를 유지하며 체인·호스트명 검증을 끄지 않는다. 기존 Dockerfile·로컬 실행은 유지한다.
+- `AI_VERIFY_ON_STARTUP=true`일 때 실제 v2 클라이언트로 인증된 `GET /health/ready/v2`를 호출한다. `200` 및 `status=UP, provider=openai`를 확인하지 못하면 BE 시작을 중단한다. 응답 본문·내부키·하위 통신 오류는 로그에 남기지 않는다. 따라서 연결 실패를 성공 배포로 표시하지 않으며 기존 배포 실패/복구 절차를 따른다.
+
+배포가 성공하면 BE의 `/actuator/health`, Swagger와 CD 성공 상태를 확인한다. 시작 시 AI 검증 성공은 네트워크·TLS·내부 인증·AI readiness 확인이며 모델 API 키·잔액·모델 권한 또는 실제 제안의 품질 검증이 아니다. AI 상태를 주기적으로 호출하는 BE liveness 검사는 추가하지 않는다. 이후 AI 장애가 나더라도 이 시작 검사가 BE를 자동 종료하지는 않지만, BE 재시작 때는 AI가 준비되어 있어야 한다.
+
+```bash
+sudo bash /opt/hanmaum/current/deploy/compose.sh ps
+sudo docker ps --filter label=com.docker.compose.project=hanmaum-ai-prod
+```
+
+현재 worker는 계속 비활성화한다. 새로운 분석만 v2로 접수하며 이미 저장된 v1 실행은 자동 전환되지 않는다. 활성화 전 실제 서버에서 상태별 개수만 조회한다.
+
+```bash
+sudo bash /opt/hanmaum/current/deploy/compose.sh exec -T postgres \
+  psql -X -U hanmaum_admin -d hanmaum -c \
+  "SELECT contract_version, status, count(*) FROM analysis_run WHERE status IN ('QUEUED','RUNNING') GROUP BY contract_version, status ORDER BY contract_version, status;"
+```
+
+기존 v1 작업의 처리 방식을 먼저 결정하며 임의 삭제·버전 변경·재실행은 하지 않는다. 실제 분석 사용 전 AI 수신 기록·키의 서버 밖 백업/복구 방안과 합성 요청의 비용 범위를 정한다. 그다음 `ANALYSIS_WORKER_CONCURRENCY`, `ANALYSIS_WORKER_POLL_INTERVAL`, `ANALYSIS_WORKER_LEASE_DURATION`를 명시하고 처리량을 검증한 별도 변경으로 worker를 활성화한다. 이 값들은 현재 Compose에서 전달하지 않으므로 GitHub Variable만 추가해서 켜지지 않는다.
+
+AI의 동일 CA 기반 서버 인증서 자동 갱신에는 BE 재배포가 필요하지 않다. CA 자체 교체는 BE 신뢰 갱신과 재시작을 포함한 별도 작업이다. 배포·AI 인증서 갱신은 같은 호스트 잠금을 사용한다. 현재 파일은 BE·AI 최초 배포가 완료된 기존 서버의 연결 단계를 대상으로 한다. 빈 서버에는 바로 적용할 수 없으며, 신규 서버의 DB·인증키 기준 생성과 AI 최초 배포를 위한 초기 부트스트랩 절차는 별도로 준비해야 한다.
+
+연결 관련 로컬 검증은 `python deploy/tests/ai_tls_smoke.py`로 실행한다. 기존 런타임과 같은 JRE 이미지에서 일반 사용자·읽기 전용 파일시스템으로 시작 스크립트를 실행하고, 공인 CA 보존·정상 TLS·다른 CA 거부·호스트명 불일치·CA 누락을 검사한다. 합성 인증서와 loopback만 사용하며 테스트 컨테이너의 네트워크는 차단한다. Spring 테스트는 같은 v2 클라이언트의 내부 인증 헤더와 readiness 성공·실패 시 시작 여부를 별도로 검증한다.
 
 ## 1. AWS 계정·네트워크 확인
 

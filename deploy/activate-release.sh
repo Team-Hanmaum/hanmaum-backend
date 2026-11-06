@@ -37,6 +37,7 @@ PY
 )
 [[ "${#metadata[@]}" == 5 ]]
 python3 "$incoming/deploy/release_state.py" check "${metadata[1]}" "$incoming/registry-token"
+python3 "$incoming/deploy/check_ai_host.py"
 python3 "$incoming/deploy/retention.py" --check-space
 release="$root/releases/${metadata[0]}"
 [[ ! -e "$release" ]]
@@ -154,4 +155,4 @@ curl "${curl_options[@]}" https://api.hanmaum.site/v3/api-docs | \
 python3 "$release/deploy/retention.py" || echo 'Local retention needs operator attention.' >&2
 python3 "$release/deploy/release_state.py" state "$root" "$release" succeeded
 applying=false
-echo "Deployment completed: ${metadata[0]}"
+echo "Deployment completed: ${metadata[0]}; AI v2 startup readiness passed, analysis worker disabled."

@@ -3,6 +3,7 @@ package com.hanmaum.backend.ai.client.v2;
 import com.hanmaum.backend.ai.client.AiProperties;
 import java.net.http.HttpClient;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpHeaders;
@@ -12,6 +13,12 @@ import org.springframework.web.client.RestClient;
 
 @Configuration(proxyBeanMethods = false)
 public class AiV2ClientConfig {
+  @Bean(initMethod = "verify")
+  @ConditionalOnProperty(name = "app.ai.verify-on-startup", havingValue = "true")
+  AiReadinessVerifier aiReadinessVerifier(@Qualifier("hanmaumAiV2RestClient") RestClient client) {
+    return new AiReadinessVerifier(client);
+  }
+
   @Bean(destroyMethod = "shutdownNow")
   HttpClient hanmaumAiV2HttpClient(AiProperties properties) {
     return HttpClient.newBuilder()
