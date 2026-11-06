@@ -5,9 +5,11 @@ import com.hanmaum.backend.global.security.AuthenticatedUser;
 import com.hanmaum.backend.global.security.CurrentUser;
 import com.hanmaum.backend.record.dto.CreateSourceRecordRequest;
 import com.hanmaum.backend.record.dto.CreateSourceRecordResponse;
+import com.hanmaum.backend.record.dto.SourceRecordDeletionImpact;
 import com.hanmaum.backend.record.dto.SourceRecordDetail;
 import com.hanmaum.backend.record.dto.SourceRecordListResponse;
 import com.hanmaum.backend.record.service.SourceRecordCreationService;
+import com.hanmaum.backend.record.service.SourceRecordDeletionImpactService;
 import com.hanmaum.backend.record.service.SourceRecordQueryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -33,15 +35,19 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping(
     value = "/api/spaces/{spaceId}/source-records",
     produces = MediaType.APPLICATION_JSON_VALUE)
-@Tag(name = "Record", description = "소식 저장·분석 접수·목록·상세 조회. 원본 삭제 API는 후속 구현")
+@Tag(name = "Record", description = "소식 저장·분석 접수·목록·상세 및 원본 삭제 영향 조회")
 public class SourceRecordController {
   private final SourceRecordCreationService creation;
   private final SourceRecordQueryService queries;
+  private final SourceRecordDeletionImpactService deletionImpact;
 
   public SourceRecordController(
-      SourceRecordCreationService creation, SourceRecordQueryService queries) {
+      SourceRecordCreationService creation,
+      SourceRecordQueryService queries,
+      SourceRecordDeletionImpactService deletionImpact) {
     this.creation = creation;
     this.queries = queries;
+    this.deletionImpact = deletionImpact;
   }
 
   @Operation(
@@ -130,7 +136,7 @@ public class SourceRecordController {
       summary = "소식 상세 조회",
       description =
           "같은 공간의 삭제되지 않은 원본만 조회합니다. 작성자의 참여 종료는 원본 삭제가 아닙니다. "
-              + "canDelete는 현재 삭제 권한 안내이며 삭제 API는 아직 없습니다. 최신 분석 상태와 완료된 실행의 유효 proposalIds를 반환합니다.",
+              + "canDelete는 현재 삭제 권한 안내입니다. 최신 분석 상태와 완료된 실행의 유효 proposalIds를 반환합니다.",
       security = @SecurityRequirement(name = "SessionCookie"))
   @ApiResponses({
     @io.swagger.v3.oas.annotations.responses.ApiResponse(
@@ -160,5 +166,42 @@ public class SourceRecordController {
     return ResponseEntity.ok()
         .cacheControl(CacheControl.noStore())
         .body(ApiResponse.success(queries.detail(currentUser.userId(), spaceId, recordId)));
+  }
+
+  @Operation(
+      summary = "소식 원본 삭제 영향 확인",
+      description =
+          "현재 소유자 또는 현재 참여 중인 원본 작성자가 조회할 수 있습니다. "
+              + "원본에 의존하는 제안·근거·항목·이력을 중복 없이 집계하고 영향 확인값을 반환합니다. "
+              + "원본과 파생 본문은 응답에 포함되지 않으며 저장된 상태를 변경하지 않습니다.",
+      security = @SecurityRequirement(name = "SessionCookie"))
+  @ApiResponses({
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "200",
+        description = "소식 원본 삭제 영향"),
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "400",
+        ref = "#/components/responses/INVALID_REQUEST"),
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "401",
+        ref = "#/components/responses/UNAUTHENTICATED"),
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "403",
+        ref = "#/components/responses/FORBIDDEN"),
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "404",
+        ref = "#/components/responses/RESOURCE_NOT_FOUND"),
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "500",
+        ref = "#/components/responses/INTERNAL_ERROR")
+  })
+  @GetMapping("/{recordId}/deletion-impact")
+  public ResponseEntity<ApiResponse<SourceRecordDeletionImpact>> deletionImpact(
+      @CurrentUser AuthenticatedUser currentUser,
+      @PathVariable UUID spaceId,
+      @PathVariable UUID recordId) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(ApiResponse.success(deletionImpact.preview(currentUser.userId(), spaceId, recordId)));
   }
 }
