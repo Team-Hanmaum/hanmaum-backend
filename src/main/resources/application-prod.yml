@@ -27,3 +27,4 @@ app:
   ai:
     base-url: ${AI_BASE_URL}
     api-key: ${AI_INTERNAL_API_KEY}
+    verify-on-startup: ${AI_VERIFY_ON_STARTUP:false}

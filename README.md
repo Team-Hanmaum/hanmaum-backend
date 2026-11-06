@@ -321,6 +321,8 @@ Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 �
 
 Lightsail 시드니 리전의 Ubuntu 24.04·2 vCPU·4GB 서버를 사용합니다. [운영 배포 안내](docs/deployment.md)에 GitHub production Secrets·AWS OIDC·SSH·최초 HTTPS·DB 백업/복구 설정 순서를 정리했습니다. `dev`에 머지한 뒤 `Backend CI`가 성공하면 `Deploy backend`가 검사한 커밋의 GHCR 이미지 digest와 설정을 자동 배포합니다. 최초 HTTPS 발급·재배포용 `Run workflow`도 유지합니다. 자동·수동 실행 모두 최신 `dev`만 허용하며, 진행 중인 배포는 새 머지 때문에 취소하지 않습니다. `deploy/compose.prod.yml`은 Nginx·Spring·PostgreSQL을 구성하고 외부에는 80·443만 공개합니다. 운영 Swagger는 `https://api.hanmaum.site/swagger-ui.html`에서 공개하고 API 세션·CSRF는 유지합니다. 첫 배포에서는 AI worker를 활성화하지 않습니다. 로컬 검사와 실제 AWS 배포·OAuth·외부 백업 검증은 구분합니다. 기존 `docker-compose.yml`은 **로컬 DB용**으로 유지합니다.
 
+운영 BE는 별도 배포된 AI의 `hanmaum-ai-link` 내부 네트워크와 HTTPS를 사용하며, 공개 CA를 Java 기본 신뢰 목록에 추가합니다. BE 시작 시 인증된 AI v2 readiness를 확인하고 신규 분석은 v2로 접수합니다. 실제 분석 워커는 검증·활성화 전까지 꺼둡니다. GitHub에 추가 비밀값을 등록하지 않으며 자세한 전제 조건과 대기 작업 확인은 [BE·AI 연결 안내](docs/deployment.md#be와-배포된-ai-연결)를 따릅니다.
+
 ## 구현 범위
 
 - 준비: 빌드·포맷·세션/회원/공간/초대 DB 마이그레이션·회원 엔티티/Repository·OAuth 회원 생성/조회·회원 세션·현재 회원 공통 처리·내 정보 조회·공간 생성/조회·초대 발급/확인·공간 참여·구성원 목록·소유권 이전·나가기/내보내기·참여/소유자 권한 기반·반복 요청 처리·보안 기반·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
