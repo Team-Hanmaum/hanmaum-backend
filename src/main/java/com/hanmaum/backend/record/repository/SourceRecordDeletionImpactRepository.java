@@ -16,7 +16,7 @@ public class SourceRecordDeletionImpactRepository {
     this.jdbc = jdbc;
   }
 
-  public Optional<Access> access(UUID actor, UUID space, UUID record) {
+  public Optional<Access> access(UUID actor, UUID space, UUID record, boolean includeErased) {
     return jdbc
         .query(
             """
@@ -27,11 +27,13 @@ public class SourceRecordDeletionImpactRepository {
         LEFT JOIN space_membership viewer
           ON viewer.space_id=s.id AND viewer.user_id=:actor AND viewer.is_active
         LEFT JOIN source_record r
-          ON r.space_id=s.id AND r.id=:record AND r.lifecycle='ACTIVE' AND viewer.id IS NOT NULL
+          ON r.space_id=s.id AND r.id=:record AND (r.lifecycle='ACTIVE' OR :includeErased)
+            AND viewer.id IS NOT NULL
         LEFT JOIN space_membership author ON author.space_id=s.id AND author.id=r.author_membership_id
         WHERE s.id=:space AND s.lifecycle='ACTIVE'
         """,
-            Map.of("actor", actor, "space", space, "record", record),
+            Map.of(
+                "actor", actor, "space", space, "record", record, "includeErased", includeErased),
             (rs, row) ->
                 new Access(
                     rs.getBoolean("participating"),

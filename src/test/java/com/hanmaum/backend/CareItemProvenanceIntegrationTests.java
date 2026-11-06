@@ -16,6 +16,7 @@ import com.hanmaum.backend.careitem.repository.CareItemProvenanceRepository;
 import com.hanmaum.backend.careitem.service.*;
 import com.hanmaum.backend.carespace.dto.CreateCareSpaceRequest;
 import com.hanmaum.backend.carespace.service.CareSpaceCreationService;
+import com.hanmaum.backend.global.command.CommandReceiptRepository;
 import com.hanmaum.backend.global.security.oauth.MemberOAuth2User;
 import com.hanmaum.backend.proposal.service.*;
 import com.hanmaum.backend.record.dto.CreateSourceRecordRequest;
@@ -31,13 +32,16 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.oauth2.client.authentication.OAuth2AuthenticationToken;
 import org.springframework.security.oauth2.core.user.DefaultOAuth2User;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.test.util.AopTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import tools.jackson.databind.*;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -66,6 +70,7 @@ class CareItemProvenanceIntegrationTests {
   @Autowired ChangeRequestService requests;
   @Autowired ChangeRequestQueryService requestQueries;
   @MockitoSpyBean CareItemProvenanceRepository repository;
+  @MockitoSpyBean CommandReceiptRepository receipts;
   UUID owner, member, space, ownerMembership, membership;
 
   @BeforeEach
@@ -304,6 +309,152 @@ class CareItemProvenanceIntegrationTests {
     assertThat(data(member, item, "/evidence").toString()).doesNotContain("소식 원문");
     assertThat(data(member, item, "/evidence").at("/items/1/createdAt").isNull()).isTrue();
     assertThat(data(member, item, "/evidence").at("/items/0/status").asText()).isEqualTo("VALID");
+  }
+
+  @Test
+  void deletionErasesTransitiveCopiesAndRollsBackWhenRecordingTheResultFails() throws Exception {
+    var first = propose("CREATE", null);
+    UUID item = apply(first, null);
+    var second = propose("LINK_EVIDENCE", item);
+    apply(second, item);
+    UUID itemDocument = document(item);
+    locks.acquire(member, space, item, 2);
+    var body = deletionBody(deletionImpact(first.recordId()));
+    CommandReceiptRepository target = AopTestUtils.getUltimateTargetObject(receipts);
+    doThrow(new DataAccessResourceFailureException("test receipt failure"))
+        .doCallRealMethod()
+        .when(target)
+        .saveSuccess(any(), any(), any(), any());
+
+    executeDeletion(first.recordId(), body).andExpect(status().isInternalServerError());
+    assertThat(
+            db.queryForObject(
+                "SELECT lifecycle FROM source_record WHERE id=?", String.class, first.recordId()))
+        .isEqualTo("ACTIVE");
+    assertThat(
+            db.queryForObject(
+                "SELECT body::text FROM content_document WHERE id=?", String.class, itemDocument))
+        .contains("확정 항목");
+    assertThat(
+            db.queryForObject(
+                "SELECT count(*) FROM care_item_edit_lock WHERE item_id=?", Integer.class, item))
+        .isOne();
+
+    executeDeletion(first.recordId(), body)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.affectedItemIds[0]").value(item.toString()))
+        .andExpect(jsonPath("$.data.reconfirmationItemIds[0]").value(item.toString()));
+    assertThat(
+            db.queryForObject(
+                "SELECT body::text FROM content_document WHERE id=?", String.class, itemDocument))
+        .isNull();
+    assertThat(
+            db.queryForObject(
+                "SELECT count(*) FROM evidence WHERE record_id IN (?,?) AND quote IS NOT NULL",
+                Integer.class,
+                first.recordId(),
+                second.recordId()))
+        .isZero();
+    assertThat(
+            db.queryForObject(
+                "SELECT lifecycle FROM source_record WHERE id=?", String.class, second.recordId()))
+        .isEqualTo("ACTIVE");
+    assertThat(
+            db.queryForObject(
+                "SELECT count(*) FROM analysis_run WHERE id IN (?,?) AND status='DISCARDED'",
+                Integer.class,
+                first.analysis().analysisId(),
+                second.analysis().analysisId()))
+        .isEqualTo(2);
+    assertThat(
+            db.queryForObject(
+                "SELECT count(*) FROM care_item_edit_lock WHERE item_id=?", Integer.class, item))
+        .isZero();
+    assertThat(data(member, item, "").path("version").asText()).isEqualTo("3");
+    assertThat(data(member, item, "/history/1").path("after").isNull()).isTrue();
+  }
+
+  @Test
+  void deletionPreservesIndependentContentAndRejectsStaleImpact() throws Exception {
+    UUID item = schedule("직접 확인한 일정");
+    var source = propose("LINK_EVIDENCE", item);
+    var stale = deletionBody(deletionImpact(source.recordId()));
+    apply(source, item);
+    executeDeletion(source.recordId(), stale)
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("DELETION_IMPACT_CHANGED"));
+
+    executeDeletion(source.recordId(), deletionBody(deletionImpact(source.recordId())))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.affectedItemIds[0]").value(item.toString()))
+        .andExpect(jsonPath("$.data.reconfirmationItemIds").isEmpty());
+    var current = data(member, item, "");
+    assertThat(current.path("title").asText()).isEqualTo("직접 확인한 일정");
+    assertThat(current.path("version").asText()).isEqualTo("3");
+    assertThat(data(member, item, "/history/2").path("evidenceIds").isEmpty()).isTrue();
+  }
+
+  @Test
+  void deletionRejectsAnalysisResultsFromTheOldWorkerLease() throws Exception {
+    var source =
+        records.create(owner, space, new CreateSourceRecordRequest("삭제할 분석 원문", UUID.randomUUID()));
+    var work =
+        execution.claim(space, source.analysis().analysisId(), Duration.ofMinutes(2)).orElseThrow();
+    var body = deletionBody(deletionImpact(source.recordId()));
+    var deleting = new CountDownLatch(1);
+    var finishDeletion = new CountDownLatch(1);
+    CommandReceiptRepository target = AopTestUtils.getUltimateTargetObject(receipts);
+    doAnswer(
+            invocation -> {
+              deleting.countDown();
+              assertThat(finishDeletion.await(10, TimeUnit.SECONDS)).isTrue();
+              return invocation.callRealMethod();
+            })
+        .when(target)
+        .saveSuccess(any(), any(), any(), any());
+    try (var pool = Executors.newFixedThreadPool(2)) {
+      var deletion = pool.submit(() -> executeDeletion(source.recordId(), body));
+      Future<Boolean> completion;
+      try {
+        assertThat(deleting.await(10, TimeUnit.SECONDS)).isTrue();
+        var completing = new CountDownLatch(1);
+        completion =
+            pool.submit(
+                () -> {
+                  completing.countDown();
+                  return execution.completeV2(
+                      work, new AiV2AnalysisResponse(work.run().requestId(), List.of()));
+                });
+        assertThat(completing.await(10, TimeUnit.SECONDS)).isTrue();
+        assertThatThrownBy(() -> completion.get(200, TimeUnit.MILLISECONDS))
+            .isInstanceOf(TimeoutException.class);
+      } finally {
+        finishDeletion.countDown();
+      }
+      deletion.get(10, TimeUnit.SECONDS).andExpect(status().isOk());
+      assertThat(completion.get(10, TimeUnit.SECONDS)).isFalse();
+    }
+    assertThat(
+            db.queryForObject(
+                "SELECT count(*) FROM ai_proposal WHERE run_id=?", Integer.class, work.run().id()))
+        .isZero();
+  }
+
+  private ObjectNode deletionBody(JsonNode impact) {
+    return mapper
+        .createObjectNode()
+        .put("expectedRecordVersion", impact.path("recordVersion").asText())
+        .put("impactToken", impact.path("impactToken").asText())
+        .put("clientRequestId", UUID.randomUUID().toString());
+  }
+
+  private ResultActions executeDeletion(UUID record, ObjectNode body) throws Exception {
+    return mvc.perform(
+        post("/api/spaces/" + space + "/source-records/" + record + "/deletions")
+            .with(authentication(login(owner)))
+            .with(csrf())
+            .contentType("application/json")
+            .content(body.toString()));
   }
 
   @Test

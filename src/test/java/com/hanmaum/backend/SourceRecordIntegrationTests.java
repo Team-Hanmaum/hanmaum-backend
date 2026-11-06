@@ -89,6 +89,92 @@ class SourceRecordIntegrationTests {
   }
 
   @Test
+  void deletesOnlyAfterAuthorizationAndCurrentConfirmationAndReplaysTheReceipt() throws Exception {
+    var created = create(member, "삭제할 소식");
+    UUID record = created.recordId();
+    UUID other = newUser("다른 가족");
+    join(other);
+    var token =
+        mapper
+            .readTree(
+                mvc.perform(
+                        get(path() + "/" + record + "/deletion-impact")
+                            .with(authentication(login(member))))
+                    .andExpect(status().isOk())
+                    .andReturn()
+                    .getResponse()
+                    .getContentAsString())
+            .at("/data/impactToken")
+            .asText();
+    UUID requestId = UUID.randomUUID();
+    var body =
+        mapper
+            .createObjectNode()
+            .put("expectedRecordVersion", "1")
+            .put("impactToken", token)
+            .put("clientRequestId", requestId.toString());
+    String url = path() + "/" + record + "/deletions";
+    mvc.perform(
+            post(url)
+                .with(authentication(login(member)))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(body.toString()))
+        .andExpect(status().isForbidden());
+    deleteRecord(other, url, body.toString()).andExpect(status().isForbidden());
+    deleteRecord(member, url, body.deepCopy().put("expectedRecordVersion", "2").toString())
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("VERSION_CONFLICT"));
+    deleteRecord(member, url, body.deepCopy().put("impactToken", "0".repeat(64)).toString())
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("DELETION_IMPACT_CHANGED"));
+
+    String result =
+        deleteRecord(member, url, body.toString())
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.data.recordId").value(record.toString()))
+            .andExpect(jsonPath("$.data.affectedItemIds").isEmpty())
+            .andExpect(jsonPath("$.data.reconfirmationItemIds").isEmpty())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    String replay =
+        deleteRecord(member, url, body.toString())
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    assertThat(mapper.readTree(replay).path("data"))
+        .isEqualTo(mapper.readTree(result).path("data"));
+    deleteRecord(member, url, body.deepCopy().put("expectedRecordVersion", "2").toString())
+        .andExpect(status().isConflict())
+        .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+    assertThat(
+            jdbc.queryForMap("SELECT lifecycle,body,version FROM source_record WHERE id=?", record))
+        .containsEntry("lifecycle", "ERASED")
+        .containsEntry("body", null)
+        .containsEntry("version", 2L);
+    assertThat(
+            jdbc.queryForObject(
+                "SELECT status FROM analysis_run WHERE id=?",
+                String.class,
+                created.analysis().analysisId()))
+        .isEqualTo("DISCARDED");
+    mvc.perform(get(path() + "/" + record).with(authentication(login(owner))))
+        .andExpect(status().isNotFound());
+    end(memberMembership);
+    deleteRecord(member, url, body.toString()).andExpect(status().isForbidden());
+  }
+
+  private ResultActions deleteRecord(UUID actor, String url, String body) throws Exception {
+    return mvc.perform(
+        post(url)
+            .with(authentication(login(actor)))
+            .with(csrf())
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(body));
+  }
+
+  @Test
   void deletionImpactIsReadOnlyAndLimitedToOwnerOrCurrentAuthor() throws Exception {
     UUID record = create(member, "공유하지 않을 소식 본문").recordId();
     UUID other = newUser("다른 가족");
@@ -634,6 +720,13 @@ class SourceRecordIntegrationTests {
     assertThat(impact.at("/security/0").has("CsrfToken")).isFalse();
     assertThat(impact.at("/responses/200").toString()).contains("SourceRecordDeletionImpact");
     assertThat(impact.at("/parameters").toString()).doesNotContain("currentUser", "userId");
+    var delete =
+        doc.at("/paths/~1api~1spaces~1{spaceId}~1source-records~1{recordId}~1deletions/post");
+    assertThat(delete.at("/security").size()).isOne();
+    assertThat(delete.at("/security/0").has("SessionCookie")).isTrue();
+    assertThat(delete.at("/security/0").has("CsrfToken")).isTrue();
+    assertThat(delete.at("/responses/200").toString()).contains("DeleteSourceRecordResponse");
+    assertThat(delete.at("/responses/409").toString()).contains("DELETE_SOURCE_RECORD_CONFLICT");
     assertThat(
             doc.at(
                     "/components/responses/CREATE_SOURCE_RECORD_CONFLICT/content/application~1json/examples")

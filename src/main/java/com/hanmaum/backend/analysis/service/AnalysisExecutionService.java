@@ -151,7 +151,7 @@ public class AnalysisExecutionService {
       runs.finish(run, AnalysisStatus.FAILED, AnalysisFailureCode.ANALYSIS_INTERRUPTED);
   }
 
-  /** Future source deletion must invoke this in the SAME transaction as original erasure. */
+  /** Invalidates runs with captured references to a source within the caller's transaction. */
   @Transactional(propagation = Propagation.MANDATORY)
   public void invalidateSource(UUID space, UUID record) {
     runs.lockSpace(space);
