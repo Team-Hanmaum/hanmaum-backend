@@ -89,6 +89,57 @@ class SourceRecordIntegrationTests {
   }
 
   @Test
+  void deletionImpactIsReadOnlyAndLimitedToOwnerOrCurrentAuthor() throws Exception {
+    UUID record = create(member, "공유하지 않을 소식 본문").recordId();
+    UUID other = newUser("다른 가족");
+    join(other);
+    String impact = path() + "/" + record + "/deletion-impact";
+    var before = jdbc.queryForMap("SELECT * FROM source_record WHERE id = ?", record);
+
+    mvc.perform(get(impact)).andExpect(status().isUnauthorized());
+    mvc.perform(get(impact).with(authentication(login(other)))).andExpect(status().isForbidden());
+    for (UUID actor : List.of(owner, member)) {
+      var response =
+          mvc.perform(get(impact).with(authentication(login(actor))))
+              .andExpect(status().isOk())
+              .andExpect(header().string("Cache-Control", "no-store"))
+              .andExpect(jsonPath("$.code").value("SUCCESS"))
+              .andExpect(jsonPath("$.data.recordId").value(record.toString()))
+              .andExpect(jsonPath("$.data.recordVersion").value("1"))
+              .andExpect(jsonPath("$.data.counts.proposals").value(0))
+              .andExpect(jsonPath("$.data.counts.evidence").value(0))
+              .andExpect(jsonPath("$.data.counts.items").value(0))
+              .andExpect(jsonPath("$.data.counts.historyEntries").value(0))
+              .andExpect(jsonPath("$.data.affectedItems").isEmpty())
+              .andExpect(jsonPath("$.data.impactToken").isNotEmpty())
+              .andReturn()
+              .getResponse();
+      assertThat(response.getContentAsString()).doesNotContain("공유하지 않을 소식 본문");
+    }
+    assertThat(jdbc.queryForMap("SELECT * FROM source_record WHERE id = ?", record))
+        .isEqualTo(before);
+
+    end(memberMembership);
+    mvc.perform(get(impact).with(authentication(login(member)))).andExpect(status().isForbidden());
+    mvc.perform(get(impact).with(authentication(login(owner)))).andExpect(status().isOk());
+    mvc.perform(
+            get(path() + "/" + UUID.randomUUID() + "/deletion-impact")
+                .with(authentication(login(owner))))
+        .andExpect(status().isNotFound());
+    var otherSpace = spaces.create(owner, new CreateCareSpaceRequest("아빠", UUID.randomUUID()));
+    mvc.perform(
+            get("/api/spaces/"
+                    + otherSpace.spaceId()
+                    + "/source-records/"
+                    + record
+                    + "/deletion-impact")
+                .with(authentication(login(owner))))
+        .andExpect(status().isNotFound());
+    erase(record);
+    mvc.perform(get(impact).with(authentication(login(owner)))).andExpect(status().isNotFound());
+  }
+
+  @Test
   void storesExactOriginalWithServerAuthorAndTimestampWithoutChangingSpace() throws Exception {
     String original = "　  오늘 병원에 다녀왔어요.\r\n다음 주 재진 😀\n  ";
     var before =
@@ -576,6 +627,13 @@ class SourceRecordIntegrationTests {
     assertThat(path.at("/post/security/0").has("CsrfToken")).isTrue();
     assertThat(path.at("/post/security/0").has("SessionCookie")).isTrue();
     assertThat(path.at("/post/parameters").toString()).doesNotContain("currentUser", "userId");
+    var impact =
+        doc.at("/paths/~1api~1spaces~1{spaceId}~1source-records~1{recordId}~1deletion-impact/get");
+    assertThat(impact.at("/security").size()).isOne();
+    assertThat(impact.at("/security/0").has("SessionCookie")).isTrue();
+    assertThat(impact.at("/security/0").has("CsrfToken")).isFalse();
+    assertThat(impact.at("/responses/200").toString()).contains("SourceRecordDeletionImpact");
+    assertThat(impact.at("/parameters").toString()).doesNotContain("currentUser", "userId");
     assertThat(
             doc.at(
                     "/components/responses/CREATE_SOURCE_RECORD_CONFLICT/content/application~1json/examples")

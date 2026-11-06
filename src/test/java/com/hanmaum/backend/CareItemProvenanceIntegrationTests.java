@@ -307,6 +307,105 @@ class CareItemProvenanceIntegrationTests {
   }
 
   @Test
+  void deletionImpactFollowsCapturedProvenanceWithoutCountingAnItemTwice() throws Exception {
+    var first = propose("CREATE", null);
+    UUID item = apply(first, null);
+    var second = propose("LINK_EVIDENCE", item);
+    apply(second, item);
+    var itemBefore = db.queryForMap("SELECT * FROM care_item WHERE id=?", item);
+
+    var impact = deletionImpact(first.recordId());
+
+    assertThat(impact.at("/counts/proposals").asInt()).isEqualTo(2);
+    assertThat(impact.at("/counts/evidence").asInt()).isEqualTo(2);
+    assertThat(impact.at("/counts/items").asInt()).isOne();
+    assertThat(impact.at("/counts/historyEntries").asInt()).isEqualTo(2);
+    assertThat(impact.path("affectedItems").size()).isOne();
+    assertThat(impact.at("/affectedItems/0/itemId").asText()).isEqualTo(item.toString());
+    assertThat(impact.at("/affectedItems/0/itemVersion").asText()).isEqualTo("2");
+    assertThat(impact.at("/affectedItems/0/hasIndependentEvidence").asBoolean()).isFalse();
+    assertThat(impact.at("/affectedItems/0/requiresReconfirmation").booleanValue()).isTrue();
+    assertThat(impact.toString()).doesNotContain("합성 소식 근거", "AI 일정", "확정 항목");
+    assertThat(deletionImpact(first.recordId())).isEqualTo(impact);
+    assertThat(db.queryForMap("SELECT * FROM care_item WHERE id=?", item)).isEqualTo(itemBefore);
+
+    addIndependentBasis(item);
+    var withBasis = deletionImpact(first.recordId());
+    assertThat(withBasis.at("/affectedItems/0/hasIndependentEvidence").booleanValue()).isTrue();
+    assertThat(withBasis.at("/affectedItems/0/requiresReconfirmation").booleanValue()).isTrue();
+  }
+
+  @Test
+  void evidenceOnlyImpactPreservesIndependentBasisAndTracksItsIdentity() throws Exception {
+    UUID item = schedule("독립적으로 확인한 일정");
+    var source = propose("LINK_EVIDENCE", item);
+    apply(source, item);
+    var before = deletionImpact(source.recordId());
+    assertThat(before.at("/counts/historyEntries").asInt()).isOne();
+    assertThat(before.at("/affectedItems/0/hasIndependentEvidence").asBoolean()).isTrue();
+    assertThat(before.at("/affectedItems/0/requiresReconfirmation").booleanValue()).isFalse();
+
+    addIndependentBasis(item);
+    var after = deletionImpact(source.recordId());
+    assertThat(after.path("counts")).isEqualTo(before.path("counts"));
+    assertThat(after.path("affectedItems")).isEqualTo(before.path("affectedItems"));
+    assertThat(after.path("impactToken").asText())
+        .isNotEqualTo(before.path("impactToken").asText());
+  }
+
+  private void addIndependentBasis(UUID item) {
+    UUID extra = UUID.randomUUID();
+    db.update(
+        "INSERT INTO content_document(id,space_id,kind,body,created_at) VALUES (?,?,'DIRECT_INPUT','{}',now())",
+        extra,
+        space);
+    db.update(
+        "INSERT INTO care_item_basis(id,space_id,item_id,direct_document_id,created_at) VALUES (?,?,?,?,now())",
+        UUID.randomUUID(),
+        space,
+        item,
+        extra);
+  }
+
+  @Test
+  void deletionImpactOmitsDetachedHistoryLinksAndAlreadyRemovedCopies() throws Exception {
+    UUID item = schedule("직접 확인한 일정");
+    var source = propose("LINK_EVIDENCE", item);
+    apply(source, item);
+    db.update(
+        "DELETE FROM care_item_basis WHERE item_id=? AND source_evidence_id IS NOT NULL", item);
+
+    var detached = deletionImpact(source.recordId());
+    assertThat(detached.at("/counts/proposals").asInt()).isOne();
+    assertThat(detached.at("/counts/items").asInt()).isZero();
+    assertThat(detached.at("/counts/historyEntries").asInt()).isZero();
+
+    db.update(
+        """
+        UPDATE content_document SET body=NULL,redacted_at=now()
+        WHERE id=(SELECT output_document_id FROM ai_proposal WHERE run_id=?)
+        """,
+        source.analysis().analysisId());
+    db.update(
+        "UPDATE evidence SET quote=NULL,redacted_at=now() WHERE record_id=?", source.recordId());
+    var removed = deletionImpact(source.recordId());
+    assertThat(removed.at("/counts/proposals").asInt()).isZero();
+    assertThat(removed.at("/counts/evidence").asInt()).isZero();
+    assertThat(removed.path("affectedItems").isEmpty()).isTrue();
+  }
+
+  private JsonNode deletionImpact(UUID record) throws Exception {
+    var response =
+        mvc.perform(
+                get("/api/spaces/" + space + "/source-records/" + record + "/deletion-impact")
+                    .with(authentication(login(owner))))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse();
+    return mapper.readTree(response.getContentAsString()).path("data");
+  }
+
+  @Test
   void appliedAiCreateAndEvidenceLinkIdentifyOnlyTheirOwnChangeEvidence() throws Exception {
     var first = propose("CREATE", null);
     UUID item = apply(first, null);
