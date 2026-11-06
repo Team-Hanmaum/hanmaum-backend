@@ -7,6 +7,7 @@ import com.hanmaum.backend.record.dto.SourceRecordDeletionImpact;
 import com.hanmaum.backend.record.dto.SourceRecordDeletionImpact.AffectedItem;
 import com.hanmaum.backend.record.dto.SourceRecordDeletionImpact.Counts;
 import com.hanmaum.backend.record.repository.SourceRecordDeletionImpactRepository;
+import com.hanmaum.backend.record.repository.SourceRecordDeletionImpactRepository.ImpactRow;
 import com.hanmaum.backend.record.repository.SourceRecordDeletionImpactRepository.Kind;
 import java.util.ArrayList;
 import java.util.EnumMap;
@@ -29,15 +30,22 @@ public class SourceRecordDeletionImpactService {
 
   @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
   public SourceRecordDeletionImpact preview(UUID actor, UUID space, UUID record) {
+    return snapshot(actor, space, record, requireVersion(actor, space, record, false)).impact();
+  }
+
+  long requireVersion(UUID actor, UUID space, UUID record, boolean includeErased) {
     var access =
         repository
-            .access(actor, space, record)
+            .access(actor, space, record, includeErased)
             .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND));
     if (!access.participating()) throw new ApiException(CommonErrorCode.FORBIDDEN);
     if (access.version() == null) throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND);
     if (!access.canDelete()) throw new ApiException(CommonErrorCode.FORBIDDEN);
+    return access.version();
+  }
 
-    String version = Long.toString(access.version());
+  Snapshot snapshot(UUID actor, UUID space, UUID record, long recordVersion) {
+    String version = Long.toString(recordVersion);
     var rows = repository.snapshot(space, record);
     var counts = new EnumMap<Kind, Long>(Kind.class);
     var items = new ArrayList<AffectedItem>();
@@ -63,15 +71,19 @@ public class SourceRecordDeletionImpactService {
       tokenParts.add(Boolean.toString(row.reconfirm()));
       tokenParts.add(row.state());
     }
-    return new SourceRecordDeletionImpact(
-        record,
-        version,
-        new Counts(
-            counts.getOrDefault(Kind.PROPOSAL, 0L),
-            counts.getOrDefault(Kind.EVIDENCE, 0L),
-            counts.getOrDefault(Kind.ITEM, 0L),
-            counts.getOrDefault(Kind.HISTORY, 0L)),
-        List.copyOf(items),
-        digest.digest(tokenParts.toArray(String[]::new)));
+    var impact =
+        new SourceRecordDeletionImpact(
+            record,
+            version,
+            new Counts(
+                counts.getOrDefault(Kind.PROPOSAL, 0L),
+                counts.getOrDefault(Kind.EVIDENCE, 0L),
+                counts.getOrDefault(Kind.ITEM, 0L),
+                counts.getOrDefault(Kind.HISTORY, 0L)),
+            List.copyOf(items),
+            digest.digest(tokenParts.toArray(String[]::new)));
+    return new Snapshot(impact, rows);
   }
+
+  record Snapshot(SourceRecordDeletionImpact impact, List<ImpactRow> rows) {}
 }

@@ -278,9 +278,9 @@ FE는 초대 경로·비로그인 사용자의 로그인 후 복귀를 합의해
 - 커서는 마지막 반환 원본의 시각·ID 위치이며 당시 전체 목록을 동결하지 않습니다. 이후 새로 들어온 최신 소식은 첫 목록 재조회로 확인합니다. 중간 삭제를 반영하며 커서 기준 원본이 삭제돼도 다음 위치를 조회할 수 있습니다. 매 페이지 현재 권한을 다시 검사하고 총 개수·검색·필터는 추가하지 않습니다.
 - 상세는 `recordId`, `spaceId`, `content`, `author`, `recordedAt`, `version`, `isMine`, `latestAnalysis`, `proposalIds`, `canDelete`입니다. 다른 공간의 소식 ID·삭제 원본은 404입니다.
 - `author`는 작성 당시 `membershipId`, 현재 표시 이름 `displayName`, `withdrawn`입니다. 이름 미설정은 null이며 회원 연결이 제거된 경우 ID·이름도 null, withdrawn=true입니다. 공간에서 나가기/내보내기만으로 withdrawn=true가 되거나 원본이 삭제되지 않습니다. 실제 회원 탈퇴 처리는 별도 후속 작업입니다.
-- `isMine`은 같은 회원 기준으로 재참여 후에도 true일 수 있습니다. `canDelete`는 현재 소유자 또는 본인 원본의 권한 안내입니다. 삭제 API는 아직 없으며 FE 삭제 버튼 연결은 후속 삭제 구현 때 진행합니다.
+- `isMine`은 같은 회원 기준으로 재참여 후에도 true일 수 있습니다. `canDelete`는 현재 소유자 또는 본인 원본의 권한 안내입니다.
 - 새 소식 저장의 `analysis`는 `{analysisId, status: "QUEUED"}`이며 원본과 같은 트랜잭션에서 생성한 실제 접수 정보입니다. 생성 재전송에도 최초 ID·QUEUED를 반환합니다. 조회의 `latestAnalysis`는 `{analysisId, status}`로 최신 실행의 현재 상태입니다. 분석 도입 전 원본에는 null을 유지하고 자동 일괄 분석하지 않습니다.
-- 상세의 `proposalIds`는 최신 실행이 COMPLETED인 경우의 유효한 저장 제안 ID이며 나머지는 빈 배열입니다. 원본 삭제 API와 전체 파생 내용 제거는 후속 작업입니다.
+- 상세의 `proposalIds`는 최신 실행이 COMPLETED인 경우의 유효한 저장 제안 ID이며 나머지는 빈 배열입니다.
 
 | HTTP | Code | 발생 조건 |
 | --- | --- | --- |
@@ -293,6 +293,13 @@ FE는 초대 경로·비로그인 사용자의 로그인 후 복귀를 합의해
 | 500 | `INTERNAL_ERROR` | 예상하지 못한 서버 오류 |
 
 별도 Record 오류 enum은 만들지 않습니다. FE는 POST마다 새 의도에 UUID를 발급하고 네트워크 재전송에는 같은 값을 유지합니다. AI는 고정된 원문·recordedAt·Asia/Seoul을 사용하며 HTTP 호출 동안 DB 트랜잭션을 유지하지 않습니다.
+
+## 소식 원본 삭제 API
+
+- 현재 공간 소유자와 참여 중인 원본 작성자는 `GET /api/spaces/{spaceId}/source-records/{recordId}/deletion-impact`로 `recordVersion`과 `impactToken`을 조회합니다.
+- `POST /api/spaces/{spaceId}/source-records/{recordId}/deletions`는 세션 쿠키와 CSRF 토큰을 요구합니다. JSON 본문은 `expectedRecordVersion`(양의 정수 문자열), `impactToken`(조회 결과), `clientRequestId`(UUID)입니다. 200 응답의 `data`는 `recordId`, `deletedAt`, `affectedItemIds`, `reconfirmationItemIds`입니다.
+- 원본 버전이 바뀌면 `409 VERSION_CONFLICT`, 영향 범위가 바뀌면 `409 DELETION_IMPACT_CHANGED`를 반환합니다. 새로 확인한 삭제에는 새 요청 ID를 사용합니다. 네트워크 재전송은 같은 ID와 본문을 유지하며, 현재 삭제 권한과 원래 참여가 유효할 때 동일 결과를 받습니다.
+- 삭제와 파생 내용 정리는 같은 트랜잭션에서 처리합니다. 삭제에 의존하지 않는 현재 문서와 근거는 유지합니다. 필드별 독립 근거를 판별할 수 없는 영향 문서는 가리고 재확인 대상으로 표시합니다.
 
 ## 소식 분석 상태·실패 재시도
 
@@ -426,7 +433,7 @@ APPLIED/DECLINED는 처리 이력으로 유지하며, 출처 삭제에 따른 �
 
 - 원본 삭제/버전 변경, 제안 무효화, 실행 폐기, 문서·근거 제거를 검사합니다. 주 원본 이외 분석에 입력된 모든 원본, 후보 항목의 현재 버전·문서·가시성·재확인 상태, 시작 시 기록한 근거 ID도 검사하며, 파생 내용이 DB에 아직 남아 있어도 API로 반환하지 않습니다. 기본 목록은 제외하고 INVALIDATED 필터/상세에서는 식별 메타데이터만 반환합니다. 삭제된 같은 공간 원본으로 INVALIDATED 필터를 조회할 수 있습니다.
 - 후보 의존성의 근거 ID가 null인 과거 실행은 안전하게 INVALIDATED로 조회합니다. 캡처된 근거가 살아 있어도 해당 후보의 `care_item_basis` 연결이 끊기면 무효로 처리합니다. 직접 입력만 사용한 후보의 빈 배열과 후보가 없는 기존 실행은 유효할 수 있습니다. 조회는 실행 상태·제안·항목을 갱신하지 않습니다.
-- 문서·근거를 실제로 제거하는 원본 삭제 트랜잭션은 별도 필수 작업입니다. 읽기 방어만으로 삭제 API 전체가 구현된 것은 아닙니다.
+- 원본 삭제 트랜잭션에서 영향을 받는 문서와 근거의 내용을 제거합니다.
 - 400 INVALID_REQUEST: 잘못된 ID·필터·size·cursor. 401 UNAUTHENTICATED: 유효 세션/회원 없음. 403 FORBIDDEN: 공간 현재 참여 아님. 404 RESOURCE_NOT_FOUND: 활성 공간/같은 공간의 대상 없음. 500 INTERNAL_ERROR: 서버 실패. 업무 오류 메시지와 필드 오류는 공통 규격을 사용합니다.
 - FE는 네 상태와 null 필드를 처리하고, 원문 확인에는 기존 소식 상세 API를 사용합니다. 검토·편집 잠금·일괄 반영/미적용은 [소유자 반영 계약](proposal-decisions.md)을 따릅니다.
 - 실제 모델 품질 평가와 관련 항목 재분석은 후속입니다. 제출 전 검토 초안은 FE가 보관합니다. 소유자는 직접 반영하고 구성원은 [변경 요청 계약](member-change-requests.md)에 따라 요청을 저장합니다. 조회 주기는 추가 확정하지 않았으며 쓰기 입력 상한은 해당 계약을 따릅니다.
@@ -501,7 +508,7 @@ V8은 `care_item`, `care_item_basis`, `care_item_history`, `analysis_input_item`
 
 후보는 같은 공간의 유효한 현재 문서와 근거만 사용합니다. 실행기가 분석을 시작할 때 항목 버전·문서와 원본 의존성을 함께 기록하고 완료 시 재검증합니다. V9는 그때 사용한 근거 ID를 추가로 보존하므로 근거 연결이 없어지거나 원본 버전 변경 없이 근거 내용만 제거되어도 늦은 결과를 폐기합니다. V8에서 근거 목록을 기록하지 않은 후보 실행은 완료를 허용하지 않습니다. 기존 내부 후보 50개·요약 2,000 UTF-16 코드 단위 한도를 초과하면 자동 축약/부분 선택하지 않고 분석 의존성 오류로 종료합니다. 공개 일정 입력 제한과 별개입니다. 현재 summary 표현과 AI 연동 경계는 [AI 계약](ai-contract.md#careitem-후보와-입력-근거-검증)을 따릅니다.
 
-v1 CREATE와 v2 네 작업의 검토 제안 저장을 지원합니다. 소유자 제안 반영/미적용·편집 잠금은 [별도 계약](proposal-decisions.md), 구성원 AI 제안 승인 요청은 [변경 요청 계약](member-change-requests.md)을 따릅니다. 관리 항목 직접 등록·수정과 구성원 직접 입력 요청은 V13에서 지원합니다. 원본 삭제 공개 API·공유는 후속입니다.
+v1 CREATE와 v2 네 작업의 검토 제안 저장을 지원합니다. 소유자 제안 반영/미적용·편집 잠금은 [별도 계약](proposal-decisions.md), 구성원 AI 제안 승인 요청은 [변경 요청 계약](member-change-requests.md)을 따릅니다. 관리 항목 직접 등록·수정과 구성원 직접 입력 요청은 V13에서 지원합니다. 공유는 후속입니다.
 
 ## 항목 근거·확정 이력 조회
 

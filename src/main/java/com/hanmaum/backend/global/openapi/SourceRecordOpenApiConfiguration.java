@@ -21,30 +21,48 @@ public class SourceRecordOpenApiConfiguration {
   @Bean
   OpenApiCustomizer sourceRecordContract() {
     return api -> {
-      var media = new MediaType().schema(new Schema<>().$ref("#/components/schemas/ApiResponse"));
-      for (var code :
-          List.of(CommonErrorCode.IDEMPOTENCY_KEY_REUSED, CommonErrorCode.REQUEST_IN_PROGRESS)) {
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("success", false);
-        body.put("code", code.code());
-        body.put("message", code.message());
-        body.put("data", null);
-        body.put("errors", List.of());
-        body.put("timestamp", "2026-10-12T00:00:00Z");
-        media.addExamples(code.code(), new Example().summary(code.message()).value(body));
-      }
+      var repeated =
+          List.of(CommonErrorCode.IDEMPOTENCY_KEY_REUSED, CommonErrorCode.REQUEST_IN_PROGRESS);
       api.getComponents()
           .addResponses(
-              "CREATE_SOURCE_RECORD_CONFLICT",
-              new ApiResponse()
-                  .description("요청 ID 재사용 · 동일 요청 처리 중")
-                  .content(new Content().addMediaType("application/json", media)));
-      var path = api.getPaths().get("/api/spaces/{spaceId}/source-records");
-      if (path != null && path.getPost() != null) {
-        path.getPost()
-            .setSecurity(
-                List.of(new SecurityRequirement().addList("SessionCookie").addList("CsrfToken")));
+              "CREATE_SOURCE_RECORD_CONFLICT", conflict("요청 ID 재사용 · 동일 요청 처리 중", repeated));
+      api.getComponents()
+          .addResponses(
+              "DELETE_SOURCE_RECORD_CONFLICT",
+              conflict(
+                  "원본 버전 또는 영향 범위 변경 · 요청 ID 재사용 · 동일 요청 처리 중",
+                  List.of(
+                      CommonErrorCode.VERSION_CONFLICT,
+                      CommonErrorCode.DELETION_IMPACT_CHANGED,
+                      CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
+                      CommonErrorCode.REQUEST_IN_PROGRESS)));
+      for (var route :
+          List.of(
+              "/api/spaces/{spaceId}/source-records",
+              "/api/spaces/{spaceId}/source-records/{recordId}/deletions")) {
+        var path = api.getPaths().get(route);
+        if (path != null && path.getPost() != null)
+          path.getPost()
+              .setSecurity(
+                  List.of(new SecurityRequirement().addList("SessionCookie").addList("CsrfToken")));
       }
     };
+  }
+
+  private ApiResponse conflict(String description, List<CommonErrorCode> codes) {
+    var media = new MediaType().schema(new Schema<>().$ref("#/components/schemas/ApiResponse"));
+    for (var code : codes) {
+      Map<String, Object> body = new LinkedHashMap<>();
+      body.put("success", false);
+      body.put("code", code.code());
+      body.put("message", code.message());
+      body.put("data", null);
+      body.put("errors", List.of());
+      body.put("timestamp", "2026-10-12T00:00:00Z");
+      media.addExamples(code.code(), new Example().summary(code.message()).value(body));
+    }
+    return new ApiResponse()
+        .description(description)
+        .content(new Content().addMediaType("application/json", media));
   }
 }

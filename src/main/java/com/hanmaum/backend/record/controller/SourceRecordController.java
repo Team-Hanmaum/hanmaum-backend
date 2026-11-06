@@ -5,11 +5,14 @@ import com.hanmaum.backend.global.security.AuthenticatedUser;
 import com.hanmaum.backend.global.security.CurrentUser;
 import com.hanmaum.backend.record.dto.CreateSourceRecordRequest;
 import com.hanmaum.backend.record.dto.CreateSourceRecordResponse;
+import com.hanmaum.backend.record.dto.DeleteSourceRecordRequest;
+import com.hanmaum.backend.record.dto.DeleteSourceRecordResponse;
 import com.hanmaum.backend.record.dto.SourceRecordDeletionImpact;
 import com.hanmaum.backend.record.dto.SourceRecordDetail;
 import com.hanmaum.backend.record.dto.SourceRecordListResponse;
 import com.hanmaum.backend.record.service.SourceRecordCreationService;
 import com.hanmaum.backend.record.service.SourceRecordDeletionImpactService;
+import com.hanmaum.backend.record.service.SourceRecordDeletionService;
 import com.hanmaum.backend.record.service.SourceRecordQueryService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -40,14 +43,17 @@ public class SourceRecordController {
   private final SourceRecordCreationService creation;
   private final SourceRecordQueryService queries;
   private final SourceRecordDeletionImpactService deletionImpact;
+  private final SourceRecordDeletionService deletion;
 
   public SourceRecordController(
       SourceRecordCreationService creation,
       SourceRecordQueryService queries,
-      SourceRecordDeletionImpactService deletionImpact) {
+      SourceRecordDeletionImpactService deletionImpact,
+      SourceRecordDeletionService deletion) {
     this.creation = creation;
     this.queries = queries;
     this.deletionImpact = deletionImpact;
+    this.deletion = deletion;
   }
 
   @Operation(
@@ -203,5 +209,45 @@ public class SourceRecordController {
     return ResponseEntity.ok()
         .cacheControl(CacheControl.noStore())
         .body(ApiResponse.success(deletionImpact.preview(currentUser.userId(), spaceId, recordId)));
+  }
+
+  @Operation(
+      summary = "소식 원본 삭제",
+      description =
+          "현재 소유자 또는 현재 참여 중인 원본 작성자가 영향 확인 후 원본과 연결된 내용을 삭제합니다. "
+              + "영향이 바뀌면 다시 조회해야 합니다. 같은 요청 ID와 본문은 처리 결과를 재사용합니다.")
+  @ApiResponses({
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "200",
+        description = "원본과 연결 내용의 삭제 완료"),
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "400",
+        ref = "#/components/responses/INVALID_REQUEST"),
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "401",
+        ref = "#/components/responses/UNAUTHENTICATED"),
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "403",
+        ref = "#/components/responses/FORBIDDEN"),
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "404",
+        ref = "#/components/responses/RESOURCE_NOT_FOUND"),
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "409",
+        ref = "#/components/responses/DELETE_SOURCE_RECORD_CONFLICT"),
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "500",
+        ref = "#/components/responses/INTERNAL_ERROR")
+  })
+  @PostMapping(value = "/{recordId}/deletions", consumes = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<ApiResponse<DeleteSourceRecordResponse>> delete(
+      @CurrentUser AuthenticatedUser currentUser,
+      @PathVariable UUID spaceId,
+      @PathVariable UUID recordId,
+      @Valid @RequestBody DeleteSourceRecordRequest request) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(
+            ApiResponse.success(deletion.delete(currentUser.userId(), spaceId, recordId, request)));
   }
 }
