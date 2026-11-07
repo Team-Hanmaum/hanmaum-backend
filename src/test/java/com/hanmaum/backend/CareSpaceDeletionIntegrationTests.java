@@ -135,6 +135,7 @@ class CareSpaceDeletionIntegrationTests {
     assertAllGone();
   }
 
+  /** Erases every populated FK branch while retaining other spaces, accounts, and replay guards. */
   @Test
   void deletionRemovesEverySpaceOwnedTableButPreservesUsersOtherSpacesAndReplayGuards()
       throws Exception {
@@ -213,6 +214,7 @@ class CareSpaceDeletionIntegrationTests {
     assertCode(() -> spaces.create(owner, originalCreation), "RESOURCE_NOT_FOUND");
   }
 
+  /** Rejects unauthenticated, non-owner, missing-space, and missing-CSRF deletion attempts. */
   @Test
   void authenticationOwnerRoleCsrfAndSpaceExistenceAreChecked() throws Exception {
     var body = command(preview(owner));
@@ -250,6 +252,7 @@ class CareSpaceDeletionIntegrationTests {
     jdbc.update("UPDATE care_space SET lifecycle='ACTIVE' WHERE id=?", space);
   }
 
+  /** Rejects incomplete/coerced/unknown input and oversized raw bodies before deletion begins. */
   @Test
   void strictInputRejectsMissingCoercedAndUnknownFieldsAndOversizedBodies() throws Exception {
     var valid = command(preview(owner));
@@ -314,6 +317,7 @@ class CareSpaceDeletionIntegrationTests {
     space = original;
   }
 
+  /** Detects graph changes beyond the space version and the six user-facing aggregate counts. */
   @ParameterizedTest
   @ValueSource(strings = {"RECORD", "INVITATION", "SHARE", "BASIS", "EDIT", "REQUEST", "ANALYSIS"})
   void scopeChangesInvalidateThePreviewEvenWhenSpaceVersionAndPrimaryCountsDoNotChange(
@@ -395,6 +399,7 @@ class CareSpaceDeletionIntegrationTests {
     assertAllGone();
   }
 
+  /** Both execution contracts discard late results and cannot revive removed analysis metadata. */
   @ParameterizedTest
   @ValueSource(strings = {"v1", "v2"})
   void lateAnalysisResultsHeartbeatAndRecoveryCannotRestoreDeletedServiceData(String contract)
@@ -464,6 +469,7 @@ class CareSpaceDeletionIntegrationTests {
     assertAllGone();
   }
 
+  /** Same and distinct request IDs allow one successful removal, with no second execution. */
   @Test
   void simultaneousSameAndDifferentRequestsNeverDeleteTwiceOrRecreateTheSpace() throws Exception {
     for (boolean same : List.of(true, false)) {
@@ -508,6 +514,7 @@ class CareSpaceDeletionIntegrationTests {
     }
   }
 
+  /** Observes the real DB lock before committing a competing source or ownership change. */
   @ParameterizedTest
   @ValueSource(strings = {"SOURCE", "OWNERSHIP"})
   void concurrentScopeOrOwnerChangeIsRecheckedAfterTheRealSpaceLock(String mutation)
@@ -628,6 +635,7 @@ class CareSpaceDeletionIntegrationTests {
     assertAllGone();
   }
 
+  /** Keeps typed success responses and strict input consistent with session/CSRF enforcement. */
   @Test
   void swaggerDescribesBothTypedSuccessesAndRequiresSessionAndCsrfTogetherForDeletion()
       throws Exception {
@@ -868,6 +876,7 @@ class CareSpaceDeletionIntegrationTests {
     return url.substring(url.lastIndexOf('/') + 1);
   }
 
+  /** Discovers all space-scoped tables so forgotten purge branches fail the integration checks. */
   private Map<String, Long> counts(UUID space) {
     var counts = new TreeMap<String, Long>();
     for (String table :
@@ -918,6 +927,7 @@ class CareSpaceDeletionIntegrationTests {
         "kakao");
   }
 
+  /** Bounds test synchronization and preserves interruption rather than leaving blocked workers. */
   private static void await(CountDownLatch latch) {
     try {
       if (!latch.await(10, TimeUnit.SECONDS)) throw new IllegalStateException("test timeout");
@@ -927,6 +937,7 @@ class CareSpaceDeletionIntegrationTests {
     }
   }
 
+  /** Requires PostgreSQL to identify the blocker, avoiding scheduling-only timeout false passes. */
   private void assertBlocked(Connection monitor, int waiter, int blocker, Future<?> pending)
       throws Exception {
     long end = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);

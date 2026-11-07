@@ -13,6 +13,7 @@ import org.springframework.context.annotation.*;
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "springdoc.api-docs.enabled", havingValue = "true")
 public class CareSpaceDeletionOpenApiConfiguration {
+  /** Declares strict deletion input, conflict examples, and combined session/CSRF requirements. */
   @Bean
   OpenApiCustomizer careSpaceDeletionContract() {
     return api -> {
