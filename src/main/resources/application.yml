@@ -50,6 +50,8 @@ springdoc:
     operations-sorter: method
 
 app:
+  sharing:
+    url-prefix: ${SHARE_URL_PREFIX:http://localhost:5173/share/}
   care-items:
     edit-lock-duration: ${CARE_ITEM_EDIT_LOCK_DURATION:PT2M}
     edit-lock-renewal: ${CARE_ITEM_EDIT_LOCK_RENEWAL:PT30S}

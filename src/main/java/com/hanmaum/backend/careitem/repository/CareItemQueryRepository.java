@@ -22,6 +22,24 @@ public class CareItemQueryRepository {
 
   public Optional<Result> read(
       UUID actor, UUID space, UUID item, String type, String status, boolean includeAnswers) {
+    return read(actor, space, item, type, status, includeAnswers, null);
+  }
+
+  /**
+   * Reuses the authorized/redacted projection for selected sharing targets, including tombstones.
+   */
+  public Optional<Result> readSelected(UUID actor, UUID space, List<UUID> selected) {
+    return read(actor, space, null, null, null, true, selected);
+  }
+
+  private Optional<Result> read(
+      UUID actor,
+      UUID space,
+      UUID item,
+      String type,
+      String status,
+      boolean includeAnswers,
+      List<UUID> selected) {
     // One statement is both the authorization gate and the data snapshot, also for an empty list.
     var rows =
         jdbc.query(
@@ -50,7 +68,8 @@ public class CareItemQueryRepository {
         FROM care_space s
         LEFT JOIN space_membership viewer ON viewer.space_id = s.id AND viewer.user_id = ? AND viewer.is_active
         LEFT JOIN care_item i ON i.space_id = s.id AND viewer.id IS NOT NULL
-          AND ((CAST(? AS uuid) IS NOT NULL AND i.id = ?) OR (CAST(? AS uuid) IS NULL AND i.visibility = 'VISIBLE'))
+          AND ((CAST(? AS uuid) IS NOT NULL AND i.id = ?) OR (CAST(? AS uuid) IS NULL AND (i.visibility = 'VISIBLE' OR ?)))
+          AND (CAST(? AS uuid[]) IS NULL OR i.id=ANY(CAST(? AS uuid[])))
           AND (CAST(? AS text) IS NULL OR i.item_type = ?) AND (CAST(? AS text) IS NULL OR i.status = ?)
         LEFT JOIN content_document d ON d.space_id = s.id AND d.id = i.current_document_id
         LEFT JOIN care_item_edit_lock l ON l.space_id=i.space_id AND l.item_id=i.id AND l.expires_at>statement_timestamp()
@@ -64,7 +83,24 @@ public class CareItemQueryRepository {
         WHERE s.id = ? AND s.lifecycle = 'ACTIVE'
         ORDER BY i.created_at DESC, i.id DESC
         """,
-            this::map, includeAnswers, actor, item, item, item, type, type, status, status, space);
+            this::map,
+            includeAnswers,
+            actor,
+            item,
+            item,
+            item,
+            selected != null,
+            selected == null
+                ? null
+                : new org.springframework.jdbc.support.SqlArrayValue("uuid", selected.toArray()),
+            selected == null
+                ? null
+                : new org.springframework.jdbc.support.SqlArrayValue("uuid", selected.toArray()),
+            type,
+            type,
+            status,
+            status,
+            space);
     if (rows.isEmpty()) return Optional.empty();
     return Optional.of(
         new Result(

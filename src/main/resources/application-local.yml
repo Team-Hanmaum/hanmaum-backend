@@ -19,6 +19,8 @@ springdoc:
     enabled: true
 
 app:
+  sharing:
+    url-prefix: ${SHARE_URL_PREFIX:${FRONTEND_URL:http://localhost:5173}/share/}
   ai:
     v2:
       # Agreed initial local/integration profile; does not switch analysis execution to v2.

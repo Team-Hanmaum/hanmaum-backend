@@ -97,6 +97,13 @@ public class CareItemQueryService {
     return result.items().getFirst();
   }
 
+  /**
+   * Batch projection for sharing; the caller must suppress details for unavailable target states.
+   */
+  public List<CareItemDetail> sharingDetails(UUID actor, UUID space, List<UUID> selected) {
+    return require(items.readSelected(actor, space, selected)).items();
+  }
+
   private CareItemQueryRepository.Result require(Optional<CareItemQueryRepository.Result> result) {
     var value = result.orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND));
     if (!value.authorized()) throw new ApiException(CommonErrorCode.FORBIDDEN);
