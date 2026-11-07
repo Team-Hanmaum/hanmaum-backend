@@ -529,6 +529,14 @@ V8은 `care_item`, `care_item_basis`, `care_item_history`, `analysis_input_item`
 
 v1 CREATE와 v2 네 작업의 검토 제안 저장을 지원합니다. 소유자 제안 반영/미적용·편집 잠금은 [별도 계약](proposal-decisions.md), 구성원 AI 제안 승인 요청은 [변경 요청 계약](member-change-requests.md)을 따릅니다. 관리 항목 직접 등록·수정과 구성원 직접 입력 요청은 V13에서 지원합니다. 공유는 후속입니다.
 
+## 관리 항목 일반 삭제
+
+`POST /api/spaces/{spaceId}/items/{itemId}/deletions`는 현재 소유자가 `expectedItemVersion`, 본인 `leaseToken`, `clientRequestId`를 전달해 삭제 표시합니다. 성공 `200 SUCCESS`의 data는 `{itemId,version,visibility:"DELETED",deletedAt}`입니다. 삭제 표시·버전·DELETE 이력·요청 결과를 함께 저장하고 잠금을 해제합니다. 원본·근거·이력은 보존하며 이후 원본 삭제 시 내용 제거 규칙도 유지합니다.
+
+구성원은 기존 `/change-requests`에 `sourceType:"DIRECT_INPUT",action:"DELETE_ITEM"`으로 제출하고 소유자가 승인합니다. `values`는 생략/null만 허용하며 AI 제안 삭제는 지원하지 않습니다. 직접 삭제·요청 제출·승인 모두 본인 잠금이 필요합니다. 재확인 대상·내용이 가려진 항목은 `purpose:"DELETION"`으로 잠금을 획득·갱신합니다. 일반 EDIT 잠금은 정상 항목 삭제에만 사용할 수 있으며 RECONFIRMATION 잠금으로 삭제할 수 없습니다.
+
+동일 요청 재전송은 최초 삭제 메타데이터를 반환합니다. 새 키로 이미 삭제된 항목은 `409 ITEM_STATE_CONFLICT`, 버전 불일치는 `409 VERSION_CONFLICT`, 타인 잠금은 `409 ITEM_LOCKED`, 본인 잠금 검증 실패는 `409 EDIT_LOCK_EXPIRED`입니다. 계약·FE 연결·V19 전환 기준은 [일반 삭제](direct-care-items.md#일반-삭제)를 따릅니다.
+
 ## 항목 근거·확정 이력 조회
 
 현재 참여자가 `GET /api/spaces/{spaceId}/items/{itemId}/evidence`, `/history`, `/history/{version}`으로 근거·확정 이력·버전 비교를 조회합니다. 세션 인증, 동일 공간 소속, REPEATABLE_READ 스냅샷과 `no-store`를 적용합니다. 제거된 before/after는 null과 `redactedFields`로 표시하고 최소 변경 메타데이터를 유지합니다. 근거 종류·ID·정렬·삭제 상태와 과거 연결의 검증 범위는 [항목 근거·이력 계약](care-item-provenance.md)을 따릅니다. 필드별 근거는 저장하지 않아 `fieldPaths=[]`이며 전체 필드 근거라는 의미가 아닙니다.
