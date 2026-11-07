@@ -1,4 +1,4 @@
-"""Render single-line GitHub secrets into Compose dotenv without shell evaluation."""
+"""Validate GitHub secrets/worker variables and render Compose dotenv without shell evaluation."""
 
 import argparse
 import base64
@@ -16,6 +16,37 @@ SECRET_NAMES = (
 STABLE_NAMES = ("POSTGRES_ADMIN_PASSWORD", "DB_PASSWORD", "COMMAND_DIGEST_KEY",
                 "INVITATION_ENCRYPTION_KEY", "AI_INTERNAL_API_KEY")
 IMAGE_PATTERN = r"ghcr\.io/team-hanmaum/hanmaum-backend@sha256:[0-9a-f]{64}"
+WORKER_NAMES = (
+    "ANALYSIS_WORKER_ENABLED", "ANALYSIS_WORKER_CONCURRENCY",
+    "ANALYSIS_WORKER_POLL_INTERVAL", "ANALYSIS_WORKER_LEASE_DURATION",
+)
+# application.yml: AI connect timeout 3s + read timeout 30s.
+AI_TIMEOUT_SECONDS = 33
+
+
+def checked_worker_values(environment):
+    # Old credential baselines have no worker fields. Missing/empty opt-in stays disabled.
+    values = {name: environment.get(name, "") for name in WORKER_NAMES}
+    enabled = values["ANALYSIS_WORKER_ENABLED"] or "false"
+    if enabled not in ("true", "false"):
+        raise ValueError("ANALYSIS_WORKER_ENABLED: use true or false")
+    values["ANALYSIS_WORKER_ENABLED"] = enabled
+    for name in WORKER_NAMES[1:]:
+        value = values[name]
+        if not value and enabled == "false":
+            continue
+        # Deployment durations use explicit whole seconds; Spring also accepts this form.
+        pattern = r"[1-9][0-9]{0,9}" if name.endswith("CONCURRENCY") else r"[1-9][0-9]{0,15}s"
+        if not re.fullmatch(pattern, value):
+            hint = "a positive integer" if name.endswith("CONCURRENCY") else "positive whole seconds (e.g. 2s or 120s)"
+            raise ValueError(f"{name}: {hint} required")
+        number = int(value if name.endswith("CONCURRENCY") else value[:-1])
+        maximum = 2**31 - 1 if name.endswith("CONCURRENCY") else (2**63 - 1) // 1000
+        if number > maximum:
+            raise ValueError(f"{name}: value exceeds the runtime's numeric range")
+        if name.endswith("LEASE_DURATION") and number <= AI_TIMEOUT_SECONDS:
+            raise ValueError("ANALYSIS_WORKER_LEASE_DURATION: must exceed the 33s AI timeouts")
+    return values
 
 
 def checked_values(environment):
@@ -40,7 +71,7 @@ def checked_values(environment):
         raise ValueError("Database administrator and application passwords must differ")
     if len({values[name] for name in STABLE_NAMES}) != len(STABLE_NAMES):
         raise ValueError("Generate each database password and internal key independently")
-    return values
+    return {**values, **checked_worker_values(environment)}
 
 
 def render(values):
