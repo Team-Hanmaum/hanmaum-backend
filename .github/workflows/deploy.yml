@@ -159,6 +159,10 @@ jobs:
           COMMAND_DIGEST_KEY: ${{ secrets.COMMAND_DIGEST_KEY }}
           INVITATION_ENCRYPTION_KEY: ${{ secrets.INVITATION_ENCRYPTION_KEY }}
           AI_INTERNAL_API_KEY: ${{ secrets.AI_INTERNAL_API_KEY }}
+          ANALYSIS_WORKER_ENABLED: ${{ vars.ANALYSIS_WORKER_ENABLED }}
+          ANALYSIS_WORKER_CONCURRENCY: ${{ vars.ANALYSIS_WORKER_CONCURRENCY }}
+          ANALYSIS_WORKER_POLL_INTERVAL: ${{ vars.ANALYSIS_WORKER_POLL_INTERVAL }}
+          ANALYSIS_WORKER_LEASE_DURATION: ${{ vars.ANALYSIS_WORKER_LEASE_DURATION }}
         run: bash deploy/send-release.sh
       - name: Verify public HTTPS and documentation
         run: |

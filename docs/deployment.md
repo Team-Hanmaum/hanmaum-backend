@@ -16,7 +16,7 @@ GitHub Secrets는 관리 원본, 서버 `.env.prod`는 실행용 사본이다. �
 
 PostgreSQL 17.11은 관리자·앱 역할을 분리하고 전용 영속 볼륨을 쓴다. BE는 `prod,oauth`, `hanmaum_app` 역할로 실행한다. DB 5432·BE 8080은 미공개이며 Nginx 공식 이미지에 설정을 연결하여 80·443만 공개한다. Certbot 인증서·개인키는 서버의 전용 볼륨에 유지한다. 메모리 상한은 BE 1536MiB·DB 768MiB·Nginx 128MiB·일시 실행 Certbot 256MiB다. 이는 부하 검증 결과가 아닌 초기 설정이다. 단일 서버 구성이라 **배포 중 짧은 중단**이 있다. 기존 로컬 `docker-compose.yml`은 유지한다.
 
-AI 컨테이너는 `hanmaum-ai` 저장소에서 별도로 배포한다. 현재 BE 배포는 그 AI의 내부 HTTPS 연결을 전제로 한다. 새 분석 계약은 `v2`, worker는 `false`여서 분석은 QUEUED에 머문다. 아래 AI 연결 절차와 실제 분석 활성화 전 확인 사항을 따른다.
+AI 컨테이너는 `hanmaum-ai` 저장소에서 별도로 배포한다. 현재 BE 배포는 그 AI의 내부 HTTPS 연결을 전제로 한다. 새 분석 계약은 `v2`이며 worker는 GitHub production Variables로 명시적으로 활성화한다. 활성화 값을 등록하지 않으면 `false`로 유지되어 분석은 QUEUED에 머문다. 아래 AI 연결 절차와 워커 활성화 절차를 따른다.
 
 ## BE와 배포된 AI 연결
 
@@ -35,7 +35,7 @@ sudo bash /opt/hanmaum/current/deploy/compose.sh ps
 sudo docker ps --filter label=com.docker.compose.project=hanmaum-ai-prod
 ```
 
-현재 worker는 계속 비활성화한다. 새로운 분석만 v2로 접수하며 이미 저장된 v1 실행은 자동 전환되지 않는다. 활성화 전 실제 서버에서 상태별 개수만 조회한다.
+새로운 분석만 v2로 접수하며 이미 저장된 v1 실행은 자동 전환되지 않는다. 워커를 켜면 기존 QUEUED 작업도 처리하므로 활성화 직전에 실제 서버에서 상태별 개수만 조회한다. `(0 rows)`는 조회 순간 대기·실행 작업이 없다는 뜻이다.
 
 ```bash
 sudo bash /opt/hanmaum/current/deploy/compose.sh exec -T postgres \
@@ -43,7 +43,32 @@ sudo bash /opt/hanmaum/current/deploy/compose.sh exec -T postgres \
   "SELECT contract_version, status, count(*) FROM analysis_run WHERE status IN ('QUEUED','RUNNING') GROUP BY contract_version, status ORDER BY contract_version, status;"
 ```
 
-기존 v1 작업의 처리 방식을 먼저 결정하며 임의 삭제·버전 변경·재실행은 하지 않는다. 실제 분석 사용 전 AI 수신 기록·키의 서버 밖 백업/복구 방안과 합성 요청의 비용 범위를 정한다. 그다음 `ANALYSIS_WORKER_CONCURRENCY`, `ANALYSIS_WORKER_POLL_INTERVAL`, `ANALYSIS_WORKER_LEASE_DURATION`를 명시하고 처리량을 검증한 별도 변경으로 worker를 활성화한다. 이 값들은 현재 Compose에서 전달하지 않으므로 GitHub Variable만 추가해서 켜지지 않는다.
+기존 v1 작업이 있다면 처리 방식을 먼저 결정하며 임의 삭제·버전 변경·재실행은 하지 않는다. AI 수신 기록·키의 서버 밖 백업/복구는 BE PostgreSQL의 S3 백업에 포함되지 않으므로 별도로 준비한다. 이 변경은 AI 백업이나 실제 모델 호출 검증을 완료한 것으로 간주하지 않는다.
+
+### 분석 워커 활성화·비활성화
+
+1. BE 저장소 **Settings → Environments → production → Environment variables → Add environment variable**에서 아래 네 값을 등록한다. AI 저장소가 아닌 `hanmaum-backend`의 Variables이며 새 Secret·IAM 정책·AWS 리소스는 필요하지 않다.
+
+   | Variable | 초기 값 | 의미 |
+   | --- | --- | --- |
+   | `ANALYSIS_WORKER_ENABLED` | `true` | BE 내부 분석 워커 활성화 |
+   | `ANALYSIS_WORKER_CONCURRENCY` | `1` | BE 인스턴스당 동시 분석 1건 |
+   | `ANALYSIS_WORKER_POLL_INTERVAL` | `2s` | 작업 완료 여부와 별개로 대기 작업을 확인하는 주기 |
+   | `ANALYSIS_WORKER_LEASE_DURATION` | `120s` | heartbeat가 끊긴 작업의 소유권 만료 시간 |
+
+   초기 처리량은 같은 4GB 서버에서 동시 1건으로 시작한다. 조회 주기·lease는 이번 배포 입력에서 양의 정수와 `s` 단위로 작성한다. 예: `2s`, `120s`이며 숫자만 입력하거나 `PT2M`으로 입력하지 않는다. lease는 현재 AI 연결 3초 + 응답 읽기 30초보다 길어야 한다. 실행 중에는 heartbeat로 연장되므로 120초가 모델 호출의 제한 시간이라는 뜻은 아니다. 이 설정은 요청 횟수나 비용의 상한을 보장하지 않는다.
+2. 변경 코드를 `dev`에 머지하고 해당 커밋의 CI·자동 배포 성공을 확인한다. 이미 머지한 이후 Variables만 변경했다면 **Actions → Deploy backend → Run workflow → dev**로 재배포한다. 기존 서버에서는 `bootstrap_https`를 선택하지 않는다. **Variables 저장만으로 실행 중인 컨테이너에는 반영되지 않는다.**
+3. CD는 Variables를 검증하고 릴리스 환경 파일에 기록한 뒤 Compose로 BE에만 전달한다. 활성화 시 필요한 값 누락, 잘못된 boolean·숫자·단위, 너무 짧은 lease는 서버에 파일을 전송하기 전에 실패한다. 이전 환경 파일에 워커 항목이 없어도 자격 증명 비교는 호환된다. 기존 DB 비밀번호·내부 인증키는 변경하지 않는다.
+4. `Transfer secrets and activate release` 단계 마지막의 `analysis worker enabled=true`와 아래 명령으로 적용 여부를 확인한다. 아래 명령은 워커 설정 네 개만 출력한다. 전체 환경 변수나 `.env.prod`를 출력하지 않는다.
+
+   ```bash
+   sudo bash /opt/hanmaum/current/deploy/compose.sh exec -T backend sh -c \
+     'printf "enabled=%s concurrency=%s poll=%s lease=%s\n" "$ANALYSIS_WORKER_ENABLED" "$ANALYSIS_WORKER_CONCURRENCY" "$ANALYSIS_WORKER_POLL_INTERVAL" "$ANALYSIS_WORKER_LEASE_DURATION"'
+   ```
+
+5. 실제 흐름은 승인된 소량의 합성 소식으로 확인한다. 로그인 후 소식 1건을 작성하고 분석 ID로 BE 상태 API를 조회해 `QUEUED → RUNNING → COMPLETED` 및 제안 목록을 확인한다. 처리가 빠르면 중간 상태를 직접 관찰하지 못할 수 있고 정상 완료라도 제안이 없을 수 있다. `FAILED`이면 실패 코드를 확인하고 무조건 반복 호출하지 않는다. 이 단계는 실제 모델 호출 비용이 발생할 수 있으며 로컬 검사에는 포함하지 않는다. Lightsail에서 `free -h`, `sudo docker stats --no-stream`으로 처리 중 메모리·CPU도 확인한다.
+
+끄려면 같은 Variable의 `ANALYSIS_WORKER_ENABLED`를 `false`로 저장하고 BE를 재배포한다. 다른 세 값은 유효한 값 그대로 유지해도 된다. 새 컨테이너는 작업을 가져가지 않으며 대기 작업을 삭제하지 않는다. 이전 컨테이너의 진행 작업이 종료 중 끊기면 다음 활성화 시 만료 lease의 중단 작업으로 처리할 수 있으므로 완료·실패 상태를 확인한다. 외부 모델에서 이미 시작한 요청의 비용까지 취소하는 동작은 아니다. 활성화 여부가 없거나 빈 값이면 기본값은 `false`이며, AI 컨테이너 재배포는 필요하지 않다.
 
 AI의 동일 CA 기반 서버 인증서 자동 갱신에는 BE 재배포가 필요하지 않다. CA 자체 교체는 BE 신뢰 갱신과 재시작을 포함한 별도 작업이다. 배포·AI 인증서 갱신은 같은 호스트 잠금을 사용한다. 현재 파일은 BE·AI 최초 배포가 완료된 기존 서버의 연결 단계를 대상으로 한다. 빈 서버에는 바로 적용할 수 없으며, 신규 서버의 DB·인증키 기준 생성과 AI 최초 배포를 위한 초기 부트스트랩 절차는 별도로 준비해야 한다.
 
@@ -139,7 +164,7 @@ awk '{print "16.178.232.151", $1, $2}' /etc/ssh/ssh_host_ed25519_key.pub
 
 DB 비밀번호 두 개와 내부 키 세 개는 `openssl rand -base64 32`를 각각 별도로 총 다섯 번 실행해 생성할 수 있다. 출력을 채팅·이슈에 공유하지 않는다. Secret에는 값 자체만 넣고 dotenv용 따옴표를 붙이지 않는다. SSH 개인키 외 앱 값에는 줄바꿈을 넣지 않는다.
 
-**Environment variables**에는 아래 네 개를 등록한다.
+**Environment variables**에는 아래 배포용 네 개를 등록한다. 분석을 활성화하려면 앞의 워커 활성화 절차에 있는 네 값도 같은 위치에 추가한다.
 
 | Variable | 값 |
 | --- | --- |
@@ -232,7 +257,7 @@ Linux/CI에서는 `python3 -m unittest discover -s deploy/tests -v`로 모든 Py
 
 CI/CD는 `deploy/tests/activation_smoke.py`도 폐기되는 Python Linux 컨테이너에서 실행한다. Docker·GitHub/S3 HTTP·systemd를 모의하여 미완성 릴리스 정리 후 재시도, 과거 SHA 차단, timer 실패, DB 초기화 재시도, 영속 키 보호, 외부 백업 실패, 부분 교체 실패 상태와 성공 포인터 보존을 검사한다. 업로드 파일은 UID 1000 소유로 준비하고 root 활성화 후 같은 일반 사용자 권한으로 실제 삭제하여 임시 폴더 정리 권한도 검사한다. 이 파일은 실제 서버에서 직접 실행하지 않는다. 실제 S3 권한·서명 URL 수신 및 복구는 운영 준비 단계에서 별도 검증한다.
 
-AI 운영 전에는 AI TLS, UID 10001로 쓸 SQLite 수신 기록 영속 볼륨·초기화 CLI를 준비하고 AI 저장소 docs/v2-integration.md를 따른다. OpenAI 키는 AI에만 전달한다. worker 동시 수·확인 간격·lease·비용과 호출 범위를 합의하고 기존 QUEUED 작업을 확인한다. 합성 데이터로 접수→AI→제안 저장·조회·중복 방지를 검증한 뒤 버전·worker·AI 주소를 명시적으로 전환한다.
+AI 운영 전에는 AI TLS, UID 10001로 쓸 SQLite 수신 기록 영속 볼륨·초기화 CLI를 준비하고 AI 저장소 docs/v2-integration.md를 따른다. OpenAI 키는 AI에만 전달한다. 기존 QUEUED 작업을 확인한 뒤 위 활성화 절차대로 GitHub Variables를 등록하고 BE를 배포한다. 실제 분석 검증은 별도로 정한 합성 데이터·호출 범위에서 접수→AI→제안 저장·조회·중복 방지 순서로 확인한다.
 
 ## 공식 참고
 

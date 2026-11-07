@@ -41,7 +41,7 @@ class EnvironmentTests(unittest.TestCase):
             # config's YAML/JSON deliberately re-escapes $ for reuse; --environment reports input values.
             resolved = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
             self.assertEqual(resolved["GOOGLE_CLIENT_SECRET"], value)
-            self.assertEqual(release_env.read_generated(env_file), values)
+            self.assertEqual(release_env.read_generated(env_file), release_env.checked_values(values))
 
     def test_missing_values_and_multiline_values_fail_without_echoing_the_secret(self):
         for name in release_env.SECRET_NAMES:

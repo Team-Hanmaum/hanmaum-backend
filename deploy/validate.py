@@ -9,6 +9,8 @@ import tempfile
 import time
 import uuid
 
+from release_env import checked_worker_values, WORKER_NAMES
+
 
 DEPLOY = Path(__file__).resolve().parent
 REQUIRED = {
@@ -22,6 +24,12 @@ REQUIRED = {
     "COMMAND_DIGEST_KEY": "validation-only-digest-key-at-least-32-bytes",
     "INVITATION_ENCRYPTION_KEY": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
     "AI_INTERNAL_API_KEY": "validation-only-internal-key-at-least-32-bytes",
+}
+WORKER_EXAMPLE = {
+    "ANALYSIS_WORKER_ENABLED": "true",
+    "ANALYSIS_WORKER_CONCURRENCY": "1",
+    "ANALYSIS_WORKER_POLL_INTERVAL": "2s",
+    "ANALYSIS_WORKER_LEASE_DURATION": "120s",
 }
 
 
@@ -53,6 +61,7 @@ def validate_compose():
     for name in ("COMPOSE_FILE", "COMPOSE_PROJECT_NAME", "COMPOSE_PROFILES"):
         env.pop(name, None)
     env.update(REQUIRED)
+    env.update(WORKER_EXAMPLE)
     result = run(compose_args("compose.prod.yml") + ["--format", "json"], env)
     require(result.returncode == 0, f"Production Compose validation failed: {result.stderr}")
     config = json.loads(result.stdout)
@@ -71,7 +80,8 @@ def validate_compose():
     backend = services["backend"]
     settings = backend["environment"]
     require(settings["SPRING_PROFILES_ACTIVE"] == "prod,oauth", "Production OAuth profile missing")
-    require(settings["ANALYSIS_WORKER_ENABLED"] == "false", "Model jobs must remain disabled")
+    require(checked_worker_values(settings) == WORKER_EXAMPLE,
+            "Enabled worker operating values were not forwarded")
     require(settings["AI_BASE_URL"] == "https://hanmaum-ai:8443", "AI must use internal HTTPS")
     require(settings["AI_VERIFY_ON_STARTUP"] == "true", "AI readiness must gate startup")
     require(settings["ANALYSIS_CONTRACT_VERSION"] == "v2", "New analyses must use v2")
@@ -99,6 +109,16 @@ def validate_compose():
     for name in ("nginx", "certbot"):
         require(not services[name].get("environment"), f"{name} receives unnecessary credentials")
 
+    # Both explicit shutdown and an older release with no opt-in must stay disabled.
+    for worker_values in ({**WORKER_EXAMPLE, "ANALYSIS_WORKER_ENABLED": "false"}, {}):
+        disabled_env = {name: value for name, value in env.items() if name not in WORKER_NAMES}
+        disabled_env.update(worker_values)
+        result = run(compose_args("compose.prod.yml") + ["--format", "json"], disabled_env)
+        require(result.returncode == 0, "Disabled worker Compose validation failed")
+        disabled = json.loads(result.stdout)["services"]["backend"]["environment"]
+        require(checked_worker_values(disabled) == checked_worker_values(worker_values),
+                "Disabled or missing worker settings did not remain disabled")
+
     # A forgotten OAuth key/password must fail before containers are created.
     for name in REQUIRED:
         missing_env = env.copy()
@@ -115,7 +135,7 @@ def validate_compose():
     for name in ("acme-webroot", "letsencrypt"):
         require(config["volumes"][name]["name"] == bootstrap["volumes"][name]["name"],
                 "Bootstrap and production certificate volumes differ")
-    print("Compose: topology, required values, OAuth, CORS, AI isolation and bootstrap passed.")
+    print("Compose: topology, required values, OAuth, CORS, AI isolation, worker on/off and bootstrap passed.")
     return services["nginx"]["image"]
 
 

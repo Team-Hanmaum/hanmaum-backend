@@ -49,13 +49,15 @@ find "$release/deploy" -type d -exec chmod 755 {} +
 find "$release/deploy" -type f -exec chmod 644 {} +
 install -o root -g root -m 600 "$incoming/.env.prod" "$release/.env.prod"
 install -o root -g root -m 600 "$incoming/release.json" "$release/release.json"
-image="$(python3 - "$release" <<'PY'
+runtime_values="$(python3 - "$release" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1] + "/deploy")
 from release_env import read_generated
-print(read_generated(sys.argv[1] + "/.env.prod")["BACKEND_IMAGE"])
+values = read_generated(sys.argv[1] + "/.env.prod")
+print(values["BACKEND_IMAGE"], values["ANALYSIS_WORKER_ENABLED"])
 PY
 )"
+read -r image worker_enabled <<< "$runtime_values"
 compose=(bash "$release/deploy/compose.sh")
 "${compose[@]}" config --quiet
 
@@ -155,4 +157,4 @@ curl "${curl_options[@]}" https://api.hanmaum.site/v3/api-docs | \
 python3 "$release/deploy/retention.py" || echo 'Local retention needs operator attention.' >&2
 python3 "$release/deploy/release_state.py" state "$root" "$release" succeeded
 applying=false
-echo "Deployment completed: ${metadata[0]}; AI v2 startup readiness passed, analysis worker disabled."
+echo "Deployment completed: ${metadata[0]}; AI v2 startup readiness passed, analysis worker enabled=${worker_enabled}."

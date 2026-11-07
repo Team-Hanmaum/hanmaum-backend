@@ -16,7 +16,7 @@ if not Path("/.dockerenv").exists() or not Path("/src/deploy").exists():
 
 sys.path.insert(0, "/src/deploy")
 from release_env import render
-from validate import REQUIRED
+from validate import REQUIRED, WORKER_EXAMPLE
 
 FAKE = '''#!/usr/local/bin/python
 import json, os, sys
@@ -221,8 +221,21 @@ assert (root / 'last-successful').resolve() == release9
 for service in ('backend', 'nginx'):
     assert json.loads(Path('/services.json').read_text())[service].startswith(str(failed_health))
 Path('/fail-health').unlink()
+# Upgrade from a credential baseline without worker fields, then disable again.
+enabled, enabled_release = activate(11, WORKER_EXAMPLE, sha='c' * 40)
+assert enabled.returncode == 0, enabled.stderr
+assert 'analysis worker enabled=true' in enabled.stdout
+assert (root / 'last-successful').resolve() == enabled_release
+invalid, _ = activate(12, {**WORKER_EXAMPLE, 'ANALYSIS_WORKER_LEASE_DURATION': '33s'}, sha='c' * 40)
+assert invalid.returncode != 0 and 'ANALYSIS_WORKER_LEASE_DURATION' in invalid.stderr
+assert (root / 'current').resolve() == enabled_release
+assert json.loads(Path('/services.json').read_text())['backend'].startswith(str(enabled_release))
+disabled, disabled_release = activate(13, {**WORKER_EXAMPLE, 'ANALYSIS_WORKER_ENABLED': 'false'}, sha='c' * 40)
+assert disabled.returncode == 0, disabled.stderr
+assert 'analysis worker enabled=false' in disabled.stdout
+assert (root / 'last-successful').resolve() == disabled_release
 assert not list(Path('/tmp').glob('hanmaum-registry.*'))
 for line in Path("/events").read_text().splitlines():
     command = json.loads(line)
     assert "down" not in command and "prune" not in command
-print("Activation failures: incomplete release retry, unprivileged upload cleanup, stale SHA, timer, empty DB retry, secret rotation, off-host backup, partial apply and recovery passed.")
+print("Activation: failure recovery, credential compatibility, worker enable/disable and invalid settings rejection passed.")

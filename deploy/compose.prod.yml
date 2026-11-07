@@ -67,8 +67,11 @@ services:
       AI_BASE_URL: https://hanmaum-ai:8443
       AI_VERIFY_ON_STARTUP: "true"
       ANALYSIS_CONTRACT_VERSION: v2
-      # Connection verification does not authorize queued or paid model jobs.
-      ANALYSIS_WORKER_ENABLED: "false"
+      # Explicit production opt-in; CD validates the required operating values before upload.
+      ANALYSIS_WORKER_ENABLED: ${ANALYSIS_WORKER_ENABLED:-false}
+      ANALYSIS_WORKER_CONCURRENCY: ${ANALYSIS_WORKER_CONCURRENCY:-}
+      ANALYSIS_WORKER_POLL_INTERVAL: ${ANALYSIS_WORKER_POLL_INTERVAL:-}
+      ANALYSIS_WORKER_LEASE_DURATION: ${ANALYSIS_WORKER_LEASE_DURATION:-}
       AI_V2_MAX_REQUEST_BYTES: "1048576"
       AI_V2_MAX_RESPONSE_BYTES: "524288"
     volumes:
