@@ -123,6 +123,11 @@ public class ProposalDecisionOpenApiConfiguration {
                   schema.setAdditionalProperties(false);
                 }
               });
+      // DELETE_ITEM belongs to direct member requests, never AI proposal application.
+      var applicationEntry = api.getComponents().getSchemas().get("ApplicationEntry");
+      if (applicationEntry != null && applicationEntry.getProperties().get("action") != null)
+        ((Schema<String>) applicationEntry.getProperties().get("action"))
+            .setEnum(List.of("CREATE_ITEM", "UPDATE_ITEM", "RESOLVE_QUESTION", "LINK_EVIDENCE"));
     };
   }
 }

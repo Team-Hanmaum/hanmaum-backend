@@ -480,6 +480,11 @@ class CareItemDeletionIntegrationTests {
     assertThat(operation.at("/responses/409").toString()).contains("DELETE_CARE_ITEM_CONFLICT");
     assertThat(api.at("/components/schemas/DeletionBody/required").toString())
         .contains("expectedItemVersion", "leaseToken", "clientRequestId");
+    assertThat(api.at("/components/schemas/ApplicationEntry/properties/action/enum").toString())
+        .contains("CREATE_ITEM", "UPDATE_ITEM", "RESOLVE_QUESTION", "LINK_EVIDENCE")
+        .doesNotContain("DELETE_ITEM");
+    assertThat(api.at("/components/schemas/SubmissionEntry/properties/action/enum").toString())
+        .contains("DELETE_ITEM");
   }
 
   private UUID item(String type) {
