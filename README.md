@@ -227,7 +227,7 @@ Swagger에는 실제 구현된 OAuth 로그인 시작·CSRF·로그아웃·내 �
 
 같은 생성 시도를 재전송할 때는 같은 요청 ID와 내용을 유지합니다. 이미 성공했다면 기존 공간/참여 ID를 201로 반환하며, 새 ID로 같은 호칭을 생성하면 `SPACE_LABEL_DUPLICATED`입니다. 처리 중은 `REQUEST_IN_PROGRESS`, 기존 ID의 다른 내용 재사용은 `IDEMPOTENCY_KEY_REUSED`입니다. 입력·응답·오류는 [공간 API 계약](docs/api-conventions.md#돌봄-공간-api)을 참고합니다.
 
-Flyway V3는 공간·참여·성공 요청 기록을, V4는 초대와 참여의 초대 연결을 추가합니다. 소유자가 같은 공간의 현재 참여자인지 DB 제약으로 검사하고 생성 전체를 하나의 트랜잭션에서 처리합니다. 다른 도메인의 쓰기 작업은 [공간 접근 Service 계약](docs/architecture.md#다른-도메인의-권한-확인)을 따릅니다. 초대 발급·확인·공간 참여·구성원 목록·소유권 이전·참여 종료·호칭 수정도 구현되어 있으며 공간 삭제는 후속 작업입니다.
+Flyway V3는 공간·참여·성공 요청 기록을, V4는 초대와 참여의 초대 연결을 추가합니다. 소유자가 같은 공간의 현재 참여자인지 DB 제약으로 검사하고 생성 전체를 하나의 트랜잭션에서 처리합니다. 다른 도메인의 쓰기 작업은 [공간 접근 Service 계약](docs/architecture.md#다른-도메인의-권한-확인)을 따릅니다. 초대 발급·확인·공간 참여·구성원 목록·소유권 이전·참여 종료·호칭 수정과 [공간 전체 삭제](docs/care-space-deletion.md)를 구현했습니다.
 
 소유자는 `PATCH /api/spaces/{spaceId}`에 `subjectLabel`, 조회한 `expectedSpaceVersion`, `clientRequestId`를 전달해 호칭을 수정합니다. 구성원은 기존 변경 요청 API에 `DIRECT_INPUT UPDATE_SPACE`로 제출하고 소유자가 승인합니다. 같은 호칭 저장은 공간 버전·수정 시각을 유지합니다. 입력·재전송·반영 결과의 `spaceVersion`, V20 전환과 FE 연결은 [공간 정보 수정 계약](docs/care-space-information.md)을 따릅니다.
 
