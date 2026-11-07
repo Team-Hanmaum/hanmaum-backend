@@ -1,8 +1,10 @@
 package com.hanmaum.backend.careitem.service;
 
 import com.hanmaum.backend.careitem.code.CareItemErrorCode;
+import com.hanmaum.backend.careitem.dto.EditLockPurpose;
 import com.hanmaum.backend.careitem.dto.EditLockResponse;
 import com.hanmaum.backend.careitem.repository.EditLockRepository;
+import com.hanmaum.backend.carespace.dto.CareSpaceRole;
 import com.hanmaum.backend.carespace.service.CareSpaceAccessService;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.command.CommandDigest;
@@ -54,8 +56,16 @@ public class EditLockService {
 
   @Transactional
   public EditLockResponse acquire(UUID actor, UUID space, UUID item, long expectedVersion) {
-    var member = access.requireActiveMember(actor, space).membershipId();
-    var state = requireItem(space, item);
+    return acquire(actor, space, item, expectedVersion, EditLockPurpose.EDIT);
+  }
+
+  @Transactional
+  public EditLockResponse acquire(
+      UUID actor, UUID space, UUID item, long expectedVersion, EditLockPurpose purpose) {
+    var current = access.requireActiveMember(actor, space);
+    requireRole(current.role(), purpose);
+    var member = current.membershipId();
+    var state = requireItem(space, item, purpose);
     if (state.version() != expectedVersion)
       throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
     Instant now = now();
@@ -65,17 +75,26 @@ public class EditLockService {
     random.nextBytes(bytes);
     String token = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
     Instant expiry = now.plus(duration);
-    locks.save(space, item, member, digest(space, item, member, token), expiry);
+    locks.save(space, item, member, digest(space, item, member, token), expiry, purpose);
     return new EditLockResponse(item, token, member, expiry, renewal.toSeconds());
   }
 
   @Transactional
   public EditLockResponse renew(UUID actor, UUID space, UUID item, String token) {
-    UUID member = access.requireActiveMember(actor, space).membershipId();
-    requireItem(space, item);
+    return renew(actor, space, item, token, EditLockPurpose.EDIT);
+  }
+
+  @Transactional
+  public EditLockResponse renew(
+      UUID actor, UUID space, UUID item, String token, EditLockPurpose purpose) {
+    var current = access.requireActiveMember(actor, space);
+    requireRole(current.role(), purpose);
+    UUID member = current.membershipId();
+    requireItem(space, item, purpose);
     var lease = requireLease(space, item, member, token);
+    if (lease.purpose() != purpose) throw new ApiException(CareItemErrorCode.EDIT_LOCK_EXPIRED);
     Instant expiry = now().plus(duration);
-    locks.save(space, item, member, lease.digest(), expiry);
+    locks.save(space, item, member, lease.digest(), expiry, lease.purpose());
     return new EditLockResponse(item, null, member, expiry, renewal.toSeconds());
   }
 
@@ -94,11 +113,18 @@ public class EditLockService {
 
   @Transactional(propagation = Propagation.MANDATORY)
   public void requireForWrite(UUID space, UUID item, UUID member, String token) {
-    requireItem(space, item);
+    requireForWrite(space, item, member, token, EditLockPurpose.EDIT);
+  }
+
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void requireForWrite(
+      UUID space, UUID item, UUID member, String token, EditLockPurpose purpose) {
+    requireItem(space, item, purpose);
     var live = locks.live(space, item, now());
     if (live.isPresent() && !live.get().member().equals(member))
       throw new ApiException(CareItemErrorCode.ITEM_LOCKED);
-    requireLease(space, item, member, token);
+    if (requireLease(space, item, member, token).purpose() != purpose)
+      throw new ApiException(CareItemErrorCode.EDIT_LOCK_EXPIRED);
   }
 
   @Transactional(propagation = Propagation.MANDATORY)
@@ -106,13 +132,28 @@ public class EditLockService {
     locks.release(space, item);
   }
 
-  private EditLockRepository.Item requireItem(UUID space, UUID item) {
-    var state =
-        locks
-            .lockItem(space, item)
-            .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND));
-    if (!state.available()) throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND);
+  private EditLockRepository.Item requireItem(UUID space, UUID item, EditLockPurpose purpose) {
+    var state = lockItem(space, item);
+    requireState(state, purpose);
     return state;
+  }
+
+  private EditLockRepository.Item lockItem(UUID space, UUID item) {
+    return locks
+        .lockItem(space, item)
+        .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND));
+  }
+
+  private void requireState(EditLockRepository.Item state, EditLockPurpose purpose) {
+    if (!state.visible() || (purpose == EditLockPurpose.EDIT && state.needsReconfirmation()))
+      throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND);
+    if (purpose == EditLockPurpose.RECONFIRMATION && !state.needsReconfirmation())
+      throw new ApiException(CareItemErrorCode.ITEM_STATE_CONFLICT);
+  }
+
+  private void requireRole(CareSpaceRole role, EditLockPurpose purpose) {
+    if (purpose == EditLockPurpose.RECONFIRMATION && role != CareSpaceRole.OWNER)
+      throw new ApiException(CommonErrorCode.FORBIDDEN);
   }
 
   private EditLockRepository.Lease requireLease(UUID space, UUID item, UUID member, String token) {

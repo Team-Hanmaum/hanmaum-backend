@@ -1090,7 +1090,6 @@ class ProposalDecisionIntegrationTests {
                   "content_document",
                   "evidence",
                   "care_item",
-                  "care_item_basis",
                   "care_item_history",
                   "analysis_run",
                   "analysis_input_source",
@@ -1100,6 +1099,14 @@ class ProposalDecisionIntegrationTests {
             jdbc.update(
                 "INSERT INTO " + table + " SELECT * FROM public." + table + " WHERE space_id=?",
                 space);
+          jdbc.update(
+              """
+              INSERT INTO care_item_basis
+                (id,space_id,item_id,direct_document_id,source_evidence_id,submitted_by_membership_id,created_at)
+              SELECT id,space_id,item_id,direct_document_id,source_evidence_id,submitted_by_membership_id,created_at
+              FROM public.care_item_basis WHERE space_id=?
+              """,
+              space);
         });
     var flyway =
         org.flywaydb.core.Flyway.configure()

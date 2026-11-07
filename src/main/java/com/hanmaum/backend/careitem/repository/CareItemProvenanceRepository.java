@@ -56,6 +56,7 @@ public class CareItemProvenanceRepository {
         """
         SELECT COALESCE(e.id,b.id) evidence_id,
           CASE WHEN b.source_evidence_id IS NOT NULL THEN 'RECORD_QUOTE'
+            WHEN d.kind='RECONFIRMATION' THEN 'RECONFIRMATION'
             WHEN EXISTS (SELECT 1 FROM care_item_document_parent parent
               WHERE parent.space_id=b.space_id AND parent.document_id=d.id) THEN 'DERIVED'
             ELSE 'DIRECT_INPUT' END kind,
@@ -138,6 +139,33 @@ public class CareItemProvenanceRepository {
                 rs.getTimestamp("changed_at").toInstant()));
   }
 
+  public List<ReconfirmationEvidence> validReconfirmationEvidence(
+      UUID space, UUID item, Set<UUID> selected, Set<UUID> unavailable) {
+    if (selected.isEmpty()) return List.of();
+    return jdbc.query(
+        """
+        SELECT b.direct_document_id,b.source_evidence_id,
+          CASE WHEN NOT EXISTS (SELECT 1 FROM care_item_document_parent p
+            WHERE p.space_id=b.space_id AND p.document_id=b.direct_document_id)
+            AND NOT EXISTS (SELECT 1 FROM care_item_document_evidence e
+              WHERE e.space_id=b.space_id AND e.document_id=b.direct_document_id)
+          THEN d.body::text END independent_values
+        FROM care_item_basis b
+        """
+            + BASIS_JOINS
+            + " WHERE b.space_id=:space AND b.item_id=:item"
+            + " AND COALESCE(b.source_evidence_id,b.id)=ANY(:selected) AND "
+            + BASIS_AVAILABILITY,
+        params(space, item)
+            .addValue("selected", new SqlArrayValue("uuid", selected.toArray()))
+            .addValue("unavailable", new SqlArrayValue("uuid", unavailable.toArray())),
+        (rs, n) ->
+            new ReconfirmationEvidence(
+                rs.getObject("direct_document_id", UUID.class),
+                rs.getObject("source_evidence_id", UUID.class),
+                rs.getString("independent_values")));
+  }
+
   public List<UUID> historyEvidence(
       UUID space,
       UUID item,
@@ -161,10 +189,13 @@ public class CareItemProvenanceRepository {
             b.direct_document_id=h.document_id OR (
               EXISTS (SELECT 1 FROM care_item_document_parent parent WHERE parent.space_id=h.space_id
                 AND parent.document_id=h.document_id AND parent.parent_document_id=b.direct_document_id)
-              AND NOT EXISTS (SELECT 1 FROM care_item_history earlier WHERE earlier.space_id=h.space_id
+              AND (h.operation='RECONFIRM' OR NOT EXISTS (SELECT 1 FROM care_item_history earlier WHERE earlier.space_id=h.space_id
                 AND earlier.item_id=h.item_id AND earlier.version<h.version
-                AND earlier.document_id=b.direct_document_id))))
+                AND earlier.document_id=b.direct_document_id)))))
           OR b.source_evidence_id=ANY(:applied)
+          OR (h.operation='RECONFIRM' AND EXISTS (
+            SELECT 1 FROM care_item_document_evidence link WHERE link.space_id=h.space_id
+              AND link.document_id=h.document_id AND link.evidence_id=b.source_evidence_id))
           ) ORDER BY id
         """,
         params(space, item)
@@ -176,6 +207,18 @@ public class CareItemProvenanceRepository {
 
   private MapSqlParameterSource params(UUID space, UUID item) {
     return new MapSqlParameterSource("space", space).addValue("item", item);
+  }
+
+  public record ReconfirmationEvidence(
+      UUID directDocument, UUID sourceEvidence, String independentValues) {
+    @Override
+    public String toString() {
+      return "ReconfirmationEvidence[directDocument="
+          + directDocument
+          + ", sourceEvidence="
+          + sourceEvidence
+          + "]";
+    }
   }
 
   public record History(

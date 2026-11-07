@@ -43,15 +43,57 @@ public class CareItemController {
   private final CareItemQueryService queries;
 
   private final DirectCareItemUpdateService updates;
+  private final CareItemReconfirmationService reconfirmations;
 
   public CareItemController(
       CareItemCreationService creation,
       CareItemQueryService queries,
-      DirectCareItemUpdateService updates) {
+      DirectCareItemUpdateService updates,
+      CareItemReconfirmationService reconfirmations) {
     this.updates = updates;
     this.creation = creation;
     this.queries = queries;
+    this.reconfirmations = reconfirmations;
   }
+
+  @PostMapping(value = "/{itemId}/reconfirmations", consumes = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      summary = "돌봄 항목 근거 재확인",
+      description = "현재 소유자가 재확인용 잠금으로 새 값과 유효 근거를 저장합니다. 성공하면 재확인 상태를 해제합니다.",
+      security = @SecurityRequirement(name = "CsrfToken"))
+  @io.swagger.v3.oas.annotations.parameters.RequestBody(
+      content = @Content(schema = @Schema(implementation = ReconfirmationBody.class)))
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "재확인 완료")
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "409",
+      ref = "#/components/responses/RECONFIRM_CARE_ITEM_CONFLICT")
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "413",
+      ref = "#/components/responses/PAYLOAD_TOO_LARGE")
+  public ResponseEntity<ApiResponse<CareItemReconfirmationResponse>> reconfirm(
+      @CurrentUser AuthenticatedUser actor,
+      @PathVariable UUID spaceId,
+      @PathVariable UUID itemId,
+      @RequestBody JsonNode body) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(
+            ApiResponse.success(reconfirmations.reconfirm(actor.userId(), spaceId, itemId, body)));
+  }
+
+  public record ReconfirmationBody(
+      @Schema(example = "3") String expectedItemVersion,
+      String leaseToken,
+      ReconfirmationValues values,
+      @Schema(nullable = true, description = "새 근거. 기존 독립 근거가 모든 값을 뒷받침하는 경우 생략 가능") String basis,
+      java.util.List<UUID> evidenceIds,
+      UUID clientRequestId) {}
+
+  public record ReconfirmationValues(
+      String title,
+      @Schema(nullable = true) String description,
+      @Schema(type = "object", description = "기존 유형의 필드. QUESTION은 confirmedAnswer를 사용")
+          JsonNode fields) {}
 
   @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
   @Operation(

@@ -36,7 +36,8 @@ public class CareItemApplicationRepository {
                     rs.getString("body"),
                     "VISIBLE".equals(rs.getString("visibility"))
                         && !rs.getBoolean("needs_reconfirmation")
-                        && rs.getBoolean("available")),
+                        && rs.getBoolean("available"),
+                    "VISIBLE".equals(rs.getString("visibility"))),
             space,
             id)
         .stream()
@@ -115,11 +116,64 @@ public class CareItemApplicationRepository {
     if (count != 1) throw new IllegalStateException("Application lost its locked item");
   }
 
+  public void reconfirm(UUID space, UUID item, long expected, UUID document, Instant now) {
+    int count =
+        jdbc.update(
+            """
+        UPDATE care_item SET current_document_id=?,version=version+1,needs_reconfirmation=FALSE,
+          redacted_fields='[]'::jsonb,updated_at=?
+        WHERE space_id=? AND id=? AND version=? AND visibility='VISIBLE'
+        """,
+            document,
+            Timestamp.from(now),
+            space,
+            item,
+            expected);
+    if (count != 1) throw new IllegalStateException("Reconfirmation lost its locked item");
+  }
+
+  public UUID reconfirmationInput(UUID space, String body, Instant now) {
+    UUID id = UUID.randomUUID();
+    jdbc.update(
+        "INSERT INTO content_document(id,space_id,kind,body,created_at) VALUES (?,?,'RECONFIRMATION',?::jsonb,?)",
+        id,
+        space,
+        body,
+        Timestamp.from(now));
+    return id;
+  }
+
+  public void linkReconfirmationDocument(UUID space, UUID document, UUID direct, UUID evidence) {
+    if (direct != null) {
+      jdbc.update(
+          "INSERT INTO care_item_document_parent(space_id,document_id,parent_document_id) VALUES (?,?,?) ON CONFLICT DO NOTHING",
+          space,
+          document,
+          direct);
+      return;
+    }
+    jdbc.update(
+        "INSERT INTO care_item_document_evidence(space_id,document_id,evidence_id) VALUES (?,?,?)",
+        space,
+        document,
+        evidence);
+    jdbc.update(
+        """
+        INSERT INTO care_item_document_parent(space_id,document_id,parent_document_id)
+        SELECT space_id,?,output_document_id FROM ai_proposal WHERE space_id=? AND primary_evidence_id=?
+        ON CONFLICT DO NOTHING
+        """,
+        document,
+        space,
+        evidence);
+  }
+
   public void basis(UUID space, UUID item, UUID evidence, UUID member, Instant now) {
     jdbc.update(
         """
         INSERT INTO care_item_basis(id,space_id,item_id,source_evidence_id,submitted_by_membership_id,created_at)
-        VALUES (?,?,?,?,?,?) ON CONFLICT (item_id,source_evidence_id) DO NOTHING
+        VALUES (?,?,?,?,?,?) ON CONFLICT (item_id,source_evidence_id) DO UPDATE
+          SET included_in_analysis=TRUE WHERE NOT care_item_basis.included_in_analysis
         """,
         UUID.randomUUID(),
         space,
@@ -127,6 +181,23 @@ public class CareItemApplicationRepository {
         evidence,
         member,
         Timestamp.from(now));
+  }
+
+  public void scopeAnalysisBasisToReconfirmation(UUID space, UUID item, UUID document) {
+    jdbc.update(
+        """
+        UPDATE care_item_basis b SET included_in_analysis=(
+          EXISTS (SELECT 1 FROM care_item_document_parent p
+            WHERE p.space_id=b.space_id AND p.document_id=? AND p.parent_document_id=b.direct_document_id)
+          OR EXISTS (SELECT 1 FROM care_item_document_evidence e
+            WHERE e.space_id=b.space_id AND e.document_id=? AND e.evidence_id=b.source_evidence_id)
+        )
+        WHERE b.space_id=? AND b.item_id=?
+        """,
+        document,
+        document,
+        space,
+        item);
   }
 
   public UUID directInput(UUID space, String body, UUID previous, Instant now) {
@@ -227,7 +298,8 @@ public class CareItemApplicationRepository {
       UUID document,
       String status,
       String body,
-      boolean available) {
+      boolean available,
+      boolean visible) {
     @Override
     public String toString() {
       return "CareItem[id=" + id + "]";
