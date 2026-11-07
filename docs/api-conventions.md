@@ -36,7 +36,7 @@
 | `auth/code/AuthErrorCode` | `OAUTH_LOGIN_FAILED` |
 | `carespace/code/CareSpaceErrorCode` | `SPACE_LABEL_DUPLICATED`, `INVITATION_UNAVAILABLE`, `INVITATION_EXPIRED` |
 | `careitem/code/CareItemErrorCode` | `ITEM_LOCKED`, `EDIT_LOCK_EXPIRED`, `ITEM_STATE_CONFLICT` |
-| `proposal/code/ProposalErrorCode` | `PROPOSAL_BATCH_CONFLICT`, `PROPOSAL_STATE_CONFLICT` |
+| `proposal/code/ProposalErrorCode` | `PROPOSAL_BATCH_CONFLICT`, `PROPOSAL_STATE_CONFLICT`, `CHANGE_REQUEST_ALREADY_PENDING`, `CHANGE_REQUEST_STATE_CONFLICT` |
 
 기존 공통 오류로 충분하면 재사용합니다. FE가 별도로 구분할 업무 오류만 해당 도메인에서 추가하고, `code()`가 반환하는 문자열은 서비스 전체에서 중복되지 않도록 관리합니다. 현재 enum은 `name()`을 반환하므로 상수 이름을 바꾸면 외부 API 코드도 바뀐다는 점에 주의합니다.
 
@@ -59,7 +59,7 @@ throw new ApiException(ProposalErrorCode.PROPOSAL_BATCH_CONFLICT);
 | 401 | `UNAUTHENTICATED`, `OAUTH_LOGIN_FAILED` |
 | 403 | `FORBIDDEN` |
 | 404 | `RESOURCE_NOT_FOUND`, `INVITATION_UNAVAILABLE` |
-| 409 | `VERSION_CONFLICT`, `ITEM_STATE_CONFLICT`, `ITEM_LOCKED`, `EDIT_LOCK_EXPIRED`, `PROPOSAL_STATE_CONFLICT`, `IDEMPOTENCY_KEY_REUSED`, `REQUEST_IN_PROGRESS`, `SPACE_LABEL_DUPLICATED`, `PROPOSAL_BATCH_CONFLICT`, `DELETION_IMPACT_CHANGED` |
+| 409 | `VERSION_CONFLICT`, `ITEM_STATE_CONFLICT`, `ITEM_LOCKED`, `EDIT_LOCK_EXPIRED`, `PROPOSAL_STATE_CONFLICT`, `CHANGE_REQUEST_ALREADY_PENDING`, `CHANGE_REQUEST_STATE_CONFLICT`, `IDEMPOTENCY_KEY_REUSED`, `REQUEST_IN_PROGRESS`, `SPACE_LABEL_DUPLICATED`, `PROPOSAL_BATCH_CONFLICT`, `DELETION_IMPACT_CHANGED` |
 | 410 | `INVITATION_EXPIRED` |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 500 | `INTERNAL_ERROR` |
@@ -536,6 +536,12 @@ v1 CREATE와 v2 네 작업의 검토 제안 저장을 지원합니다. 소유자
 구성원은 기존 `/change-requests`에 `sourceType:"DIRECT_INPUT",action:"DELETE_ITEM"`으로 제출하고 소유자가 승인합니다. `values`는 생략/null만 허용하며 AI 제안 삭제는 지원하지 않습니다. 직접 삭제·요청 제출·승인 모두 본인 잠금이 필요합니다. 재확인 대상·내용이 가려진 항목은 `purpose:"DELETION"`으로 잠금을 획득·갱신합니다. 일반 EDIT 잠금은 정상 항목 삭제에만 사용할 수 있으며 RECONFIRMATION 잠금으로 삭제할 수 없습니다.
 
 동일 요청 재전송은 최초 삭제 메타데이터를 반환합니다. 새 키로 이미 삭제된 항목은 `409 ITEM_STATE_CONFLICT`, 버전 불일치는 `409 VERSION_CONFLICT`, 타인 잠금은 `409 ITEM_LOCKED`, 본인 잠금 검증 실패는 `409 EDIT_LOCK_EXPIRED`입니다. 계약·FE 연결·V19 전환 기준은 [일반 삭제](direct-care-items.md#일반-삭제)를 따릅니다.
+
+## 공간 정보 수정
+
+현재 소유자는 `PATCH /api/spaces/{spaceId}`에 `subjectLabel`, `expectedSpaceVersion`, `clientRequestId`를 전달합니다. 성공 `200 SUCCESS`의 data는 `{spaceId,subjectLabel,version,updatedAt}`입니다. 생성과 동일한 호칭 정규화·소유자별 중복 기준을 적용하며 실제 호칭 변경에만 공간 버전·수정 시각을 갱신합니다. 같은 호칭 저장과 성공 재전송은 이를 갱신하지 않습니다.
+
+현재 구성원은 `/change-requests`에 `DIRECT_INPUT UPDATE_SPACE`, `expectedSpaceVersion`, `values:{subjectLabel}`로 제출하고 소유자가 기존 결정 API로 처리합니다. 항목 대상·버전·잠금은 전달하지 않습니다. 공간 수정과 관리 항목을 함께 선택할 때 전체 원자성을 유지하며 같은 공간 중복 반영은 금지합니다. 공간 버전 변화는 대기 요청을 `SPACE_VERSION_CHANGED`로 무효화합니다. 요청 상세의 공간 버전, 결정 결과의 nullable `spaceVersion`, 재전송·배포·FE 기준은 [공간 정보 수정 계약](care-space-information.md)을 따릅니다.
 
 ## 항목 근거·확정 이력 조회
 
