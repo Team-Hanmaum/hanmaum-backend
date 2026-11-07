@@ -1,5 +1,6 @@
 package com.hanmaum.backend.proposal.repository;
 
+import com.hanmaum.backend.careitem.dto.CareItemAnswerSubmission;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.exception.ApiException;
 import com.hanmaum.backend.proposal.dto.ProposalDecisionRequest;
@@ -361,6 +362,32 @@ public class ChangeRequestRepository {
         .forEach(
             id -> items.addObject().put("requestEntryId", id.toString()).put("status", "PENDING"));
     return out;
+  }
+
+  public CareItemAnswerSubmission answerSubmissionResult(UUID space, UUID item, UUID request) {
+    // Replay uses the original submission state and IDs, without reading the answer document.
+    return jdbc
+        .query(
+            """
+        SELECT e.id,e.request_document_id,r.submitted_at
+        FROM change_request_entry e JOIN change_request r ON r.space_id=e.space_id AND r.id=e.request_id
+        WHERE e.space_id=? AND e.target_item_id=? AND e.request_id=?
+          AND e.source_type='DIRECT_INPUT' AND e.action='RESOLVE_QUESTION'
+        """,
+            (rs, n) ->
+                new CareItemAnswerSubmission(
+                    rs.getObject("request_document_id", UUID.class),
+                    request,
+                    rs.getObject("id", UUID.class),
+                    "PENDING",
+                    "UNCONFIRMED",
+                    rs.getTimestamp("submitted_at").toInstant()),
+            space,
+            item,
+            request)
+        .stream()
+        .findFirst()
+        .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND));
   }
 
   public JsonNode decisionResult(UUID space, UUID batch) {

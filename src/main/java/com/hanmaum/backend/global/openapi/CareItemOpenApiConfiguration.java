@@ -2,6 +2,9 @@ package com.hanmaum.backend.global.openapi;
 
 import com.hanmaum.backend.careitem.code.CareItemErrorCode;
 import com.hanmaum.backend.global.code.CommonErrorCode;
+import com.hanmaum.backend.global.code.ErrorCode;
+import com.hanmaum.backend.proposal.code.ProposalErrorCode;
+import io.swagger.v3.oas.models.Components;
 import io.swagger.v3.oas.models.examples.Example;
 import io.swagger.v3.oas.models.media.*;
 import io.swagger.v3.oas.models.responses.ApiResponse;
@@ -40,35 +43,43 @@ public class CareItemOpenApiConfiguration {
         path.getPost()
             .setSecurity(
                 List.of(new SecurityRequirement().addList("SessionCookie").addList("CsrfToken")));
-      var reconfirmation =
-          api.getPaths().get("/api/spaces/{spaceId}/items/{itemId}/reconfirmations");
-      if (reconfirmation != null && reconfirmation.getPost() != null) {
-        var conflicts =
-            new MediaType().schema(new Schema<>().$ref("#/components/schemas/ApiResponse"));
-        var components = api.getComponents();
-        for (var code :
-            List.of(
-                CommonErrorCode.VERSION_CONFLICT, CareItemErrorCode.ITEM_STATE_CONFLICT,
-                CareItemErrorCode.ITEM_LOCKED, CareItemErrorCode.EDIT_LOCK_EXPIRED,
-                CommonErrorCode.IDEMPOTENCY_KEY_REUSED, CommonErrorCode.REQUEST_IN_PROGRESS)) {
-          var example =
-              components
-                  .getResponses()
-                  .get(code.code())
-                  .getContent()
-                  .get("application/json")
-                  .getExample();
-          conflicts.addExamples(code.code(), new Example().summary(code.message()).value(example));
-        }
-        components.addResponses(
-            "RECONFIRM_CARE_ITEM_CONFLICT",
-            new ApiResponse()
-                .description("항목 상태·버전·편집 잠금·중복 요청 충돌")
-                .content(new Content().addMediaType("application/json", conflicts)));
-        reconfirmation
-            .getPost()
-            .setSecurity(
-                List.of(new SecurityRequirement().addList("SessionCookie").addList("CsrfToken")));
+      var components = api.getComponents();
+      components.addResponses(
+          "RECONFIRM_CARE_ITEM_CONFLICT",
+          conflict(
+              components,
+              "항목 상태·버전·편집 잠금·중복 요청 충돌",
+              List.of(
+                  CommonErrorCode.VERSION_CONFLICT,
+                  CareItemErrorCode.ITEM_STATE_CONFLICT,
+                  CareItemErrorCode.ITEM_LOCKED,
+                  CareItemErrorCode.EDIT_LOCK_EXPIRED,
+                  CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
+                  CommonErrorCode.REQUEST_IN_PROGRESS)));
+      components.addResponses(
+          "SUBMIT_QUESTION_ANSWER_CONFLICT",
+          conflict(
+              components,
+              "질문 상태·버전·중복 요청 충돌",
+              List.of(
+                  CommonErrorCode.VERSION_CONFLICT,
+                  CareItemErrorCode.ITEM_STATE_CONFLICT,
+                  ProposalErrorCode.CHANGE_REQUEST_ALREADY_PENDING,
+                  CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
+                  CommonErrorCode.REQUEST_IN_PROGRESS)));
+      for (String suffix : List.of("/reconfirmations", "/answers")) {
+        var mutation = api.getPaths().get("/api/spaces/{spaceId}/items/{itemId}" + suffix);
+        if (mutation != null && mutation.getPost() != null)
+          mutation
+              .getPost()
+              .setSecurity(
+                  List.of(new SecurityRequirement().addList("SessionCookie").addList("CsrfToken")));
+      }
+      var answerBody = components.getSchemas().get("AnswerBody");
+      if (answerBody != null) {
+        answerBody.setRequired(
+            List.of("answer", "basis", "expectedItemVersion", "clientRequestId"));
+        answerBody.setAdditionalProperties(false);
       }
       var reconfirmationBody = api.getComponents().getSchemas().get("ReconfirmationBody");
       if (reconfirmationBody != null)
@@ -93,5 +104,22 @@ public class CareItemOpenApiConfiguration {
         request.addProperty("itemType", itemType);
       }
     };
+  }
+
+  private ApiResponse conflict(Components components, String description, List<ErrorCode> codes) {
+    var media = new MediaType().schema(new Schema<>().$ref("#/components/schemas/ApiResponse"));
+    for (var code : codes) {
+      var example =
+          components
+              .getResponses()
+              .get(code.code())
+              .getContent()
+              .get("application/json")
+              .getExample();
+      media.addExamples(code.code(), new Example().summary(code.message()).value(example));
+    }
+    return new ApiResponse()
+        .description(description)
+        .content(new Content().addMediaType("application/json", media));
   }
 }

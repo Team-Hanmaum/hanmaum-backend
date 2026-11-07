@@ -659,6 +659,14 @@ class CareItemIntegrationTests {
                 .isMissingNode())
         .isFalse();
     assertThat(json).contains("CREATE_CARE_ITEM_CONFLICT");
+    var submission =
+        doc.path("paths").path("/api/spaces/{spaceId}/items/{itemId}/answers").path("post");
+    assertThat(submission.at("/security/0").propertyNames())
+        .containsExactlyInAnyOrder("SessionCookie", "CsrfToken");
+    assertThat(submission.at("/responses/201/content/application~1json/schema/$ref").asText())
+        .contains("CareItemAnswerSubmission");
+    assertThat(submission.at("/responses/409/$ref").asText())
+        .isEqualTo("#/components/responses/SUBMIT_QUESTION_ANSWER_CONFLICT");
     assertThat(
             doc.at(
                     "/paths/~1api~1spaces~1{spaceId}~1items~1{itemId}~1reconfirmations/post/responses/409/$ref")

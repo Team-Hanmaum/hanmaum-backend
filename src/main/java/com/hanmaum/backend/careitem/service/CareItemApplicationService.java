@@ -49,6 +49,29 @@ public class CareItemApplicationService {
     if (item.version() != expected) throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
   }
 
+  public void requireOpenQuestion(CareItemApplicationRepository.Item item, long expected) {
+    if (!item.visible()) throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND);
+    if (item.version() != expected) throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
+    if (!item.available()
+        || !"QUESTION".equals(item.type())
+        || !"UNCONFIRMED".equals(item.status()))
+      throw new ApiException(CareItemErrorCode.ITEM_STATE_CONFLICT);
+  }
+
+  public Prepared prepareAnswer(
+      UUID space, CareItemApplicationRepository.Item target, JsonNode answer, String path) {
+    var values = mapper.createObjectNode();
+    values.set("confirmedAnswer", answer);
+    return prepare(
+        space,
+        target.type(),
+        "RESOLVE",
+        target,
+        values,
+        path,
+        CareItemErrorCode.ITEM_STATE_CONFLICT);
+  }
+
   /** No writes here: every entry must be prepared before the first entry is persisted. */
   public Prepared prepare(
       UUID space,

@@ -82,6 +82,162 @@ class ChangeRequestIntegrationTests {
   }
 
   @Test
+  void familiesSubmitAnswersWithoutALeaseAndOnlyTheFirstOwnerApprovalConfirmsTheQuestion()
+      throws Exception {
+    UUID item = createQuestion(space);
+    String path = "/items/" + item + "/answers";
+    String memberLease = locks.acquire(member, space, item, 1).leaseToken();
+    var first =
+        mapper
+            .createObjectNode()
+            .put("answer", "오후 2시")
+            .put("basis", "병원에 전화함")
+            .put("expectedItemVersion", "1")
+            .put("clientRequestId", UUID.randomUUID().toString());
+    var submitted = postData(member, path, first, 201);
+    UUID request = uuid(submitted, "requestId");
+    assertThat(uuid(submitted, "answerId")).isNotEqualTo(uuid(submitted, "requestEntryId"));
+    assertThat(submitted.path("status").asText()).isEqualTo("PENDING");
+    assertThat(submitted.path("questionStatus").asText()).isEqualTo("UNCONFIRMED");
+    assertThat(postData(member, path, first, 201)).isEqualTo(submitted);
+    postError(member, path, first.deepCopy().put("answer", "오후 3시"), 409, "IDEMPOTENCY_KEY_REUSED");
+    postError(
+        member,
+        path,
+        first.deepCopy().put("clientRequestId", UUID.randomUUID().toString()),
+        409,
+        "CHANGE_REQUEST_ALREADY_PENDING");
+
+    var other =
+        first
+            .deepCopy()
+            .put("answer", "오후 3시")
+            .put("clientRequestId", UUID.randomUUID().toString());
+    UUID second = uuid(postData(owner, path, other, 201), "requestId");
+    var before = getData(owner, "/items/" + item);
+    assertThat(before.path("version").asText()).isEqualTo("1");
+    assertThat(before.path("status").asText()).isEqualTo("UNCONFIRMED");
+    assertThat(before.path("confirmedAnswer").isNull()).isTrue();
+    assertThat(before.path("answers").size()).isEqualTo(2);
+    var firstReview = detail(owner, request).at("/entries/0");
+    assertThat(firstReview.at("/requestedValues/basis").asText()).isEqualTo("병원에 전화함");
+    var blocked = batch();
+    blocked.withArray("entries").add(decisionEntry(firstReview).put("expectedItemVersion", "1"));
+    postError(owner, "/request-applications", blocked, 409, "ITEM_LOCKED");
+    var stale = batch();
+    stale
+        .withArray("entries")
+        .add(decisionEntry(detail(owner, second).at("/entries/0")).put("expectedItemVersion", "1"));
+    locks.release(member, space, item, memberLease);
+    var approved = approval(request, 0, item);
+    postError(member, "/request-applications", approved, 403, "FORBIDDEN");
+    var override = approved.deepCopy();
+    ((ObjectNode) override.at("/entries/0")).putObject("values").put("answer", "바꾼 답변");
+    postError(owner, "/request-applications", override, 400, "INVALID_REQUEST");
+    postData(owner, "/request-applications", approved, 200);
+    var confirmed = getData(owner, "/items/" + item);
+    assertThat(confirmed.path("version").asText()).isEqualTo("2");
+    assertThat(confirmed.path("status").asText()).isEqualTo("CONFIRMED");
+    assertThat(confirmed.path("confirmedAnswer").asText()).isEqualTo("오후 2시");
+    assertThat(confirmed.path("answers").toString()).contains("APPLIED", "INVALIDATED");
+    assertThat(getData(owner, "/items/" + item + "/evidence").toString()).contains("병원에 전화함");
+    assertThat(getData(owner, "/items/" + item + "/history").toString()).contains("RESOLVE");
+    postError(owner, "/request-applications", stale, 409, "VERSION_CONFLICT");
+    assertThat(postData(member, path, first, 201)).isEqualTo(submitted);
+    postError(
+        owner,
+        path,
+        other
+            .deepCopy()
+            .put("expectedItemVersion", "2")
+            .put("clientRequestId", UUID.randomUUID().toString()),
+        409,
+        "ITEM_STATE_CONFLICT");
+  }
+
+  @Test
+  void deletingTheQuestionSourceRedactsSubmittedAndConfirmedAnswers() throws Exception {
+    var source =
+        propose(
+            List.of(
+                new Spec("CREATE", "QUESTION", null, Map.of("title", "원본에서 만든 질문"), List.of())));
+    var creation = batch();
+    creation
+        .withArray("entries")
+        .add(
+            memberEntry(
+                member, ids(source).getFirst(), null, createValues("QUESTION", "원본에서 만든 질문")));
+    UUID creationRequest = uuid(postData(member, "/change-requests", creation, 201), "requestId");
+    UUID item =
+        uuid(
+            postData(owner, "/request-applications", approval(creationRequest, 0, null), 200)
+                .at("/results/0"),
+            "itemId");
+    String itemPath = "/items/" + item;
+    var body =
+        mapper
+            .createObjectNode()
+            .put("answer", "제거 대상 답변")
+            .put("basis", "제거 대상 근거")
+            .put("expectedItemVersion", "1")
+            .put("clientRequestId", UUID.randomUUID().toString());
+    var submitted = postData(member, itemPath + "/answers", body, 201);
+    UUID request = uuid(submitted, "requestId");
+    postData(owner, "/request-applications", approval(request, 0, item), 200);
+    String recordPath = "/source-records/" + source.recordId();
+    var impact = getData(owner, recordPath + "/deletion-impact");
+    var deletion =
+        mapper
+            .createObjectNode()
+            .put("expectedRecordVersion", "1")
+            .put("impactToken", impact.path("impactToken").asText())
+            .put("clientRequestId", UUID.randomUUID().toString());
+    postData(owner, recordPath + "/deletions", deletion, 200);
+    var redacted = getData(owner, itemPath);
+    assertThat(redacted.path("confirmedAnswer").isNull()).isTrue();
+    assertThat(redacted.at("/answers/0/answer").isNull()).isTrue();
+    assertThat(redacted.at("/answers/0/basis").isNull()).isTrue();
+    assertThat(detail(owner, request).at("/entries/0/requestedValues").isNull()).isTrue();
+    assertThat(postData(member, itemPath + "/answers", body, 201)).isEqualTo(submitted);
+  }
+
+  @Test
+  void answerSubmissionRejectsMissingValuesWrongSpaceAndStaleVersion() throws Exception {
+    UUID item = createQuestion(space);
+    String path = "/items/" + item + "/answers";
+    var body =
+        mapper
+            .createObjectNode()
+            .put("answer", "답변")
+            .put("basis", "직접 확인")
+            .put("expectedItemVersion", "1")
+            .put("clientRequestId", UUID.randomUUID().toString());
+    postError(member, path, body.deepCopy().put("basis", " "), 400, "INVALID_REQUEST");
+    postError(member, path, body.deepCopy().put("answer", ""), 400, "INVALID_REQUEST");
+    postError(
+        member, path, body.deepCopy().put("expectedItemVersion", "2"), 409, "VERSION_CONFLICT");
+    postError(user(), path, body, 403, "FORBIDDEN");
+    UUID foreignSpace =
+        spaces.create(owner, new CreateCareSpaceRequest("다른 공간", UUID.randomUUID())).spaceId();
+    UUID foreignItem = createQuestion(foreignSpace);
+    postError(owner, "/items/" + foreignItem + "/answers", body, 404, "RESOURCE_NOT_FOUND");
+  }
+
+  private UUID createQuestion(UUID targetSpace) {
+    return direct
+        .create(
+            owner,
+            targetSpace,
+            new CreateCareItemRequest(
+                "QUESTION",
+                "병원 예약 시간은?",
+                null,
+                new CreateCareItemRequest.QuestionFields(),
+                UUID.randomUUID()))
+        .itemId();
+  }
+
+  @Test
   void documentsSuccessfulQueriesAndEvidenceOnlyDecisionValues() throws Exception {
     var specification =
         mapper.readTree(

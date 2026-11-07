@@ -498,9 +498,19 @@ CSRF·로그아웃 등 존재하는 경로만 문서화하며 미구현 도메�
 - `SCHEDULED` 일정만 한국 시간(Asia/Seoul)으로 구분합니다. 시각까지 있으면 해당 시각이 지난 후, 날짜만 있으면 다음 날 0시부터 지난 일정입니다. 날짜 미정은 예정의 마지막입니다. 날짜 경과는 저장된 상태를 변경하지 않습니다.
 - 예정 탭의 `pastScheduleCount`는 지난 일정 전체 건수입니다. 다른 조회에서는 null입니다. 재확인 대상은 일반 건수에서 제외하고 별도 배열에 ID·유형·상태·버전과 표시 플래그만 남깁니다(제목·담당자 이름 null, fields 빈 객체). 상충만 있는 항목은 현재 값과 확인 필요 표시를 유지합니다. 할 일 담당자는 같은 공간에 현재 참여 중인 경우에만 표시합니다.
 - 돌봄 탭의 별도 ‘재확인 필요’ 영역은 유형 기준입니다. 예를 들어 일정의 `view=UPCOMING`과 `view=PAST`는 같은 재확인 배열을 반환하고, 일반 카드·건수만 각각의 날짜 조건으로 구분합니다.
-- `GET /api/spaces/{spaceId}/items/{itemId}`는 현재값·상태·버전·시각과 재확인/상충/삭제 표시를 제공합니다. `editLock`은 현재 잠금 요약이고 `confirmedAnswer`는 소유자가 확정한 답변입니다. 별도 답변 제출 기능의 `answers`는 아직 빈 배열입니다.
+- `GET /api/spaces/{spaceId}/items/{itemId}`는 현재값·상태·버전·시각과 재확인/상충/삭제 표시를 제공합니다. `editLock`은 현재 잠금 요약이고 `confirmedAnswer`는 소유자가 확정한 답변입니다. 질문의 `answers`는 제출 이력을 반환하며 질문 이외 유형에는 빈 배열을 반환합니다.
 - 권한과 목록/상세는 같은 SQL 스냅샷에서 조회합니다. 현재 비구성원은 403, 다른 공간의 항목이나 삭제 중인 공간은 404입니다. 조회는 업무 데이터를 변경하지 않으며 응답은 `Cache-Control: no-store`입니다.
 - 문서 내용이 제거됐으면 제목·설명/fields를 노출하지 않고 재확인 표시와 `redactedFields`를 반환합니다. 일반 삭제 상세는 내용 없는 삭제 표시입니다. 별도 근거·확정 이력 조회는 아래 계약을 따릅니다.
+
+### 확인사항 답변 제출 API
+
+- `POST /api/spaces/{spaceId}/items/{itemId}/answers`는 세션 쿠키와 CSRF 토큰이 필요합니다. 현재 공간 참여자는 `answer`, `basis`(공백이 아닌 문자열), `expectedItemVersion`(양의 정수 문자열), `clientRequestId`(UUID)를 모두 보냅니다.
+- 미확인 질문의 답변·근거를 한 승인 대기 요청에 저장합니다. 소유자 본인의 제출에도 같은 규칙을 적용합니다. 제출 시 편집 잠금을 요구하거나 변경하지 않으며, 질문 상태와 버전은 유지합니다.
+- 201 응답의 `data`는 `answerId`, `requestId`, `requestEntryId`, `status: "PENDING"`, `questionStatus: "UNCONFIRMED"`, `submittedAt`입니다. 같은 요청 ID와 같은 내용의 재전송은 원래 제출 결과를 반환합니다. 한 참여자가 같은 질문 버전에 이미 유효한 대기 답변을 남겼다면 새 요청 ID의 추가 제출은 `409 CHANGE_REQUEST_ALREADY_PENDING`입니다. 다른 참여자는 각자 제출할 수 있습니다.
+- 변경 요청 상세에서 `sourceType: "DIRECT_INPUT"`, `action: "RESOLVE_QUESTION"` 및 `requestedValues.answer`와 `requestedValues.basis`로 검토합니다. 소유자는 기존 `POST /api/spaces/{spaceId}/request-applications`에 요청 항목 ID, 검토 토큰, 질문 버전, 본인 편집 잠금 토큰을 전달합니다. 승인할 답변은 서버가 저장된 제출 내용에서 가져오므로 이 동작에 `values` 재입력을 허용하지 않습니다.
+- 첫 유효 승인만 질문을 `CONFIRMED`로 전환하고 확정 답변, 근거, `RESOLVE` 이력, 요청 결정을 함께 기록합니다. 이후 다른 답변 요청은 항목 버전 변경으로 무효화되며, 오래된 승인은 `409 VERSION_CONFLICT`입니다.
+- 상세의 `answers[]`는 `answerId`, `requestEntryId`, `answer`, `basis`, `submittedByMembershipId`, `submittedAt`, `status`를 반환합니다. 상태는 `PENDING`, `APPLIED`, `DECLINED`, `CANCELED`, `INVALIDATED`입니다. 원본 삭제 등으로 답변 문서가 무효화되면 `answer`와 `basis`를 null로 반환합니다.
+- 제출 오류는 `400 INVALID_REQUEST`, `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 RESOURCE_NOT_FOUND`(대상 없음·다른 공간·삭제 항목), `409 VERSION_CONFLICT`(버전 불일치), `409 ITEM_STATE_CONFLICT`(열린 질문이 아니거나 항목 내용이 가려짐), `409 IDEMPOTENCY_KEY_REUSED`, `409 REQUEST_IN_PROGRESS`, `413 PAYLOAD_TOO_LARGE`입니다.
 
 ### 돌봄 항목 근거 재확인 API
 

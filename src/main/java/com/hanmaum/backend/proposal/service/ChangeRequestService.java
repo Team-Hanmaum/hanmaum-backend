@@ -1,5 +1,6 @@
 package com.hanmaum.backend.proposal.service;
 
+import com.hanmaum.backend.careitem.dto.CareItemAnswerSubmission;
 import com.hanmaum.backend.careitem.repository.CareItemApplicationRepository;
 import com.hanmaum.backend.careitem.service.*;
 import com.hanmaum.backend.carespace.dto.*;
@@ -148,6 +149,52 @@ public class ChangeRequestService {
     return decide(actor, space, null, input, "APPLIED");
   }
 
+  public CareItemAnswerSubmission submitAnswer(UUID actor, UUID space, UUID item, JsonNode input) {
+    validateSize(input);
+    CareMutationInput.object(
+        input, "body", Set.of("answer", "basis", "expectedItemVersion", "clientRequestId"));
+    var key = CareMutationInput.uuid(input.path("clientRequestId"), "clientRequestId", true);
+    long expected =
+        CareMutationInput.version(input.path("expectedItemVersion"), "expectedItemVersion", true);
+    var values =
+        mapper
+            .createObjectNode()
+            .put("answer", CareMutationInput.text(input.path("answer"), "answer", true))
+            .put("basis", CareMutationInput.text(input.path("basis"), "basis", true));
+    CareMutationSizeLimits.bytes(
+        mapper,
+        mapper.createObjectNode().set("values", values),
+        CareMutationSizeLimits.DOCUMENT_BYTES,
+        "body");
+    var logical =
+        mapper
+            .createObjectNode()
+            .put("itemId", item.toString())
+            .put("expectedItemVersion", expected);
+    logical.set("values", values);
+    var command = begin(actor, space, key, "SUBMIT_QUESTION_ANSWER", null, logical);
+    UUID member = access.requireActiveMember(actor, space).membershipId();
+    var target = applications.lock(space, item);
+    if (!target.visible()) throw missing();
+    if (command.previous() != null)
+      return requests.answerSubmissionResult(space, item, replay(command, member));
+    applications.requireOpenQuestion(target, expected);
+    if (requests.hasPendingDirect(
+        space, member, item, ProposalAction.RESOLVE_QUESTION.name(), expected))
+      throw new ApiException(ProposalErrorCode.CHANGE_REQUEST_ALREADY_PENDING);
+
+    var now = now();
+    UUID request = UUID.randomUUID();
+    requests.createRequest(space, request, member, now);
+    var entry =
+        new ProposalDecisionRequest.Entry(
+            null, ProposalAction.RESOLVE_QUESTION, null, item, expected, null, values);
+    UUID document = requests.document(space, values, null, null, target.document(), now);
+    requests.insertEntry(space, request, UUID.randomUUID(), 0, entry, document);
+    save(command, member, request, now);
+    return requests.answerSubmissionResult(space, item, request);
+  }
+
   public JsonNode decline(UUID actor, UUID space, JsonNode input) {
     return decide(actor, space, null, input, "DECLINED");
   }
@@ -227,8 +274,10 @@ public class ChangeRequestService {
             throw CareItemInput.invalid("entries[" + i + "]", "생성 요청에는 버전을 전달하지 않습니다.");
           throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
         }
-        var values = chosen.values() == null ? mapper.readTree(e.values()) : chosen.values();
         var proposal = loaded.get(e.proposalId());
+        if (proposal == null && e.action().equals("RESOLVE_QUESTION") && chosen.values() != null)
+          throw CareItemInput.invalid("entries[" + i + "].values", "제출된 답변을 그대로 승인해주세요.");
+        var values = chosen.values() == null ? mapper.readTree(e.values()) : chosen.values();
         var operation =
             new ProposalDecisionRequest.Entry(
                 e.proposalId(),
@@ -329,6 +378,9 @@ public class ChangeRequestService {
         throw CareItemInput.invalid(path, "수정할 대상과 버전을 입력해주세요.");
       applications.requireEditable(target, e.expectedItemVersion());
       leases.requireForWrite(space, target.id(), member, e.leaseToken());
+      if (e.action() == ProposalAction.RESOLVE_QUESTION)
+        return applications.prepareAnswer(
+            space, target, e.values().path("answer"), path + ".values");
     }
     return applications.prepareDirect(space, target, e.values(), path + ".values");
   }
