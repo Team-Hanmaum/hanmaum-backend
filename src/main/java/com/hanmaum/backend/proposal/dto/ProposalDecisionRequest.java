@@ -82,8 +82,15 @@ public record ProposalDecisionRequest(UUID clientRequestId, List<Entry> entries)
           throw CareItemInput.invalid(path + ".action", "허용된 반영 동작을 입력해주세요.");
         }
       }
-      if (direct && action != ProposalAction.CREATE_ITEM && action != ProposalAction.UPDATE_ITEM)
-        throw CareItemInput.invalid(path + ".action", "직접 입력은 생성·수정만 지원합니다.");
+      if (action == ProposalAction.DELETE_ITEM && !direct)
+        throw CareItemInput.invalid(path + ".action", "삭제는 직접 입력 요청으로 제출해주세요.");
+      if (direct
+          && action != ProposalAction.CREATE_ITEM
+          && action != ProposalAction.UPDATE_ITEM
+          && action != ProposalAction.DELETE_ITEM)
+        throw CareItemInput.invalid(path + ".action", "직접 입력은 생성·수정·삭제만 지원합니다.");
+      if (action == ProposalAction.DELETE_ITEM && e.hasNonNull("values"))
+        throw CareItemInput.invalid(path + ".values", "삭제에는 values를 전달하지 않습니다.");
       entries.add(
           new Entry(
               id,

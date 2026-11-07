@@ -132,6 +132,20 @@ public class EditLockService {
     locks.release(space, item);
   }
 
+  /** Deletion never restores content and may also target an item awaiting reconfirmation. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void requireForDeletion(UUID space, UUID item, UUID member, String token) {
+    var state = lockItem(space, item);
+    if (!state.visible()) throw new ApiException(CareItemErrorCode.ITEM_STATE_CONFLICT);
+    var live = locks.live(space, item, now());
+    if (live.isPresent() && !live.get().member().equals(member))
+      throw new ApiException(CareItemErrorCode.ITEM_LOCKED);
+    var lease = requireLease(space, item, member, token);
+    if (lease.purpose() != EditLockPurpose.DELETION
+        && (lease.purpose() != EditLockPurpose.EDIT || state.needsReconfirmation()))
+      throw new ApiException(CareItemErrorCode.EDIT_LOCK_EXPIRED);
+  }
+
   private EditLockRepository.Item requireItem(UUID space, UUID item, EditLockPurpose purpose) {
     var state = lockItem(space, item);
     requireState(state, purpose);

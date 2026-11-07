@@ -26,10 +26,11 @@
 
 목록 행은 `version, changeKind, changedBy, changedAt, redactedFields`다. 대기 제안·요청은 포함하지 않는다. 저장 이력이 없으면 빈 배열이다. 일반 삭제 항목도 현재 참여자에게 보존된 이력을 제공한다.
 
-- 공개 changeKind는 현재 저장 동작 `CREATE, UPDATE, RESOLVE, LINK_EVIDENCE, RECONFIRM`과 `ASSIGNEE_CHANGE, STATUS_CHANGE`다. `UNASSIGN`은 ASSIGNEE_CHANGE로 표시한다. UPDATE 중 조회 가능한 전후 값에서 상태만 바뀌었으면 STATUS_CHANGE, 담당자만 바뀌었으면 ASSIGNEE_CHANGE다. 여러 필드가 바뀌거나 내용을 확인할 수 없으면 UPDATE를 유지한다.
+- 공개 changeKind는 현재 저장 동작 `CREATE, UPDATE, RESOLVE, LINK_EVIDENCE, RECONFIRM, DELETE`와 `ASSIGNEE_CHANGE, STATUS_CHANGE`다. `UNASSIGN`은 ASSIGNEE_CHANGE로 표시한다. UPDATE 중 조회 가능한 전후 값에서 상태만 바뀌었으면 STATUS_CHANGE, 담당자만 바뀌었으면 ASSIGNEE_CHANGE다. 여러 필드가 바뀌거나 내용을 확인할 수 없으면 UPDATE를 유지한다.
 - changedBy는 기존 작성자 표현 `{membershipId, displayName, withdrawn}`을 사용한다. 회원 연결 제거 시 앞의 두 값은 null, withdrawn=true다. 단순 공간 참여 종료는 탈퇴로 표시하지 않는다. 회원 탈퇴 실행 API 자체의 구현을 의미하지 않는다.
 - 상세는 `itemId, version, previousVersion, before, after, changedBy, changedAt, evidenceIds, redactedFields`다. before/after는 당시 title·description·유형별 fields·status, 질문의 confirmedAnswer만 제공한다. 내부 AI 제안·요청 문서를 그대로 반환하지 않는다.
 - 최초 버전은 previousVersion과 before가 null이다. 그 외에는 선택 버전보다 작은 가장 최근 저장 버전과 비교한다. 과거 담당자 ID는 현재 담당자로 바꿔 쓰거나 현재 참여 여부 때문에 지우지 않는다.
+- DELETE 버전은 `before`에 조회 가능한 직전 값을 제공하며 `after`는 항상 null이다. 이 after는 원본 삭제에 따른 가림이 아니므로 `redactedFields`에 after를 추가하지 않는다. 이후 원본 삭제로 직전 내용이 제거되면 before를 null로 가리고 해당 표시를 추가한다.
 - 제거된 문서와 그 문서를 복사한 파생 문서는 DB의 `care_document_available`로 가린다. before/after를 각각 검증하여 읽을 수 없는 쪽은 null, redactedFields에 `before` 또는 `after`를 넣는다. 목록에도 같은 표시를 제공하고 버전·변경자·시각은 유지한다. 현재 문서의 가시성 상실만으로 독립적인 과거 이력까지 모두 숨기지 않는다.
 - evidenceIds는 **저장된 결정의 항목/버전 및 직접 문서 연결로 해당 변경과의 관계를 확인할 수 있고 현재 유효한 근거 연결만** 제공한다. 현재 근거와 동일한 원본·인용·버전·제안·문서/조상 문서 가용성 검사를 적용하며, REDACTED 근거의 ID는 이력 상세에서 제외한다. 변경자·시각 등 이력 메타데이터는 유지한다. LINK_EVIDENCE는 같은 문서를 재사용하더라도 해당 버전의 결정에 연결된 인용만 제공한다. 현재 근거 전체를 과거 버전에 복사하거나 시각으로 과거 연결을 추정하지 않는다. 연결이 제거되었거나 관계를 입증할 수 없는 기존 데이터는 빈 배열일 수 있다. 과거 근거 연결 전체의 불변 스냅샷 저장을 의미하지 않는다.
 

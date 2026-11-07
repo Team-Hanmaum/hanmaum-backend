@@ -136,7 +136,7 @@ public class ChangeRequestService {
               e.values(),
               p == null ? null : p.document(),
               p == null ? null : p.run(),
-              target == null ? null : target.document(),
+              target == null || e.action() == ProposalAction.DELETE_ITEM ? null : target.document(),
               now);
       requests.insertEntry(space, id, UUID.randomUUID(), i, e, doc);
       if (target != null) leases.releaseAfterSave(space, target.id());
@@ -277,6 +277,10 @@ public class ChangeRequestService {
         var proposal = loaded.get(e.proposalId());
         if (proposal == null && e.action().equals("RESOLVE_QUESTION") && chosen.values() != null)
           throw CareItemInput.invalid("entries[" + i + "].values", "제출된 답변을 그대로 승인해주세요.");
+        if (e.action().equals("DELETE_ITEM")
+            && chosen.values() != null
+            && !chosen.values().isNull())
+          throw CareItemInput.invalid("entries[" + i + "].values", "삭제에는 values를 전달하지 않습니다.");
         var values = chosen.values() == null ? mapper.readTree(e.values()) : chosen.values();
         var operation =
             new ProposalDecisionRequest.Entry(
@@ -308,7 +312,7 @@ public class ChangeRequestService {
                     operation,
                     locked.get(e.targetItemId()),
                     "entries[" + i + "]");
-        if (!e.action().equals("LINK_EVIDENCE")) {
+        if (!Set.of("LINK_EVIDENCE", "DELETE_ITEM").contains(e.action())) {
           CareMutationSizeLimits.strings(prepared.body(), "entries[" + i + "].values");
           documentBytes +=
               CareMutationSizeLimits.bytes(
@@ -376,6 +380,13 @@ public class ChangeRequestService {
     } else {
       if (target == null || e.expectedItemVersion() == null)
         throw CareItemInput.invalid(path, "수정할 대상과 버전을 입력해주세요.");
+      if (e.action() == ProposalAction.DELETE_ITEM) {
+        if (e.values() != null && !e.values().isNull())
+          throw CareItemInput.invalid(path + ".values", "삭제에는 values를 전달하지 않습니다.");
+        var deletion = applications.prepareDeletion(target, e.expectedItemVersion());
+        leases.requireForDeletion(space, target.id(), member, e.leaseToken());
+        return deletion;
+      }
       applications.requireEditable(target, e.expectedItemVersion());
       leases.requireForWrite(space, target.id(), member, e.leaseToken());
       if (e.action() == ProposalAction.RESOLVE_QUESTION)

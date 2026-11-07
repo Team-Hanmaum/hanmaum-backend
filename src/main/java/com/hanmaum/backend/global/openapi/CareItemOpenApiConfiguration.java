@@ -57,6 +57,18 @@ public class CareItemOpenApiConfiguration {
                   CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
                   CommonErrorCode.REQUEST_IN_PROGRESS)));
       components.addResponses(
+          "DELETE_CARE_ITEM_CONFLICT",
+          conflict(
+              components,
+              "삭제 상태·버전·본인 잠금·중복 요청 충돌",
+              List.of(
+                  CommonErrorCode.VERSION_CONFLICT,
+                  CareItemErrorCode.ITEM_STATE_CONFLICT,
+                  CareItemErrorCode.ITEM_LOCKED,
+                  CareItemErrorCode.EDIT_LOCK_EXPIRED,
+                  CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
+                  CommonErrorCode.REQUEST_IN_PROGRESS)));
+      components.addResponses(
           "SUBMIT_QUESTION_ANSWER_CONFLICT",
           conflict(
               components,
@@ -67,7 +79,7 @@ public class CareItemOpenApiConfiguration {
                   ProposalErrorCode.CHANGE_REQUEST_ALREADY_PENDING,
                   CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
                   CommonErrorCode.REQUEST_IN_PROGRESS)));
-      for (String suffix : List.of("/reconfirmations", "/answers")) {
+      for (String suffix : List.of("/reconfirmations", "/answers", "/deletions")) {
         var mutation = api.getPaths().get("/api/spaces/{spaceId}/items/{itemId}" + suffix);
         if (mutation != null && mutation.getPost() != null)
           mutation
@@ -76,6 +88,11 @@ public class CareItemOpenApiConfiguration {
                   List.of(new SecurityRequirement().addList("SessionCookie").addList("CsrfToken")));
       }
       var answerBody = components.getSchemas().get("AnswerBody");
+      var deletionBody = components.getSchemas().get("DeletionBody");
+      if (deletionBody != null) {
+        deletionBody.setRequired(List.of("expectedItemVersion", "leaseToken", "clientRequestId"));
+        deletionBody.setAdditionalProperties(false);
+      }
       if (answerBody != null) {
         answerBody.setRequired(
             List.of("answer", "basis", "expectedItemVersion", "clientRequestId"));

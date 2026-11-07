@@ -64,7 +64,7 @@
 
 `decision`은 미결정이면 null, 결정 후에는 `batchId`, `decidedByMembershipId`, `decidedAt`, `itemId`, `itemVersion`, `appliedValues`다. 미적용·취소는 항목과 반영 값이 null이다. 원래 `requestedValues`와 최종 `appliedValues`는 분리한다. 생성·수정·답변 확정의 `appliedValues`는 소유자 반영 시 저장한 최종 문서 값이며, UPDATE의 유지된 값도 포함한다. 조회로 DB 상태를 바꾸지 않는다.
 
-`LINK_EVIDENCE`는 내용 변경 없이 근거만 연결하므로 `appliedValues`는 항상 null이다. 항목 ID·버전·처리 정보는 유지하고 기존 항목 내용은 `currentValues`에서 확인한다. 이 null은 삭제된 값이 아니므로 `redactedFields`에 `decision.appliedValues`를 추가하지 않는다. 내부 `result_document_id`는 이력의 항목 문서 참조이며, 근거 연결 결정의 입력값을 의미하지 않는다.
+`LINK_EVIDENCE`와 `DELETE_ITEM`은 `appliedValues`가 항상 null이다. 항목 ID·버전·처리 정보는 유지하며, 삭제된 항목의 `currentValues`도 null이다. 이 결정의 null은 삭제에 의한 가림 표시가 아니므로 `redactedFields`에 `decision.appliedValues`를 추가하지 않는다. 내부 `result_document_id`는 이력의 항목 문서 참조이며 근거 연결·삭제의 입력값을 의미하지 않는다. 삭제는 DIRECT_INPUT만 허용하고 [일반 삭제 계약](direct-care-items.md#일반-삭제)의 필수 본인 잠금·내용 보존 규칙을 따른다.
 
 ## 소유자 반영
 
@@ -130,4 +130,4 @@ V12는 제출 묶음·요청 항목·결정 묶음과 요청 문서 유형을 �
 
 Swagger 수동 확인은 두 브라우저 프로필에서 구성원/소유자로 각각 로그인한 뒤 진행한다. 구성원 제안 상세 → 기존 대상이면 잠금 → 제출(201, 항목 불변) → 소유자 요청 상세 → 기존 대상 잠금 → 반영(200) → 항목 버전·요청/제안 APPLIED 확인 순서다. 두 세션은 각자 CSRF 토큰을 사용한다. 빈 제안 배열을 반환하는 AI stub만으로는 제출 대상이 생기지 않는다.
 
-AI 제안 없는 등록·수정·상태 변경은 #37에서 확장했다. 일반 삭제·가족 답변 제출·공간 정보 수정·관련 항목 재분석·알림은 별도 작업이다. 노션 DB와 기존 템플릿의 최종 동기화는 별도 사용자 지시 시 진행한다.
+AI 제안 없는 등록·수정·상태 변경은 #37, 일반 삭제는 #61, 가족 답변 제출은 #50에서 확장했다. 공간 정보 수정·관련 항목 재분석·알림은 별도 작업이다. 노션 DB와 기존 템플릿의 최종 동기화는 별도 사용자 지시 시 진행한다.

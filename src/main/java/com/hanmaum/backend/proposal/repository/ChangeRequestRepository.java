@@ -172,7 +172,7 @@ public class ChangeRequestRepository {
         change_request_entry_invalid_reason(e.id) invalid_reason,
         CASE WHEN care_document_available(d.id) THEN (d.body->'values')::text END requested_values,
         b.decided_by_membership_id,b.decided_at,
-        CASE WHEN e.action<>'LINK_EVIDENCE'
+        CASE WHEN e.action NOT IN ('LINK_EVIDENCE','DELETE_ITEM')
           AND care_document_available(d.id) AND care_document_available(applied.id)
           THEN applied.body::text END applied_values
       FROM change_request_entry e

@@ -140,7 +140,7 @@ public class ChangeRequestQueryService {
             e.appliedValues() == null ? mapper.nullNode() : mapper.readTree(e.appliedValues()));
         row.set("decision", decision);
         if ("APPLIED".equals(e.status())
-            && !"LINK_EVIDENCE".equals(e.action())
+            && !Set.of("LINK_EVIDENCE", "DELETE_ITEM").contains(e.action())
             && e.appliedValues() == null) removed.add("decision.appliedValues");
       }
       rows.add(row);

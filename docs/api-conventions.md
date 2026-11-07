@@ -59,7 +59,7 @@ throw new ApiException(ProposalErrorCode.PROPOSAL_BATCH_CONFLICT);
 | 401 | `UNAUTHENTICATED`, `OAUTH_LOGIN_FAILED` |
 | 403 | `FORBIDDEN` |
 | 404 | `RESOURCE_NOT_FOUND`, `INVITATION_UNAVAILABLE` |
-| 409 | `VERSION_CONFLICT`, `ITEM_LOCKED`, `EDIT_LOCK_EXPIRED`, `PROPOSAL_STATE_CONFLICT`, `IDEMPOTENCY_KEY_REUSED`, `REQUEST_IN_PROGRESS`, `SPACE_LABEL_DUPLICATED`, `PROPOSAL_BATCH_CONFLICT`, `DELETION_IMPACT_CHANGED` |
+| 409 | `VERSION_CONFLICT`, `ITEM_STATE_CONFLICT`, `ITEM_LOCKED`, `EDIT_LOCK_EXPIRED`, `PROPOSAL_STATE_CONFLICT`, `IDEMPOTENCY_KEY_REUSED`, `REQUEST_IN_PROGRESS`, `SPACE_LABEL_DUPLICATED`, `PROPOSAL_BATCH_CONFLICT`, `DELETION_IMPACT_CHANGED` |
 | 410 | `INVITATION_EXPIRED` |
 | 413 | `PAYLOAD_TOO_LARGE` |
 | 500 | `INTERNAL_ERROR` |
@@ -528,6 +528,14 @@ V8은 `care_item`, `care_item_basis`, `care_item_history`, `analysis_input_item`
 후보는 같은 공간의 유효한 현재 문서와 근거만 사용합니다. 실행기가 분석을 시작할 때 항목 버전·문서와 원본 의존성을 함께 기록하고 완료 시 재검증합니다. V9는 그때 사용한 근거 ID를 추가로 보존하므로 근거 연결이 없어지거나 원본 버전 변경 없이 근거 내용만 제거되어도 늦은 결과를 폐기합니다. V8에서 근거 목록을 기록하지 않은 후보 실행은 완료를 허용하지 않습니다. 기존 내부 후보 50개·요약 2,000 UTF-16 코드 단위 한도를 초과하면 자동 축약/부분 선택하지 않고 분석 의존성 오류로 종료합니다. 공개 일정 입력 제한과 별개입니다. 현재 summary 표현과 AI 연동 경계는 [AI 계약](ai-contract.md#careitem-후보와-입력-근거-검증)을 따릅니다.
 
 v1 CREATE와 v2 네 작업의 검토 제안 저장을 지원합니다. 소유자 제안 반영/미적용·편집 잠금은 [별도 계약](proposal-decisions.md), 구성원 AI 제안 승인 요청은 [변경 요청 계약](member-change-requests.md)을 따릅니다. 관리 항목 직접 등록·수정과 구성원 직접 입력 요청은 V13에서 지원합니다. 공유는 후속입니다.
+
+## 관리 항목 일반 삭제
+
+`POST /api/spaces/{spaceId}/items/{itemId}/deletions`는 현재 소유자가 `expectedItemVersion`, 본인 `leaseToken`, `clientRequestId`를 전달해 삭제 표시합니다. 성공 `200 SUCCESS`의 data는 `{itemId,version,visibility:"DELETED",deletedAt}`입니다. 삭제 표시·버전·DELETE 이력·요청 결과를 함께 저장하고 잠금을 해제합니다. 원본·근거·이력은 보존하며 이후 원본 삭제 시 내용 제거 규칙도 유지합니다.
+
+구성원은 기존 `/change-requests`에 `sourceType:"DIRECT_INPUT",action:"DELETE_ITEM"`으로 제출하고 소유자가 승인합니다. `values`는 생략/null만 허용하며 AI 제안 삭제는 지원하지 않습니다. 직접 삭제·요청 제출·승인 모두 본인 잠금이 필요합니다. 재확인 대상·내용이 가려진 항목은 `purpose:"DELETION"`으로 잠금을 획득·갱신합니다. 일반 EDIT 잠금은 정상 항목 삭제에만 사용할 수 있으며 RECONFIRMATION 잠금으로 삭제할 수 없습니다.
+
+동일 요청 재전송은 최초 삭제 메타데이터를 반환합니다. 새 키로 이미 삭제된 항목은 `409 ITEM_STATE_CONFLICT`, 버전 불일치는 `409 VERSION_CONFLICT`, 타인 잠금은 `409 ITEM_LOCKED`, 본인 잠금 검증 실패는 `409 EDIT_LOCK_EXPIRED`입니다. 계약·FE 연결·V19 전환 기준은 [일반 삭제](direct-care-items.md#일반-삭제)를 따릅니다.
 
 ## 항목 근거·확정 이력 조회
 
