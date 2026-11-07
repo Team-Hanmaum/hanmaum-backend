@@ -42,6 +42,10 @@ class ProductionDocumentationIntegrationTests {
   @Autowired MockMvc mvc;
   @Autowired ObjectMapper mapper;
 
+  /**
+   * 오류 응답을 명시한 API에서 추론된 200 응답이 누락되는 회귀를 검증한다. 운영 프로필의 생성 문서를 대상으로 공통 응답과 중첩 DTO, 기존 인증·오류 계약을 함께
+   * 확인한다.
+   */
   @ParameterizedTest
   @CsvSource(
       delimiter = '|',
