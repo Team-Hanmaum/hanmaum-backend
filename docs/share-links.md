@@ -84,7 +84,7 @@
 
 V21은 `share_link`, `share_link_target`만 추가한다. 링크에는 ID·공간·발급 당시 참여·토큰 SHA-256 해시·원래 URL 접두사·발급 시각을 저장하고, 대상에는 순서·항목 ID·유형·발급 버전·변경 표시만 저장한다. 문서 본문·근거·원문·제목 스냅샷과 원문 토큰은 저장하지 않는다. 영수증 결과는 링크 ID와 참여 ID뿐이다. 복합 FK로 링크·항목·발급 참여가 같은 공간인지 보장한다. 기존 Flyway·문서·항목은 변경하지 않는다.
 
-토큰은 임의 서버 링크 UUID와 공간 UUID를 `COMMAND_DIGEST_KEY`로 HMAC-SHA256 처리하되 `HANMAUM_SHARE_LINK_TOKEN_V1` 도메인으로 분리한 43자 Base64URL 값이다. 원래 URL 접두사를 함께 보존하므로 설정 변경 후에도 동일 요청의 URL을 재구성할 수 있다. 기존 키는 모든 인스턴스·재시작에서 유지해야 하며, 교체 시에는 기존 영수증과 공유 URL 재전달까지 포함한 이행 계획이 필요하다. 키 불일치 시 재전달은 404로 닫히고 새 URL을 대신 발급하지 않는다. 이미 전달된 URL의 조회는 저장된 해시로 처리하므로 키 교체만으로 기존 링크가 해제되지는 않는다.
+토큰은 임의 서버 링크 UUID와 공간 UUID를 `COMMAND_DIGEST_KEY`로 HMAC-SHA256 처리하되 `HANMAUM_SHARE_LINK_TOKEN_V1` 도메인으로 분리한 43자 Base64URL 값이다. 원래 URL 접두사를 함께 보존하므로 설정 변경 후에도 동일 요청의 URL을 재구성할 수 있다. **재전송 가능한 공유 링크가 남아 있는 동안 같은 키를 모든 인스턴스·재시작에서 유지해야 한다.** 기존 [배포 키 비교](../deploy/release_env.py)의 `STABLE_NAMES`에 이 키가 포함되어 있으며, `activate-release.sh`는 저장된 기준과 다른 키의 일반 배포를 거부한다. 이 동작은 기존 `deploy/tests/test_release.py`에서 검증한다. 키 교체가 필요하면 기존 영수증과 공유 URL 재전달을 포함한 별도 이행 계획이 필요하며, 이번 범위에서 임의 회전·다중 키 운영을 지원하지 않는다. 키 불일치 시 재전달은 실패하며 새 URL을 대신 발급하지 않는다. 이미 전달된 URL의 조회는 저장된 해시로 처리하므로 키 교체만으로 기존 링크가 해제되지는 않는다.
 
 `app.sharing.url-prefix`는 `SHARE_URL_PREFIX`로 설정하며 사용자 입력 URL은 받지 않는다. 인증 정보·쿼리·fragment가 없는 `/`로 끝나는 절대 HTTP(S) URL이어야 한다. local·prod 기본값은 기존 `FRONTEND_URL` 뒤 `/share/`이며 로컬은 `http://localhost:5173/share/`다. 현재 운영 Compose의 `FRONTEND_URL`로는 `https://hanmaum.site/share/`가 된다. 별도 신규 Secret이나 카카오 키는 필요하지 않다. 운영 진입 경로를 바꾸려면 배포 환경 전달 설정도 함께 조정한다.
 

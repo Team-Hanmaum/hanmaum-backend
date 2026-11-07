@@ -15,8 +15,12 @@ import com.hanmaum.backend.record.dto.*;
 import com.hanmaum.backend.record.service.*;
 import com.hanmaum.backend.sharing.dto.*;
 import com.hanmaum.backend.sharing.service.ShareLinkService;
+import com.zaxxer.hikari.HikariDataSource;
+import java.sql.Connection;
+import java.sql.DriverManager;
 import java.util.*;
 import java.util.concurrent.*;
+import javax.sql.DataSource;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -57,6 +61,7 @@ class ShareLinkIntegrationTests {
   @Autowired SourceRecordDeletionImpactService impacts;
   @Autowired MembershipLifecycleService memberships;
   @Autowired PlatformTransactionManager transactions;
+  @Autowired DataSource dataSource;
   UUID owner, member, space, membership;
 
   @BeforeEach
@@ -415,9 +420,16 @@ class ShareLinkIntegrationTests {
   void issuanceRevalidatesAfterAnOverlappingSpaceLockedChange(String mutation) throws Exception {
     UUID item = item("SCHEDULE");
     var body = request(item);
-    var locked = new CountDownLatch(1);
+    var locked = new CompletableFuture<Integer>();
+    var issuanceStarted = new CompletableFuture<Integer>();
     var release = new CountDownLatch(1);
-    try (var pool = Executors.newFixedThreadPool(2)) {
+    var database = dataSource.unwrap(HikariDataSource.class);
+    // The two application connections are occupied by the mutation and issuance. Observe PostgreSQL
+    // through a separate connection rather than blocking on Hikari or inferring a lock from timing.
+    try (var monitor =
+            DriverManager.getConnection(
+                database.getJdbcUrl(), database.getUsername(), database.getPassword());
+        var pool = Executors.newFixedThreadPool(2)) {
       var change =
           pool.submit(
               () ->
@@ -428,7 +440,8 @@ class ShareLinkIntegrationTests {
                                 "SELECT id FROM care_space WHERE id=? FOR UPDATE",
                                 UUID.class,
                                 space);
-                            locked.countDown();
+                            locked.complete(
+                                jdbc.queryForObject("SELECT pg_backend_pid()", Integer.class));
                             try {
                               if (!release.await(10, TimeUnit.SECONDS))
                                 throw new IllegalStateException("test lock timeout");
@@ -458,20 +471,27 @@ class ShareLinkIntegrationTests {
                             }
                             return true;
                           }));
-      assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
+      int blocker = locked.get(5, TimeUnit.SECONDS);
       var issuance =
           pool.submit(
               () -> {
                 try {
-                  sharing.create(member, space, body);
-                  return "SUCCESS";
+                  return new TransactionTemplate(transactions)
+                      .execute(
+                          tx -> {
+                            issuanceStarted.complete(
+                                jdbc.queryForObject("SELECT pg_backend_pid()", Integer.class));
+                            sharing.create(member, space, body);
+                            return "SUCCESS";
+                          });
                 } catch (ApiException ex) {
                   return ex.code().code();
                 }
               });
       try {
-        assertThatThrownBy(() -> issuance.get(200, TimeUnit.MILLISECONDS))
-            .isInstanceOf(TimeoutException.class);
+        int waiter = issuanceStarted.get(5, TimeUnit.SECONDS);
+        assertThat(awaitDatabaseBlock(monitor, waiter, blocker, issuance)).isTrue();
+        assertThat(issuance.isDone()).isFalse();
       } finally {
         release.countDown();
       }
@@ -487,6 +507,25 @@ class ShareLinkIntegrationTests {
       release.countDown();
     }
     assertThat(linkCount()).isZero();
+  }
+
+  /** Confirms the issuance backend actually waits on the transaction holding the space row. */
+  private boolean awaitDatabaseBlock(
+      Connection monitor, int waiter, int blocker, Future<?> issuance) throws Exception {
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+    try (var query =
+        monitor.prepareStatement(
+            "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=? AND wait_event_type='Lock' AND ?=ANY(pg_blocking_pids(pid)))")) {
+      query.setInt(1, waiter);
+      query.setInt(2, blocker);
+      while (System.nanoTime() < deadline && !issuance.isDone()) {
+        try (var result = query.executeQuery()) {
+          if (result.next() && result.getBoolean(1)) return true;
+        }
+        Thread.sleep(20);
+      }
+      return false;
+    }
   }
 
   @Test
