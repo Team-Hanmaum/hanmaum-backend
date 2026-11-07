@@ -21,7 +21,8 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestBodyAdviceAd
       ProposalDecisionController.class,
       ChangeRequestController.class,
       CareItemController.class,
-      com.hanmaum.backend.sharing.controller.ShareLinkController.class
+      com.hanmaum.backend.sharing.controller.ShareLinkController.class,
+      com.hanmaum.backend.carespace.controller.CareSpaceDeletionController.class
     })
 public class ProposalDecisionBodyAdvice extends RequestBodyAdviceAdapter {
   @Override

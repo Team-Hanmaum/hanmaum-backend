@@ -94,10 +94,13 @@ public class AnalysisExecutionService {
     }
   }
 
+  /** Commits a valid leased v2 result atomically; a run removed by space deletion is discarded. */
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public boolean completeV2(Work work, AiV2AnalysisResponse response) {
     boolean active = runs.lockSpace(work.run().spaceId());
-    var run = runs.lockRun(work.run().id()).orElseThrow();
+    var maybe = runs.lockRun(work.run().id());
+    if (maybe.isEmpty()) return false;
+    var run = maybe.get();
     if (!owns(run, work.run().workerToken())) return false;
     if (!validate(run, active)) return false;
     if (!run.contractVersion().equals("v2") || work.v2Request() == null)
@@ -110,10 +113,15 @@ public class AnalysisExecutionService {
     return true;
   }
 
+  /**
+   * Validates and stores leased v1 CREATE results; a removed run returns false without new data.
+   */
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public boolean complete(Work work, AiAnalysisResponse response) {
     boolean active = runs.lockSpace(work.run().spaceId());
-    var run = runs.lockRun(work.run().id()).orElseThrow();
+    var maybe = runs.lockRun(work.run().id());
+    if (maybe.isEmpty()) return false;
+    var run = maybe.get();
     if (!owns(run, work.run().workerToken())) return false;
     if (!validate(run, active)) return false;
     results.validate(work.request(), response);

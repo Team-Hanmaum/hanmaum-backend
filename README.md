@@ -227,7 +227,7 @@ Swagger에는 실제 구현된 OAuth 로그인 시작·CSRF·로그아웃·내 �
 
 같은 생성 시도를 재전송할 때는 같은 요청 ID와 내용을 유지합니다. 이미 성공했다면 기존 공간/참여 ID를 201로 반환하며, 새 ID로 같은 호칭을 생성하면 `SPACE_LABEL_DUPLICATED`입니다. 처리 중은 `REQUEST_IN_PROGRESS`, 기존 ID의 다른 내용 재사용은 `IDEMPOTENCY_KEY_REUSED`입니다. 입력·응답·오류는 [공간 API 계약](docs/api-conventions.md#돌봄-공간-api)을 참고합니다.
 
-Flyway V3는 공간·참여·성공 요청 기록을, V4는 초대와 참여의 초대 연결을 추가합니다. 소유자가 같은 공간의 현재 참여자인지 DB 제약으로 검사하고 생성 전체를 하나의 트랜잭션에서 처리합니다. 다른 도메인의 쓰기 작업은 [공간 접근 Service 계약](docs/architecture.md#다른-도메인의-권한-확인)을 따릅니다. 초대 발급·확인·공간 참여·구성원 목록·소유권 이전·참여 종료·호칭 수정도 구현되어 있으며 공간 삭제는 후속 작업입니다.
+Flyway V3는 공간·참여·성공 요청 기록을, V4는 초대와 참여의 초대 연결을 추가합니다. 소유자가 같은 공간의 현재 참여자인지 DB 제약으로 검사하고 생성 전체를 하나의 트랜잭션에서 처리합니다. 다른 도메인의 쓰기 작업은 [공간 접근 Service 계약](docs/architecture.md#다른-도메인의-권한-확인)을 따릅니다. 초대 발급·확인·공간 참여·구성원 목록·소유권 이전·참여 종료·호칭 수정과 [공간 전체 삭제](docs/care-space-deletion.md)를 구현했습니다.
 
 소유자는 `PATCH /api/spaces/{spaceId}`에 `subjectLabel`, 조회한 `expectedSpaceVersion`, `clientRequestId`를 전달해 호칭을 수정합니다. 구성원은 기존 변경 요청 API에 `DIRECT_INPUT UPDATE_SPACE`로 제출하고 소유자가 승인합니다. 같은 호칭 저장은 공간 버전·수정 시각을 유지합니다. 입력·재전송·반영 결과의 `spaceVersion`, V20 전환과 FE 연결은 [공간 정보 수정 계약](docs/care-space-information.md)을 따릅니다.
 
@@ -333,5 +333,6 @@ Lightsail 시드니 리전의 Ubuntu 24.04·2 vCPU·4GB 서버를 사용합니�
 - [항목 근거·이력](docs/care-item-provenance.md): 현재 근거, 확정 버전 목록 및 변경 전후 조회. 제거된 내용은 비교에서도 가리고 메타데이터만 유지
 - [소식 원본 삭제](docs/api-conventions.md#소식-원본-삭제-api): 삭제 영향을 조회한 뒤 원본과 파생 내용을 정리합니다.
 - [공유 링크](docs/share-links.md): 복수 확정 항목의 링크 발급·현재 참여자의 최신 내용 조회. 삭제·재확인 항목은 상태만 반환하며 카드에는 유형·변경 표시·URL만 포함
-- 후속: 계정 연결·회원 탈퇴, 공간 삭제, 공유 링크의 FE 진입·로그인 복귀·카카오 SDK·링크 해제
+- [공간 전체 삭제](docs/care-space-deletion.md): 현재 소유자의 영향 확인·버전/영향 재검증 후 소속 서비스 데이터 전체 제거. 완료 후 200, 삭제 재요청 404, 복구 미제공
+- 후속: 계정 연결·회원 탈퇴, 공유 링크의 FE 진입·로그인 복귀·카카오 SDK·링크 해제, 삭제의 백업·로그·AI 제공자 보관 운영
 - 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. CI와 dev CI 성공 후 자동 실행·수동 실행 CD를 포함하며 실제 배포에는 안내된 외부 설정이 필요합니다.
