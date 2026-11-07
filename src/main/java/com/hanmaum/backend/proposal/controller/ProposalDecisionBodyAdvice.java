@@ -20,7 +20,8 @@ import org.springframework.web.servlet.mvc.method.annotation.RequestBodyAdviceAd
     assignableTypes = {
       ProposalDecisionController.class,
       ChangeRequestController.class,
-      CareItemController.class
+      CareItemController.class,
+      com.hanmaum.backend.sharing.controller.ShareLinkController.class
     })
 public class ProposalDecisionBodyAdvice extends RequestBodyAdviceAdapter {
   @Override

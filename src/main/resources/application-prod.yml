@@ -15,6 +15,8 @@ springdoc:
     enabled: true
 
 app:
+  sharing:
+    url-prefix: ${SHARE_URL_PREFIX:${FRONTEND_URL}/share/}
   invitations:
     encryption-key: ${INVITATION_ENCRYPTION_KEY}
     url-prefix: ${INVITATION_URL_PREFIX}
