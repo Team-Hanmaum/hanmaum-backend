@@ -65,6 +65,9 @@ public class ProposalDecisionController {
                           """
  {"clientRequestId":"832cbe35-9970-4f99-a219-8f019315b3ab","entries":[{"proposalId":"2f4fd7af-5b2f-4d38-b1ed-8ea1141db910","action":"CREATE_ITEM","reviewToken":"<상세 조회의 reviewToken>","targetItemId":null,"expectedItemVersion":null,"leaseToken":null,"values":{"itemType":"SCHEDULE","title":"진료 일정","description":null,"fields":{"scheduledDate":"2026-10-25","scheduledTime":null,"location":null}}}]}
  """)))
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "200",
+      description = "선택한 AI 제안 반영 완료")
   public ResponseEntity<ApiResponse<ProposalApplicationResponse>> apply(
       @CurrentUser AuthenticatedUser user, @PathVariable UUID spaceId, @RequestBody JsonNode body) {
     return ResponseEntity.ok()
@@ -79,6 +82,9 @@ public class ProposalDecisionController {
           "현재 소유자만 1~20개를 함께 미적용. 항목 내용·버전·잠금은 변경하지 않음. 이미 처리되거나 무효한 제안이 있으면 전체 거절. 되돌리기·사유 입력은 미지원.")
   @io.swagger.v3.oas.annotations.parameters.RequestBody(
       content = @Content(schema = @Schema(implementation = DeclineBody.class)))
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "200",
+      description = "선택한 AI 제안 미적용 완료")
   public ResponseEntity<ApiResponse<ProposalDeclineResponse>> decline(
       @CurrentUser AuthenticatedUser user, @PathVariable UUID spaceId, @RequestBody JsonNode body) {
     return ResponseEntity.ok()

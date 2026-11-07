@@ -172,6 +172,9 @@ public class ChangeRequestController {
           """)))
   @ApiResponses({
     @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "200",
+        description = "선택한 변경 요청 반영 완료"),
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
         responseCode = "409",
         description =
             "CHANGE_REQUEST_STATE_CONFLICT / PROPOSAL_STATE_CONFLICT / PROPOSAL_BATCH_CONFLICT / VERSION_CONFLICT / ITEM_LOCKED / EDIT_LOCK_EXPIRED / IDEMPOTENCY_KEY_REUSED / REQUEST_IN_PROGRESS"),
@@ -195,6 +198,9 @@ public class ChangeRequestController {
   @io.swagger.v3.oas.annotations.parameters.RequestBody(
       content = @Content(schema = @Schema(implementation = DeclineBody.class)))
   @ApiResponses({
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "200",
+        description = "선택한 변경 요청 미적용 완료"),
     @io.swagger.v3.oas.annotations.responses.ApiResponse(
         responseCode = "409",
         description =
@@ -221,6 +227,9 @@ public class ChangeRequestController {
   @io.swagger.v3.oas.annotations.parameters.RequestBody(
       content = @Content(schema = @Schema(implementation = CancellationBody.class)))
   @ApiResponses({
+    @io.swagger.v3.oas.annotations.responses.ApiResponse(
+        responseCode = "200",
+        description = "선택한 대기 요청 취소 완료"),
     @io.swagger.v3.oas.annotations.responses.ApiResponse(
         responseCode = "409",
         description =
