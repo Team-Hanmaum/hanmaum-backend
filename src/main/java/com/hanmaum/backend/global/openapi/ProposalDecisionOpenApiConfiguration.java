@@ -39,6 +39,7 @@ public class ProposalDecisionOpenApiConfiguration {
               "/change-requests",
                   List.of(
                       ProposalErrorCode.CHANGE_REQUEST_ALREADY_PENDING,
+                      CareItemErrorCode.ITEM_STATE_CONFLICT,
                       ProposalErrorCode.PROPOSAL_STATE_CONFLICT,
                       ProposalErrorCode.PROPOSAL_BATCH_CONFLICT,
                       CommonErrorCode.VERSION_CONFLICT,

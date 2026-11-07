@@ -132,6 +132,20 @@ public class CareItemApplicationRepository {
     if (count != 1) throw new IllegalStateException("Reconfirmation lost its locked item");
   }
 
+  public void delete(UUID space, UUID item, long expected, Instant now) {
+    int count =
+        jdbc.update(
+            """
+        UPDATE care_item SET visibility='DELETED',version=version+1,updated_at=?
+        WHERE space_id=? AND id=? AND version=? AND visibility='VISIBLE'
+        """,
+            Timestamp.from(now),
+            space,
+            item,
+            expected);
+    if (count != 1) throw new IllegalStateException("Deletion lost its locked item");
+  }
+
   public UUID reconfirmationInput(UUID space, String body, Instant now) {
     UUID id = UUID.randomUUID();
     jdbc.update(

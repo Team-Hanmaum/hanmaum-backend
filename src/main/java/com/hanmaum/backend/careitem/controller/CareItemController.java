@@ -20,7 +20,7 @@ import tools.jackson.databind.JsonNode;
 
 @RestController
 @RequestMapping(value = "/api/spaces/{spaceId}/items", produces = MediaType.APPLICATION_JSON_VALUE)
-@Tag(name = "CareItem", description = "관리 항목 등록·조회·수정·상태 변경·항목별 편집 잠금")
+@Tag(name = "CareItem", description = "관리 항목 등록·조회·수정·상태 변경·일반 삭제·항목별 편집 잠금")
 @SecurityRequirement(name = "SessionCookie")
 @ApiResponses({
   @io.swagger.v3.oas.annotations.responses.ApiResponse(
@@ -46,19 +46,53 @@ public class CareItemController {
   private final DirectCareItemUpdateService updates;
   private final CareItemReconfirmationService reconfirmations;
   private final ChangeRequestService requests;
+  private final CareItemDeletionService deletions;
 
   public CareItemController(
       CareItemCreationService creation,
       CareItemQueryService queries,
       DirectCareItemUpdateService updates,
       CareItemReconfirmationService reconfirmations,
-      ChangeRequestService requests) {
+      ChangeRequestService requests,
+      CareItemDeletionService deletions) {
     this.updates = updates;
     this.creation = creation;
     this.queries = queries;
     this.reconfirmations = reconfirmations;
     this.requests = requests;
+    this.deletions = deletions;
   }
+
+  @PostMapping(value = "/{itemId}/deletions", consumes = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      summary = "관리 항목 일반 삭제",
+      description =
+          "현재 소유자가 본인 잠금과 항목 버전을 검증해 삭제 표시합니다. 원본·근거·이력은 보존하며 같은 요청 재전송은 최초 삭제 결과를 반환합니다. 구성원은 DIRECT_INPUT DELETE_ITEM 요청을 제출합니다.",
+      security = @SecurityRequirement(name = "CsrfToken"))
+  @io.swagger.v3.oas.annotations.parameters.RequestBody(
+      required = true,
+      content = @Content(schema = @Schema(implementation = DeletionBody.class)))
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "200",
+      description = "삭제 표시 완료")
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "409",
+      ref = "#/components/responses/DELETE_CARE_ITEM_CONFLICT")
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "413",
+      ref = "#/components/responses/PAYLOAD_TOO_LARGE")
+  public ResponseEntity<ApiResponse<DeleteCareItemResponse>> delete(
+      @CurrentUser AuthenticatedUser actor,
+      @PathVariable UUID spaceId,
+      @PathVariable UUID itemId,
+      @RequestBody JsonNode body) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore())
+        .body(ApiResponse.success(deletions.delete(actor.userId(), spaceId, itemId, body)));
+  }
+
+  public record DeletionBody(
+      @Schema(example = "3") String expectedItemVersion, String leaseToken, UUID clientRequestId) {}
 
   @PostMapping(value = "/{itemId}/answers", consumes = MediaType.APPLICATION_JSON_VALUE)
   @Operation(

@@ -55,7 +55,7 @@ public class EditLockController {
   @Operation(
       summary = "항목 편집 잠금 획득",
       description =
-          "기본 EDIT는 현재 참여자가 일반 항목을 편집할 때 사용합니다. RECONFIRMATION은 현재 소유자가 재확인 대상 항목에 사용합니다. 기존 유효 잠금은 재획득할 수 없습니다.")
+          "기본 EDIT는 현재 참여자가 일반 항목을 편집할 때 사용합니다. RECONFIRMATION은 현재 소유자의 재확인용, DELETION은 현재 참여자의 삭제·삭제 요청용입니다. DELETION은 재확인 대상도 잠글 수 있습니다. 기존 유효 잠금은 재획득할 수 없습니다.")
   @io.swagger.v3.oas.annotations.parameters.RequestBody(
       content =
           @Content(
@@ -129,7 +129,7 @@ public class EditLockController {
     try {
       return EditLockPurpose.valueOf(CareMutationInput.text(body.path("purpose"), "purpose", true));
     } catch (IllegalArgumentException e) {
-      throw CareItemInput.invalid("purpose", "EDIT 또는 RECONFIRMATION을 입력해주세요.");
+      throw CareItemInput.invalid("purpose", "EDIT, RECONFIRMATION 또는 DELETION을 입력해주세요.");
     }
   }
 

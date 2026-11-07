@@ -56,7 +56,7 @@ public class EditLockRepository {
         JOIN space_membership m ON m.space_id=l.space_id AND m.id=l.holder_membership_id AND m.is_active
         JOIN care_space s ON s.id=l.space_id
         WHERE l.space_id=? AND l.item_id=? AND l.expires_at>?
-          AND (l.purpose='EDIT' OR s.owner_membership_id=l.holder_membership_id)
+          AND (l.purpose IN ('EDIT','DELETION') OR s.owner_membership_id=l.holder_membership_id)
         """,
             (rs, n) ->
                 new Lease(

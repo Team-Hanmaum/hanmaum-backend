@@ -72,7 +72,7 @@ public class ChangeRequestController {
       summary = "구성원 변경 요청 제출",
       description =
           "현재 MEMBER가 AI 제안 또는 직접 입력 1~20개를 검증 후 승인 대기로 제출합니다. AI 제안은 proposalId 필수, DIRECT_INPUT은 제안 없이 제출하며 현재 항목은 변경하지 않습니다. "
-              + "기존 항목은 최신 버전·본인 편집 잠금이 필요하고 성공 시 잠금을 해제합니다. 같은 참여자·제안의 유효 대기 요청은 중복 제출할 수 없습니다. "
+              + "기존 항목은 최신 버전·본인 편집 잠금이 필요하고 성공 시 잠금을 해제합니다. DIRECT_INPUT DELETE_ITEM은 values를 생략하거나 null로 전달하며, 내용 확인이 불가능한 항목은 DELETION 잠금을 사용합니다. 같은 참여자·제안의 유효 대기 요청은 중복 제출할 수 없습니다. "
               + "동일 요청 재전송에는 기존 clientRequestId를 사용합니다. 본문 1 MiB, 문자열 10,000 UTF-16, 저장 요청 문서 합계 512 KiB 상한입니다.")
   @io.swagger.v3.oas.annotations.parameters.RequestBody(
       content =
@@ -291,7 +291,7 @@ public class ChangeRequestController {
       String leaseToken,
       @Schema(
               description =
-                  "생략하면 requestedValues 사용. 전달하면 해당 동작의 입력 전체 대체. LINK_EVIDENCE는 null만 허용.")
+                  "생략하면 requestedValues 사용. 전달하면 해당 동작의 입력 전체 대체. LINK_EVIDENCE·DELETE_ITEM은 null만 허용.")
           JsonNode values) {}
 
   @Schema(name = "ChangeRequestDeclineBody")
@@ -394,6 +394,6 @@ public class ChangeRequestController {
       String itemVersion,
       @Schema(
               description =
-                  "생성·수정·답변 확정 시 저장한 최종 문서 값. LINK_EVIDENCE·미적용·취소는 null이며 근거 연결의 기존 항목 문서는 반환하지 않습니다.")
+                  "생성·수정·답변 확정 시 저장한 최종 문서 값. LINK_EVIDENCE·DELETE_ITEM·미적용·취소는 null이며 근거 연결·삭제의 기존 항목 문서는 반환하지 않습니다.")
           JsonNode appliedValues) {}
 }

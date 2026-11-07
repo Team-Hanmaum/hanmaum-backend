@@ -49,6 +49,29 @@ public class CareItemApplicationService {
     if (item.version() != expected) throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
   }
 
+  public Prepared prepareDeletion(CareItemApplicationRepository.Item item, long expected) {
+    if (!item.visible()) throw new ApiException(CareItemErrorCode.ITEM_STATE_CONFLICT);
+    if (item.version() != expected) throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
+    if (item.version() == Long.MAX_VALUE)
+      throw new ApiException(CareItemErrorCode.ITEM_STATE_CONFLICT);
+    return new Prepared(
+        item.id(), item.type(), "DELETE", item.version() + 1, item.document(), null, item.status());
+  }
+
+  public Applied delete(UUID space, UUID actor, Prepared prepared, Instant now) {
+    items.delete(space, prepared.item(), prepared.version() - 1, now);
+    items.history(
+        space,
+        prepared.item(),
+        prepared.version(),
+        "DELETE",
+        prepared.previousDocument(),
+        prepared.status(),
+        actor,
+        now);
+    return new Applied(prepared.item(), prepared.version(), prepared.previousDocument());
+  }
+
   public void requireOpenQuestion(CareItemApplicationRepository.Item item, long expected) {
     if (!item.visible()) throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND);
     if (item.version() != expected) throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
@@ -260,6 +283,7 @@ public class CareItemApplicationService {
       UUID submitter,
       Instant submittedAt,
       Instant now) {
+    if (p.operation().equals("DELETE")) return delete(space, actor, p, now);
     UUID document =
         items.document(
             space,

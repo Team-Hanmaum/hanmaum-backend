@@ -78,7 +78,7 @@ public class CareItemProvenanceService {
         Long.toString(row.version()),
         row.previousVersion() == null ? null : row.previousVersion().toString(),
         values(row.previousBody(), row.previousStatus(), type),
-        values(row.body(), row.status(), type),
+        row.operation().equals("DELETE") ? null : values(row.body(), row.status(), type),
         row.author(),
         row.changedAt(),
         repository.historyEvidence(
@@ -104,7 +104,7 @@ public class CareItemProvenanceService {
   private List<String> redactions(History row) {
     List<String> result = new ArrayList<>();
     if (row.previousVersion() != null && row.previousBody() == null) result.add("before");
-    if (row.body() == null) result.add("after");
+    if (!row.operation().equals("DELETE") && row.body() == null) result.add("after");
     return result;
   }
 
