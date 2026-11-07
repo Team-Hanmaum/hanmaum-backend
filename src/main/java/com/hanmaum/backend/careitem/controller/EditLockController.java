@@ -85,6 +85,9 @@ public class EditLockController {
       description = "획득 때와 같은 용도로 갱신합니다. 재확인 잠금은 현재 소유자만 갱신할 수 있습니다.")
   @io.swagger.v3.oas.annotations.parameters.RequestBody(
       content = @Content(schema = @Schema(implementation = RenewalBody.class)))
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "200",
+      description = "편집 잠금 갱신 완료. leaseToken은 null이며 획득 시 발급된 토큰 유지")
   public ResponseEntity<ApiResponse<EditLockResponse>> renew(
       @CurrentUser AuthenticatedUser user,
       @PathVariable UUID spaceId,
