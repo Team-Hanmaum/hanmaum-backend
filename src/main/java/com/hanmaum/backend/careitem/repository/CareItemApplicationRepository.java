@@ -172,7 +172,8 @@ public class CareItemApplicationRepository {
     jdbc.update(
         """
         INSERT INTO care_item_basis(id,space_id,item_id,source_evidence_id,submitted_by_membership_id,created_at)
-        VALUES (?,?,?,?,?,?) ON CONFLICT (item_id,source_evidence_id) DO NOTHING
+        VALUES (?,?,?,?,?,?) ON CONFLICT (item_id,source_evidence_id) DO UPDATE
+          SET included_in_analysis=TRUE WHERE NOT care_item_basis.included_in_analysis
         """,
         UUID.randomUUID(),
         space,
@@ -180,6 +181,23 @@ public class CareItemApplicationRepository {
         evidence,
         member,
         Timestamp.from(now));
+  }
+
+  public void scopeAnalysisBasisToReconfirmation(UUID space, UUID item, UUID document) {
+    jdbc.update(
+        """
+        UPDATE care_item_basis b SET included_in_analysis=(
+          EXISTS (SELECT 1 FROM care_item_document_parent p
+            WHERE p.space_id=b.space_id AND p.document_id=? AND p.parent_document_id=b.direct_document_id)
+          OR EXISTS (SELECT 1 FROM care_item_document_evidence e
+            WHERE e.space_id=b.space_id AND e.document_id=? AND e.evidence_id=b.source_evidence_id)
+        )
+        WHERE b.space_id=? AND b.item_id=?
+        """,
+        document,
+        document,
+        space,
+        item);
   }
 
   public UUID directInput(UUID space, String body, UUID previous, Instant now) {

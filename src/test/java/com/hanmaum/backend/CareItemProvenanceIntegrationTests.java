@@ -409,11 +409,37 @@ class CareItemProvenanceIntegrationTests {
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value("ITEM_STATE_CONFLICT"));
     String quote = data(owner, item, "/evidence").at("/items/1/evidenceId").asText();
+    String originalInput = data(owner, item, "/evidence").at("/items/0/evidenceId").asText();
     body.putArray("evidenceIds").add(quote);
     var noBasis = body.deepCopy().putNull("basis");
     postItem(owner, item, "/reconfirmations", noBasis).andExpect(status().isBadRequest());
     postItem(owner, item, "/reconfirmations", body).andExpect(status().isOk());
     assertThat(data(owner, item, "/history/3").path("evidenceIds").toString()).contains(quote);
+    assertThat(data(owner, item, "/evidence").toString()).contains(originalInput);
+    var next =
+        records.create(owner, space, new CreateSourceRecordRequest("다음 소식", UUID.randomUUID()));
+    var nextRun = next.analysis().analysisId();
+    var work = execution.claim(space, nextRun, Duration.ofMinutes(2)).orElseThrow();
+    var candidate =
+        work.v2Request().candidates().stream()
+            .filter(value -> value.itemId().equals(item))
+            .findFirst()
+            .orElseThrow();
+    assertThat(candidate.basis()).hasSize(2);
+    assertThat(
+            db.queryForObject(
+                "SELECT count(*) FROM analysis_input_basis WHERE run_id=? AND source_evidence_id=?",
+                Integer.class,
+                nextRun,
+                UUID.fromString(quote)))
+        .isOne();
+    assertThat(
+            db.queryForObject(
+                "SELECT count(*) FROM analysis_input_basis WHERE run_id=? AND basis_id=?",
+                Integer.class,
+                nextRun,
+                UUID.fromString(originalInput)))
+        .isZero();
     executeDeletion(source.recordId(), deletionBody(deletionImpact(source.recordId())))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.reconfirmationItemIds[0]").value(item.toString()));
@@ -424,6 +450,41 @@ class CareItemProvenanceIntegrationTests {
     postItem(owner, item, "/reconfirmations", erased)
         .andExpect(status().isConflict())
         .andExpect(jsonPath("$.code").value("ITEM_STATE_CONFLICT"));
+  }
+
+  @Test
+  void v1CandidateKeepsTheReconfirmedItemWithoutCapturingItsUnselectedQuote() throws Exception {
+    UUID item = schedule("기존 일정");
+    var source = propose("LINK_EVIDENCE", item);
+    apply(source, item);
+    db.update("UPDATE care_item SET needs_reconfirmation=TRUE WHERE id=?", item);
+    postItem(
+            owner,
+            item,
+            "/reconfirmations",
+            reconfirmationBody("2", acquireReconfirmation(item, "2"), "독립적으로 확인한 일정"))
+        .andExpect(status().isOk());
+
+    var next =
+        records.create(owner, space, new CreateSourceRecordRequest("다음 소식", UUID.randomUUID()));
+    UUID run = next.analysis().analysisId();
+    db.update("UPDATE analysis_run SET contract_version='v1' WHERE id=?", run);
+    var work = execution.claim(space, run, Duration.ofMinutes(2)).orElseThrow();
+    assertThat(work.request().candidates()).extracting(value -> value.itemId()).contains(item);
+    assertThat(
+            db.queryForObject(
+                "SELECT cardinality(source_evidence_ids) FROM analysis_input_item WHERE run_id=? AND item_id=?",
+                Integer.class,
+                run,
+                item))
+        .isZero();
+    assertThat(
+            db.queryForObject(
+                "SELECT count(*) FROM analysis_input_source WHERE run_id=? AND source_record_id=?",
+                Integer.class,
+                run,
+                source.recordId()))
+        .isZero();
   }
 
   @Test
@@ -499,6 +560,16 @@ class CareItemProvenanceIntegrationTests {
     var detail = data(owner, item, "");
     assertThat(detail.path("status").asText()).isEqualTo("CONFIRMED");
     assertThat(detail.path("confirmedAnswer").asText()).isEqualTo("새로 확인한 답변");
+
+    String savedProof = data(owner, item, "/history/2").at("/evidenceIds/0").asText();
+    db.update("UPDATE care_item SET needs_reconfirmation=TRUE WHERE id=?", item);
+    var retry =
+        reconfirmationBody("2", acquireReconfirmation(item, "2"), "다시 확인한 질문").putNull("basis");
+    retry.putArray("evidenceIds").add(savedProof);
+    retry.withObject("/values/fields").put("confirmedAnswer", "다른 답변");
+    postItem(owner, item, "/reconfirmations", retry).andExpect(status().isBadRequest());
+    retry.withObject("/values/fields").put("confirmedAnswer", "새로 확인한 답변");
+    postItem(owner, item, "/reconfirmations", retry).andExpect(status().isOk());
   }
 
   private ObjectNode reconfirmationBody(String version, String token, String title) {

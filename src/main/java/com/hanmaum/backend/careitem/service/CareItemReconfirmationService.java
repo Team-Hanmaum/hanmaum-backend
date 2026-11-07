@@ -102,6 +102,7 @@ public class CareItemReconfirmationService {
             mapper.writeValueAsString(basis),
             mapper.writeValueAsString(selected.stream().sorted().toList()));
     if (!receipts.tryLock(actor, key)) throw new ApiException(CommonErrorCode.REQUEST_IN_PROGRESS);
+    // This holds the same space row lock as source deletion through the commit.
     UUID owner = access.requireOwner(actor, space).membershipId();
     var item = applications.lock(space, id);
     if (!item.visible()) throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND);
@@ -159,6 +160,7 @@ public class CareItemReconfirmationService {
             retainedEvidence.directDocument(),
             retainedEvidence.sourceEvidence());
     }
+    items.scopeAnalysisBasisToReconfirmation(space, id, document);
     items.reconfirm(space, id, expected, document, now);
     items.history(space, id, expected + 1, "RECONFIRM", document, item.status(), owner, now);
     locks.releaseAfterSave(space, id);

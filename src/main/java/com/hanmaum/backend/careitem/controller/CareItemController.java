@@ -66,8 +66,7 @@ public class CareItemController {
   @io.swagger.v3.oas.annotations.responses.ApiResponse(responseCode = "200", description = "재확인 완료")
   @io.swagger.v3.oas.annotations.responses.ApiResponse(
       responseCode = "409",
-      description =
-          "VERSION_CONFLICT / ITEM_STATE_CONFLICT / ITEM_LOCKED / EDIT_LOCK_EXPIRED / IDEMPOTENCY_KEY_REUSED / REQUEST_IN_PROGRESS")
+      ref = "#/components/responses/RECONFIRM_CARE_ITEM_CONFLICT")
   @io.swagger.v3.oas.annotations.responses.ApiResponse(
       responseCode = "413",
       ref = "#/components/responses/PAYLOAD_TOO_LARGE")

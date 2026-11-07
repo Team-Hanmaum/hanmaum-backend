@@ -659,6 +659,24 @@ class CareItemIntegrationTests {
                 .isMissingNode())
         .isFalse();
     assertThat(json).contains("CREATE_CARE_ITEM_CONFLICT");
+    assertThat(
+            doc.at(
+                    "/paths/~1api~1spaces~1{spaceId}~1items~1{itemId}~1reconfirmations/post/responses/409/$ref")
+                .asText())
+        .isEqualTo("#/components/responses/RECONFIRM_CARE_ITEM_CONFLICT");
+    var conflicts =
+        doc.at(
+            "/components/responses/RECONFIRM_CARE_ITEM_CONFLICT/content/application~1json/examples");
+    for (String code :
+        List.of(
+            "VERSION_CONFLICT",
+            "ITEM_STATE_CONFLICT",
+            "ITEM_LOCKED",
+            "EDIT_LOCK_EXPIRED",
+            "IDEMPOTENCY_KEY_REUSED",
+            "REQUEST_IN_PROGRESS")) {
+      assertThat(conflicts.at("/" + code + "/value/code").asText()).isEqualTo(code);
+    }
   }
 
   private CreateCareItemRequest request(String title, ScheduleFields fields) {
