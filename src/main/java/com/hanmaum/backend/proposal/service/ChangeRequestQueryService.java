@@ -100,7 +100,7 @@ public class ChangeRequestQueryService {
         // body.
         var target =
             items
-                .read(actor, space, e.targetItemId(), null, null)
+                .read(actor, space, e.targetItemId(), null, null, false)
                 .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND));
         if (!target.authorized()) throw new ApiException(CommonErrorCode.FORBIDDEN);
         if (!target.items().isEmpty()) {

@@ -51,6 +51,7 @@ public class ProposalDecisionOpenApiConfiguration {
                       ProposalErrorCode.CHANGE_REQUEST_STATE_CONFLICT,
                       ProposalErrorCode.PROPOSAL_STATE_CONFLICT,
                       ProposalErrorCode.PROPOSAL_BATCH_CONFLICT,
+                      CareItemErrorCode.ITEM_STATE_CONFLICT,
                       CommonErrorCode.VERSION_CONFLICT,
                       CareItemErrorCode.ITEM_LOCKED,
                       CareItemErrorCode.EDIT_LOCK_EXPIRED,

@@ -20,14 +20,33 @@ public class CareItemQueryRepository {
     this.mapper = mapper;
   }
 
-  public Optional<Result> read(UUID actor, UUID space, UUID item, String type, String status) {
+  public Optional<Result> read(
+      UUID actor, UUID space, UUID item, String type, String status, boolean includeAnswers) {
     // One statement is both the authorization gate and the data snapshot, also for an empty list.
     var rows =
         jdbc.query(
             """
         SELECT viewer.id AS viewer_id, i.*, CASE WHEN care_document_available(d.id) THEN d.body::text END AS document_body,
           d.redacted_at AS document_redacted, l.holder_membership_id,l.expires_at,
-          l.holder_membership_id=viewer.id AS own_lock,assignee.id AS active_assignee
+          l.holder_membership_id=viewer.id AS own_lock,assignee.id AS active_assignee,
+          CASE WHEN ? AND i.item_type='QUESTION' AND i.visibility='VISIBLE' THEN (
+            SELECT jsonb_agg(jsonb_build_object(
+              'answerId',e.request_document_id,'requestEntryId',e.id,
+              'answer',CASE WHEN available.ok THEN answer.body #>> '{values,answer}' END,
+              'basis',CASE WHEN available.ok THEN answer.body #>> '{values,basis}' END,
+              'submittedByMembershipId',CASE WHEN author.user_id IS NOT NULL THEN author.id END,
+              'submittedAt',r.submitted_at,
+              'status',CASE WHEN e.status='PENDING' AND change_request_entry_invalid_reason(e.id) IS NOT NULL
+                THEN 'INVALIDATED' ELSE e.status END
+            ) ORDER BY r.submitted_at DESC,e.id DESC)::text
+            FROM change_request_entry e
+            JOIN change_request r ON r.space_id=e.space_id AND r.id=e.request_id
+            JOIN space_membership author ON author.space_id=r.space_id AND author.id=r.submitted_by_membership_id
+            JOIN content_document answer ON answer.space_id=e.space_id AND answer.id=e.request_document_id
+            CROSS JOIN LATERAL (SELECT care_document_available(answer.id) AS ok) available
+            WHERE e.space_id=i.space_id AND e.target_item_id=i.id
+              AND e.source_type='DIRECT_INPUT' AND e.action='RESOLVE_QUESTION'
+          ) END AS answers
         FROM care_space s
         LEFT JOIN space_membership viewer ON viewer.space_id = s.id AND viewer.user_id = ? AND viewer.is_active
         LEFT JOIN care_item i ON i.space_id = s.id AND viewer.id IS NOT NULL
@@ -45,7 +64,7 @@ public class CareItemQueryRepository {
         WHERE s.id = ? AND s.lifecycle = 'ACTIVE'
         ORDER BY i.created_at DESC, i.id DESC
         """,
-            this::map, actor, item, item, item, type, type, status, status, space);
+            this::map, includeAnswers, actor, item, item, item, type, type, status, status, space);
     if (rows.isEmpty()) return Optional.empty();
     return Optional.of(
         new Result(
@@ -92,7 +111,10 @@ public class CareItemQueryRepository {
                     rs.getObject("holder_membership_id", UUID.class),
                     rs.getTimestamp("expires_at").toInstant(),
                     rs.getBoolean("own_lock")),
-            List.of(),
+            rs.getString("answers") == null
+                ? List.of()
+                : mapper.readValue(
+                    rs.getString("answers"), new TypeReference<List<CareItemDetail.Answer>>() {}),
             rs.getTimestamp("created_at").toInstant(),
             rs.getTimestamp("updated_at").toInstant(),
             string(values, "confirmedAnswer"));

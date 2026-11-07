@@ -4,6 +4,7 @@ import com.hanmaum.backend.careitem.dto.*;
 import com.hanmaum.backend.careitem.service.*;
 import com.hanmaum.backend.global.response.ApiResponse;
 import com.hanmaum.backend.global.security.*;
+import com.hanmaum.backend.proposal.service.ChangeRequestService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
 import io.swagger.v3.oas.annotations.media.Content;
@@ -44,17 +45,53 @@ public class CareItemController {
 
   private final DirectCareItemUpdateService updates;
   private final CareItemReconfirmationService reconfirmations;
+  private final ChangeRequestService requests;
 
   public CareItemController(
       CareItemCreationService creation,
       CareItemQueryService queries,
       DirectCareItemUpdateService updates,
-      CareItemReconfirmationService reconfirmations) {
+      CareItemReconfirmationService reconfirmations,
+      ChangeRequestService requests) {
     this.updates = updates;
     this.creation = creation;
     this.queries = queries;
     this.reconfirmations = reconfirmations;
+    this.requests = requests;
   }
+
+  @PostMapping(value = "/{itemId}/answers", consumes = MediaType.APPLICATION_JSON_VALUE)
+  @Operation(
+      summary = "확인사항 답변 제출",
+      description = "현재 참여자의 답변과 근거를 승인 대기로 저장합니다.",
+      security = @SecurityRequirement(name = "CsrfToken"))
+  @io.swagger.v3.oas.annotations.parameters.RequestBody(
+      required = true,
+      content = @Content(schema = @Schema(implementation = AnswerBody.class)))
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "201",
+      description = "답변 제출 완료")
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "409",
+      ref = "#/components/responses/SUBMIT_QUESTION_ANSWER_CONFLICT")
+  @io.swagger.v3.oas.annotations.responses.ApiResponse(
+      responseCode = "413",
+      ref = "#/components/responses/PAYLOAD_TOO_LARGE")
+  public ResponseEntity<ApiResponse<CareItemAnswerSubmission>> submitAnswer(
+      @CurrentUser AuthenticatedUser actor,
+      @PathVariable UUID spaceId,
+      @PathVariable UUID itemId,
+      @RequestBody JsonNode body) {
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .cacheControl(CacheControl.noStore())
+        .body(ApiResponse.success(requests.submitAnswer(actor.userId(), spaceId, itemId, body)));
+  }
+
+  public record AnswerBody(
+      String answer,
+      String basis,
+      @Schema(example = "3") String expectedItemVersion,
+      UUID clientRequestId) {}
 
   @PostMapping(value = "/{itemId}/reconfirmations", consumes = MediaType.APPLICATION_JSON_VALUE)
   @Operation(
@@ -207,7 +244,7 @@ public class CareItemController {
   @Operation(
       summary = "관리 항목 상세 조회",
       description =
-          "현재 참여자만 조회. 삭제된 내용을 재노출하지 않음. editLock은 현재 잠금 요약, confirmedAnswer는 소유자 확정 답변. answers=[]는 별도 답변 제안 기능의 예약 필드.")
+          "현재 참여자만 조회. 삭제된 내용을 재노출하지 않음. editLock은 현재 잠금 요약, confirmedAnswer는 소유자 확정 답변, answers는 질문에 제출된 답변 목록.")
   @io.swagger.v3.oas.annotations.responses.ApiResponse(
       responseCode = "200",
       description = "항목 상세 조회 성공")

@@ -159,7 +159,7 @@ public class ChangeRequestController {
   @Operation(
       summary = "소유자 선택 변경 요청 반영",
       description =
-          "현재 소유자가 선택한 1~20개 요청을 변경 전 상태에서 검증하고 전부 반영하거나 전부 실패합니다. 기존 항목은 소유자 본인의 잠금과 요청 당시와 같은 현재 버전이 필요합니다. values 생략은 저장된 요청값 사용, 전달하면 해당 작업 입력 전체를 대체하며 원래 requestedValues는 보존합니다. 요청 종류·대상은 바꿀 수 없습니다. 같은 AI 제안의 직접 반영과 중복되지 않습니다.")
+          "현재 소유자가 선택한 1~20개 요청을 변경 전 상태에서 검증하고 전부 반영하거나 전부 실패합니다. 기존 항목은 소유자 본인의 잠금과 요청 당시와 같은 현재 버전이 필요합니다. values 생략은 저장된 요청값 사용, 전달하면 해당 작업 입력 전체를 대체하며 원래 requestedValues는 보존합니다. 가족 답변 요청은 values를 생략하고 저장된 답변과 근거를 그대로 반영합니다. 요청 종류·대상은 바꿀 수 없습니다. 같은 AI 제안의 직접 반영과 중복되지 않습니다.")
   @io.swagger.v3.oas.annotations.parameters.RequestBody(
       content =
           @Content(

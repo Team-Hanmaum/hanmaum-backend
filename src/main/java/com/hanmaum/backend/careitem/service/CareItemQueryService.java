@@ -92,7 +92,7 @@ public class CareItemQueryService {
   }
 
   public CareItemDetail detail(UUID actor, UUID space, UUID item) {
-    var result = require(items.read(actor, space, item, null, null));
+    var result = require(items.read(actor, space, item, null, null, true));
     if (result.items().isEmpty()) throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND);
     return result.items().getFirst();
   }

@@ -20,8 +20,16 @@ public record CareItemDetail(
     boolean needsConflictReview,
     List<String> redactedFields,
     @Schema(nullable = true, description = "현재 유효한 편집 잠금. 토큰은 포함하지 않음") EditLockView editLock,
-    @Schema(description = "답변 제출은 후속 구현. 현재 빈 배열") List<Object> answers,
+    @Schema(description = "질문 답변 제출 이력. 질문 이외 유형은 빈 배열") List<Answer> answers,
     Instant createdAt,
     Instant updatedAt,
-    @Schema(nullable = true, description = "소유자가 확정한 질문 답변. 원본 삭제 시 null")
-        String confirmedAnswer) {}
+    @Schema(nullable = true, description = "소유자가 확정한 질문 답변. 원본 삭제 시 null") String confirmedAnswer) {
+  public record Answer(
+      UUID answerId,
+      UUID requestEntryId,
+      @Schema(nullable = true) String answer,
+      @Schema(nullable = true) String basis,
+      @Schema(nullable = true) UUID submittedByMembershipId,
+      Instant submittedAt,
+      String status) {}
+}
