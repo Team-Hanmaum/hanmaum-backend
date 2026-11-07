@@ -500,7 +500,15 @@ CSRF·로그아웃 등 존재하는 경로만 문서화하며 미구현 도메�
 - 돌봄 탭의 별도 ‘재확인 필요’ 영역은 유형 기준입니다. 예를 들어 일정의 `view=UPCOMING`과 `view=PAST`는 같은 재확인 배열을 반환하고, 일반 카드·건수만 각각의 날짜 조건으로 구분합니다.
 - `GET /api/spaces/{spaceId}/items/{itemId}`는 현재값·상태·버전·시각과 재확인/상충/삭제 표시를 제공합니다. `editLock`은 현재 잠금 요약이고 `confirmedAnswer`는 소유자가 확정한 답변입니다. 별도 답변 제출 기능의 `answers`는 아직 빈 배열입니다.
 - 권한과 목록/상세는 같은 SQL 스냅샷에서 조회합니다. 현재 비구성원은 403, 다른 공간의 항목이나 삭제 중인 공간은 404입니다. 조회는 업무 데이터를 변경하지 않으며 응답은 `Cache-Control: no-store`입니다.
-- 문서 내용이 제거됐으면 제목·설명/fields를 노출하지 않고 재확인 표시와 `redactedFields`를 반환합니다. 일반 삭제 상세는 내용 없는 삭제 표시입니다. 별도 근거·확정 이력 조회는 아래 계약을 따르며 삭제 실행 API·전체 삭제 전파는 후속입니다.
+- 문서 내용이 제거됐으면 제목·설명/fields를 노출하지 않고 재확인 표시와 `redactedFields`를 반환합니다. 일반 삭제 상세는 내용 없는 삭제 표시입니다. 별도 근거·확정 이력 조회는 아래 계약을 따릅니다.
+
+### 돌봄 항목 근거 재확인 API
+
+- 현재 소유자는 재확인 대상 항목의 `POST /api/spaces/{spaceId}/items/{itemId}/edit-lock`에서 `expectedItemVersion`과 `purpose: "RECONFIRMATION"`을 보냅니다. 잠금 갱신에도 같은 `purpose`와 `leaseToken`을 보냅니다. 잠금 해제에는 기존처럼 `leaseToken`을 사용합니다.
+- `POST /api/spaces/{spaceId}/items/{itemId}/reconfirmations`는 세션 쿠키, CSRF 토큰, `expectedItemVersion`, `leaseToken`, `values`, `evidenceIds`, `clientRequestId`를 받습니다. 성공 응답은 `itemId`, 새 `version`, `needsReconfirmation: false`, `updatedAt`을 반환합니다.
+- `values`는 새 `title`, `description`, 유형별 `fields`로 구성합니다. 생략한 선택 값은 null로 처리합니다. `QUESTION`이 이미 확정 상태이면 `fields.confirmedAnswer`가 필요합니다. 미확인 질문의 답변은 별도 확정 경로에서 처리합니다.
+- `basis`는 새 확인 근거입니다. 생략하려면 선택한 기존 독립 근거 문서 하나가 제출한 값 전체와 일치해야 합니다. 다른 항목의 근거, 삭제되거나 무효화된 근거는 `409 ITEM_STATE_CONFLICT`를 반환합니다.
+- 재확인한 문서, 새 근거, 선택 근거의 출처와 `RECONFIRM` 이력을 한 트랜잭션으로 저장하고 잠금을 해제합니다. 항목의 업무 상태는 유지합니다. 선택 근거가 나중에 삭제되면 그 근거에 의존한 문서를 삭제 범위에 포함합니다.
 
 ### 저장·분석 연동과 후속
 

@@ -35,7 +35,9 @@ public class CareItemQueryRepository {
           AND (CAST(? AS text) IS NULL OR i.item_type = ?) AND (CAST(? AS text) IS NULL OR i.status = ?)
         LEFT JOIN content_document d ON d.space_id = s.id AND d.id = i.current_document_id
         LEFT JOIN care_item_edit_lock l ON l.space_id=i.space_id AND l.item_id=i.id AND l.expires_at>statement_timestamp()
-          AND i.visibility='VISIBLE' AND NOT i.needs_reconfirmation AND care_document_available(d.id)
+          AND i.visibility='VISIBLE' AND (l.purpose='RECONFIRMATION')
+            = (i.needs_reconfirmation OR NOT care_document_available(d.id))
+          AND (l.purpose='EDIT' OR s.owner_membership_id=l.holder_membership_id)
           AND EXISTS(SELECT 1 FROM space_membership m WHERE m.space_id=l.space_id AND m.id=l.holder_membership_id AND m.is_active)
         LEFT JOIN space_membership assignee ON assignee.space_id=i.space_id AND assignee.is_active
           AND assignee.id=CASE WHEN (d.body #>> '{fields,assigneeMembershipId}') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'

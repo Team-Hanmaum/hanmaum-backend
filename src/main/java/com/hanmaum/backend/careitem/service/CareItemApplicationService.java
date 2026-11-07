@@ -155,18 +155,7 @@ public class CareItemApplicationService {
     if (create || values.has("fields")) {
       JsonNode input = values.path("fields");
       CareMutationInput.object(input, path + ".fields", FIELDS.get(type));
-      for (String field : input.propertyNames()) {
-        String value = CareMutationInput.text(input.get(field), path + ".fields." + field, false);
-        if (field.equals("assigneeMembershipId") && value != null) {
-          UUID assignee =
-              CareMutationInput.uuid(input.get(field), path + ".fields." + field, false);
-          if (!items.activeAssignee(space, assignee))
-            throw CareItemInput.invalid(path + ".fields." + field, "같은 공간의 현재 참여자를 선택해주세요.");
-          value = assignee.toString();
-        }
-        validateDateTime(field, value, path + ".fields." + field);
-        fields.put(field, value);
-      }
+      readFields(space, input, fields, path + ".fields");
     }
     for (String field : FIELDS.get(type)) if (!fields.has(field)) fields.putNull(field);
     body.set("fields", fields);
@@ -266,6 +255,50 @@ public class CareItemApplicationService {
 
   public void releaseAssignments(UUID space, UUID departing, UUID actor, Instant now) {
     items.unassignOpenTasks(space, departing, actor, now);
+  }
+
+  public ObjectNode reconfirmedValues(
+      UUID space, CareItemApplicationRepository.Item item, JsonNode values) {
+    CareMutationInput.object(values, "values", Set.of("title", "description", "fields"));
+    var body = mapper.createObjectNode();
+    body.put("title", CareMutationInput.text(values.path("title"), "values.title", true));
+    body.put(
+        "description",
+        CareMutationInput.text(values.path("description"), "values.description", false));
+    JsonNode fields = values.path("fields");
+    var result = body.putObject("fields");
+    if ("QUESTION".equals(item.type())) {
+      CareMutationInput.object(fields, "values.fields", Set.of("confirmedAnswer"));
+      boolean confirmed = "CONFIRMED".equals(item.status());
+      String answer =
+          CareMutationInput.text(
+              fields.path("confirmedAnswer"), "values.fields.confirmedAnswer", confirmed);
+      if (!confirmed && answer != null)
+        throw CareItemInput.invalid("values.fields.confirmedAnswer", "미확인 질문의 답변은 별도로 확정해주세요.");
+      body.put("confirmedAnswer", answer);
+    } else {
+      Set<String> allowed = FIELDS.get(item.type());
+      CareMutationInput.object(fields, "values.fields", allowed);
+      allowed.forEach(result::putNull);
+      readFields(space, fields, result, "values.fields");
+    }
+    CareMutationSizeLimits.bytes(mapper, body, CareMutationSizeLimits.DOCUMENT_BYTES, "values");
+    return body;
+  }
+
+  private void readFields(UUID space, JsonNode input, ObjectNode target, String path) {
+    for (String field : input.propertyNames()) {
+      String fieldPath = path + "." + field;
+      String value = CareMutationInput.text(input.get(field), fieldPath, false);
+      if (field.equals("assigneeMembershipId") && value != null) {
+        UUID assignee = CareMutationInput.uuid(input.get(field), fieldPath, false);
+        if (!items.activeAssignee(space, assignee))
+          throw CareItemInput.invalid(fieldPath, "같은 공간의 현재 참여자를 선택해주세요.");
+        value = assignee.toString();
+      }
+      validateDateTime(field, value, fieldPath);
+      target.put(field, value);
+    }
   }
 
   private String initialStatus(String type) {

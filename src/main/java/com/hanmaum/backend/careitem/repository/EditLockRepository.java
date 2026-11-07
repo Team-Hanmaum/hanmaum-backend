@@ -1,5 +1,6 @@
 package com.hanmaum.backend.careitem.repository;
 
+import com.hanmaum.backend.careitem.dto.EditLockPurpose;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Optional;
@@ -39,9 +40,8 @@ public class EditLockRepository {
             (rs, n) ->
                 new Item(
                     rs.getLong("version"),
-                    "VISIBLE".equals(rs.getString("visibility"))
-                        && !rs.getBoolean("needs_reconfirmation")
-                        && rs.getBoolean("available")),
+                    "VISIBLE".equals(rs.getString("visibility")),
+                    rs.getBoolean("needs_reconfirmation") || !rs.getBoolean("available")),
             space,
             item)
         .stream()
@@ -54,13 +54,15 @@ public class EditLockRepository {
             """
         SELECT l.* FROM care_item_edit_lock l
         JOIN space_membership m ON m.space_id=l.space_id AND m.id=l.holder_membership_id AND m.is_active
+        JOIN care_space s ON s.id=l.space_id
         WHERE l.space_id=? AND l.item_id=? AND l.expires_at>?
+          AND (l.purpose='EDIT' OR s.owner_membership_id=l.holder_membership_id)
         """,
             (rs, n) ->
                 new Lease(
                     rs.getObject("holder_membership_id", UUID.class),
                     rs.getString("token_digest"),
-                    rs.getTimestamp("expires_at").toInstant()),
+                    EditLockPurpose.valueOf(rs.getString("purpose"))),
             space,
             item,
             Timestamp.from(now))
@@ -68,25 +70,27 @@ public class EditLockRepository {
         .findFirst();
   }
 
-  public void save(UUID space, UUID item, UUID member, String digest, Instant expiry) {
+  public void save(
+      UUID space, UUID item, UUID member, String digest, Instant expiry, EditLockPurpose purpose) {
     jdbc.update(
         """
-        INSERT INTO care_item_edit_lock (space_id,item_id,holder_membership_id,token_digest,expires_at)
-        VALUES (?,?,?,?,?) ON CONFLICT (item_id) DO UPDATE SET holder_membership_id=EXCLUDED.holder_membership_id,
-          token_digest=EXCLUDED.token_digest,expires_at=EXCLUDED.expires_at
+        INSERT INTO care_item_edit_lock (space_id,item_id,holder_membership_id,token_digest,expires_at,purpose)
+        VALUES (?,?,?,?,?,?) ON CONFLICT (item_id) DO UPDATE SET holder_membership_id=EXCLUDED.holder_membership_id,
+          token_digest=EXCLUDED.token_digest,expires_at=EXCLUDED.expires_at,purpose=EXCLUDED.purpose
         """,
         space,
         item,
         member,
         digest,
-        Timestamp.from(expiry));
+        Timestamp.from(expiry),
+        purpose.name());
   }
 
   public void release(UUID space, UUID item) {
     jdbc.update("DELETE FROM care_item_edit_lock WHERE space_id=? AND item_id=?", space, item);
   }
 
-  public record Item(long version, boolean available) {}
+  public record Item(long version, boolean visible, boolean needsReconfirmation) {}
 
-  public record Lease(UUID member, String digest, Instant expiresAt) {}
+  public record Lease(UUID member, String digest, EditLockPurpose purpose) {}
 }

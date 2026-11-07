@@ -62,6 +62,8 @@ public class SourceRecordDeletionImpactRepository {
             FROM analysis_input_basis WHERE space_id=:space AND direct_document_id IS NOT NULL
           UNION ALL SELECT 'EVIDENCE',source_evidence_id,'RUN',run_id
             FROM analysis_input_basis WHERE space_id=:space AND source_evidence_id IS NOT NULL
+          UNION ALL SELECT 'EVIDENCE',evidence_id,'DOCUMENT',document_id
+            FROM care_item_document_evidence WHERE space_id=:space
           UNION ALL SELECT 'RUN',run_id,'PROPOSAL',id FROM ai_proposal WHERE space_id=:space
           UNION ALL SELECT 'EVIDENCE',primary_evidence_id,'PROPOSAL',id FROM ai_proposal WHERE space_id=:space
           UNION ALL SELECT 'DOCUMENT',output_document_id,'PROPOSAL',id FROM ai_proposal WHERE space_id=:space

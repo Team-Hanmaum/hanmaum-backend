@@ -39,6 +39,21 @@ public class CareItemOpenApiConfiguration {
         path.getPost()
             .setSecurity(
                 List.of(new SecurityRequirement().addList("SessionCookie").addList("CsrfToken")));
+      var reconfirmation =
+          api.getPaths().get("/api/spaces/{spaceId}/items/{itemId}/reconfirmations");
+      if (reconfirmation != null && reconfirmation.getPost() != null)
+        reconfirmation
+            .getPost()
+            .setSecurity(
+                List.of(new SecurityRequirement().addList("SessionCookie").addList("CsrfToken")));
+      var reconfirmationBody = api.getComponents().getSchemas().get("ReconfirmationBody");
+      if (reconfirmationBody != null)
+        reconfirmationBody.setRequired(
+            List.of(
+                "expectedItemVersion", "leaseToken", "values", "evidenceIds", "clientRequestId"));
+      var reconfirmationValues = api.getComponents().getSchemas().get("ReconfirmationValues");
+      if (reconfirmationValues != null)
+        reconfirmationValues.setRequired(List.of("title", "fields"));
       for (String suffix : List.of("/{itemId}", "/{itemId}/status")) {
         var edit = api.getPaths().get("/api/spaces/{spaceId}/items" + suffix);
         if (edit != null && edit.getPatch() != null)

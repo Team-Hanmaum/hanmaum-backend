@@ -1,5 +1,6 @@
 package com.hanmaum.backend.careitem.controller;
 
+import com.hanmaum.backend.careitem.dto.EditLockPurpose;
 import com.hanmaum.backend.careitem.dto.EditLockResponse;
 import com.hanmaum.backend.careitem.service.*;
 import com.hanmaum.backend.global.response.ApiResponse;
@@ -54,7 +55,7 @@ public class EditLockController {
   @Operation(
       summary = "항목 편집 잠금 획득",
       description =
-          "현재 참여자만 가능. 기존 유효 잠금은 같은 사용자도 재획득 불가. 기본 2분, 권장 갱신 30초. 응답 유실 시 토큰 재발급 없이 만료 후 재획득.")
+          "기본 EDIT는 현재 참여자가 일반 항목을 편집할 때 사용합니다. RECONFIRMATION은 현재 소유자가 재확인 대상 항목에 사용합니다. 기존 유효 잠금은 재획득할 수 없습니다.")
   @io.swagger.v3.oas.annotations.parameters.RequestBody(
       content =
           @Content(
@@ -68,26 +69,33 @@ public class EditLockController {
       @PathVariable UUID spaceId,
       @PathVariable UUID itemId,
       @RequestBody JsonNode body) {
-    CareMutationInput.object(body, "body", Set.of("expectedItemVersion"));
+    CareMutationInput.object(body, "body", Set.of("expectedItemVersion", "purpose"));
     long version =
         CareMutationInput.version(body.path("expectedItemVersion"), "expectedItemVersion", true);
     return ResponseEntity.status(201)
         .cacheControl(CacheControl.noStore())
-        .body(ApiResponse.success(locks.acquire(user.userId(), spaceId, itemId, version)));
+        .body(
+            ApiResponse.success(
+                locks.acquire(user.userId(), spaceId, itemId, version, purpose(body))));
   }
 
   @PostMapping(value = "/renewals", consumes = MediaType.APPLICATION_JSON_VALUE)
-  @Operation(summary = "항목 편집 잠금 갱신", description = "현재 참여자이면서 토큰 보유자만 갱신. 만료된 잠금은 되살리지 않음.")
+  @Operation(
+      summary = "항목 편집 잠금 갱신",
+      description = "획득 때와 같은 용도로 갱신합니다. 재확인 잠금은 현재 소유자만 갱신할 수 있습니다.")
   @io.swagger.v3.oas.annotations.parameters.RequestBody(
-      content = @Content(schema = @Schema(implementation = TokenBody.class)))
+      content = @Content(schema = @Schema(implementation = RenewalBody.class)))
   public ResponseEntity<ApiResponse<EditLockResponse>> renew(
       @CurrentUser AuthenticatedUser user,
       @PathVariable UUID spaceId,
       @PathVariable UUID itemId,
       @RequestBody JsonNode body) {
+    CareMutationInput.object(body, "body", Set.of("leaseToken", "purpose"));
+    String token = CareMutationInput.text(body.path("leaseToken"), "leaseToken", true);
     return ResponseEntity.ok()
         .cacheControl(CacheControl.noStore())
-        .body(ApiResponse.success(locks.renew(user.userId(), spaceId, itemId, token(body))));
+        .body(
+            ApiResponse.success(locks.renew(user.userId(), spaceId, itemId, token, purpose(body))));
   }
 
   @PostMapping(value = "/releases", consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -113,7 +121,21 @@ public class EditLockController {
     return CareMutationInput.text(body.path("leaseToken"), "leaseToken", true);
   }
 
-  public record AcquireBody(@Schema(example = "1") String expectedItemVersion) {}
+  private EditLockPurpose purpose(JsonNode body) {
+    if (!body.has("purpose")) return EditLockPurpose.EDIT;
+    try {
+      return EditLockPurpose.valueOf(CareMutationInput.text(body.path("purpose"), "purpose", true));
+    } catch (IllegalArgumentException e) {
+      throw CareItemInput.invalid("purpose", "EDIT 또는 RECONFIRMATION을 입력해주세요.");
+    }
+  }
+
+  public record AcquireBody(
+      @Schema(example = "1") String expectedItemVersion,
+      @Schema(defaultValue = "EDIT") EditLockPurpose purpose) {}
+
+  public record RenewalBody(
+      String leaseToken, @Schema(defaultValue = "EDIT") EditLockPurpose purpose) {}
 
   public record TokenBody(@Schema(description = "획득 응답의 본인 leaseToken") String leaseToken) {}
 }

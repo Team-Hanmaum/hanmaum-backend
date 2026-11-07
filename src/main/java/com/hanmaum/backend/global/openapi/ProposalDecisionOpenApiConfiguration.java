@@ -105,6 +105,7 @@ public class ProposalDecisionOpenApiConfiguration {
               Map.entry("DeclineEntry", List.of("proposalId", "reviewToken")),
               Map.entry("AcquireBody", List.of("expectedItemVersion")),
               Map.entry("TokenBody", List.of("leaseToken")),
+              Map.entry("RenewalBody", List.of("leaseToken")),
               Map.entry("ChangeRequestSubmissionBody", List.of("clientRequestId", "entries")),
               Map.entry("ChangeRequestApplicationBody", List.of("clientRequestId", "entries")),
               Map.entry("ChangeRequestApplicationEntry", List.of("requestEntryId", "reviewToken")),

@@ -53,14 +53,11 @@ public class AnalysisV2InputService {
         WHERE i.space_id=? AND i.visibility='VISIBLE' AND NOT i.needs_reconfirmation
           AND d.body IS NOT NULL AND d.redacted_at IS NULL
           AND care_document_available(d.id)
-          AND EXISTS (SELECT 1 FROM care_item_basis b
-            LEFT JOIN content_document direct ON direct.space_id=b.space_id AND direct.id=b.direct_document_id
-            LEFT JOIN evidence e ON e.space_id=b.space_id AND e.id=b.source_evidence_id
-            LEFT JOIN source_record r ON r.space_id=e.space_id AND r.id=e.record_id
-            WHERE b.space_id=i.space_id AND b.item_id=i.id AND
-              ((direct.body IS NOT NULL AND direct.redacted_at IS NULL) OR
-               (e.quote IS NOT NULL AND e.redacted_at IS NULL AND r.lifecycle='ACTIVE' AND r.version=e.record_version)))
-          AND NOT EXISTS (SELECT 1 FROM care_item_basis b
+          AND EXISTS (SELECT 1 FROM care_item_available_basis b
+            WHERE b.space_id=i.space_id AND b.item_id=i.id)
+          AND (EXISTS (SELECT 1 FROM care_item_history h
+            WHERE h.space_id=i.space_id AND h.item_id=i.id AND h.operation='RECONFIRM')
+          OR NOT EXISTS (SELECT 1 FROM care_item_basis b
             LEFT JOIN evidence e ON e.space_id=b.space_id AND e.id=b.source_evidence_id
             LEFT JOIN source_record r ON r.space_id=e.space_id AND r.id=e.record_id
             LEFT JOIN content_document direct ON direct.space_id=b.space_id AND direct.id=b.direct_document_id
@@ -69,7 +66,7 @@ public class AnalysisV2InputService {
                 (e.quote IS NULL OR e.redacted_at IS NOT NULL OR r.id IS NULL
                   OR r.lifecycle<>'ACTIVE' OR r.version<>e.record_version))
                 OR (b.direct_document_id IS NOT NULL AND
-                  (direct.body IS NULL OR direct.redacted_at IS NOT NULL))))
+                  (direct.body IS NULL OR direct.redacted_at IS NOT NULL)))))
         ORDER BY i.created_at DESC,i.id DESC LIMIT 101
         """,
             (rs, n) ->
@@ -111,15 +108,10 @@ public class AnalysisV2InputService {
       var links =
           jdbc.query(
               """
-          SELECT b.id,b.direct_document_id,b.source_evidence_id,e.record_id,e.record_version
-          FROM care_item_basis b
-          LEFT JOIN content_document d ON d.space_id=b.space_id AND d.id=b.direct_document_id
-          LEFT JOIN evidence e ON e.space_id=b.space_id AND e.id=b.source_evidence_id
-          LEFT JOIN source_record r ON r.space_id=e.space_id AND r.id=e.record_id
-          WHERE b.space_id=? AND b.item_id=? AND
-            ((d.body IS NOT NULL AND d.redacted_at IS NULL) OR
-             (e.quote IS NOT NULL AND e.redacted_at IS NULL AND r.lifecycle='ACTIVE' AND r.version=e.record_version))
-          ORDER BY b.id LIMIT 21
+          SELECT id,direct_document_id,source_evidence_id,record_id,record_version
+          FROM care_item_available_basis
+          WHERE space_id=? AND item_id=?
+          ORDER BY id LIMIT 21
           """,
               (rs, n) ->
                   new Link(

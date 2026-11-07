@@ -15,7 +15,7 @@
 - `RECORD_QUOTE`: 소식 원본의 인용. evidenceId는 기존 evidence ID이고 작성자·시각은 반영자가 아닌 원본 기록자·등록 시각이다.
 - `DIRECT_INPUT`: 이전 문서를 부모로 갖지 않는 직접 입력. evidenceId는 care_item_basis ID, text는 저장된 입력 JSON의 문자열 표현이다. 문자열 값의 공백·줄바꿈·내용은 보존하지만 최초 HTTP JSON의 공백·키 순서를 재현하지 않는다.
 - `DERIVED`: 부모 문서에 의존하는 직접 수정 입력 등. 기존 값을 참고한 입력을 독립된 새 원본으로 표시하지 않는다. text는 저장된 입력 JSON 표현이다.
-- 현재 `ANSWER`·`RECONFIRMATION` 입력 경로는 미구현이므로 이 종류의 근거를 만들어 반환하지 않는다.
+- `RECONFIRMATION`은 소유자가 재확인 때 새로 작성한 근거다. `ANSWER` 입력은 별도 범위다.
 - `VALID`만 text를 포함한다. 원본 제거·버전 불일치, 인용 제거, 제안 무효화, 직접 문서 또는 조상 문서의 가시성 상실이면 `REDACTED`, text와 recordId는 null이다. 남아 있는 독립 근거는 각각 검증한다.
 - 소식 원본 삭제 실행으로 분리된 근거 연결은 현재 근거 목록에서 빠진다. 해당 변경의 이력 메타데이터는 보존하고, 삭제된 내용과 근거 ID는 노출하지 않는다.
 - 회원 연결이 제거된 입력자는 createdByMembershipId=null이다. 공간에서 나간 것만으로 작성자를 지우지 않는다.
@@ -26,7 +26,7 @@
 
 목록 행은 `version, changeKind, changedBy, changedAt, redactedFields`다. 대기 제안·요청은 포함하지 않는다. 저장 이력이 없으면 빈 배열이다. 일반 삭제 항목도 현재 참여자에게 보존된 이력을 제공한다.
 
-- 공개 changeKind는 현재 저장 동작 `CREATE, UPDATE, RESOLVE, LINK_EVIDENCE`와 `ASSIGNEE_CHANGE, STATUS_CHANGE`다. `UNASSIGN`은 ASSIGNEE_CHANGE로 표시한다. UPDATE 중 조회 가능한 전후 값에서 상태만 바뀌었으면 STATUS_CHANGE, 담당자만 바뀌었으면 ASSIGNEE_CHANGE다. 여러 필드가 바뀌거나 내용을 확인할 수 없으면 UPDATE를 유지한다.
+- 공개 changeKind는 현재 저장 동작 `CREATE, UPDATE, RESOLVE, LINK_EVIDENCE, RECONFIRM`과 `ASSIGNEE_CHANGE, STATUS_CHANGE`다. `UNASSIGN`은 ASSIGNEE_CHANGE로 표시한다. UPDATE 중 조회 가능한 전후 값에서 상태만 바뀌었으면 STATUS_CHANGE, 담당자만 바뀌었으면 ASSIGNEE_CHANGE다. 여러 필드가 바뀌거나 내용을 확인할 수 없으면 UPDATE를 유지한다.
 - changedBy는 기존 작성자 표현 `{membershipId, displayName, withdrawn}`을 사용한다. 회원 연결 제거 시 앞의 두 값은 null, withdrawn=true다. 단순 공간 참여 종료는 탈퇴로 표시하지 않는다. 회원 탈퇴 실행 API 자체의 구현을 의미하지 않는다.
 - 상세는 `itemId, version, previousVersion, before, after, changedBy, changedAt, evidenceIds, redactedFields`다. before/after는 당시 title·description·유형별 fields·status, 질문의 confirmedAnswer만 제공한다. 내부 AI 제안·요청 문서를 그대로 반환하지 않는다.
 - 최초 버전은 previousVersion과 before가 null이다. 그 외에는 선택 버전보다 작은 가장 최근 저장 버전과 비교한다. 과거 담당자 ID는 현재 담당자로 바꿔 쓰거나 현재 참여 여부 때문에 지우지 않는다.
@@ -43,10 +43,10 @@
 - 404 RESOURCE_NOT_FOUND: 공간 없음/비활성, 항목의 공간 불일치·항목 없음·요청한 확정 버전 없음
 - 500 INTERNAL_ERROR: 조회 실패. 일부 결과만 성공으로 반환하지 않는다.
 
-Proposal의 유효성 및 확정 근거 연결은 `ProposalProvenanceService`를 통해 ID만 조회한다. 이 Service는 호출자가 현재 참여·항목 소속을 확인한 동일 트랜잭션에 참여하며 독립 트랜잭션이나 별도 공개 API를 만들지 않는다. CareItem Repository는 Proposal 테이블을 직접 조회하지 않고, 받은 무효 ID와 공통 근거 가용성 조건으로 DB에서 본문 노출을 차단한다. ID 묶음은 UUID 배열 파라미터로 전달하여 개별 ID마다 SQL 바인드 변수를 늘리지 않는다.
+Proposal의 유효성 및 확정 근거 연결은 `ProposalProvenanceService`를 통해 ID만 조회한다. 이 Service는 호출자가 현재 참여·항목 소속을 확인한 동일 트랜잭션에 참여하며 독립 트랜잭션이나 별도 공개 API를 만들지 않는다. 근거 조회 Repository는 받은 무효 ID와 공통 근거 가용성 조건으로 DB에서 본문 노출을 차단한다. 재확인 저장 시에는 선택한 인용 근거의 제안 문서 ID도 부모 연결로 기록한다. ID 묶음은 UUID 배열 파라미터로 전달하여 개별 ID마다 SQL 바인드 변수를 늘리지 않는다.
 
 V15는 `proposal_decision(space_id,item_id,item_version)`와 적용된 AI 변경 요청의 `(space_id,result_item_id,result_item_version)` 조회 인덱스를 추가한다. 기존 V1~V14는 변경하지 않는다. 일반 트랜잭션 인덱스 생성이므로 해당 테이블의 쓰기를 중지한 유지보수 구간에서 적용하고, 성공·인덱스 유효성 확인 후 호환 BE와 worker를 재개한다. 여러 인스턴스 중 하나의 worker만 끄는 것은 쓰기 중지를 대신하지 않는다.
 
 목록의 페이지네이션·최대 결과 수는 별도 합의 대상이다. 현재 전체 조회 계약을 임의로 자르거나 미합의 기본 상한을 추가하지 않는다. 대량 이력이 계속 누적되는 경우 응답·쿼리 비용이 증가하며 실제 규모·부하 보장은 별도 검증 대상이다.
 
-가족 답변·재확인 입력 및 필드별 근거 추적은 별도 범위다. 프론트에서는 REDACTED 근거 링크를 비활성화하고 null 비교값을 삭제된 내용으로 표시한다.
+가족 답변 및 필드별 근거 추적은 별도 범위다. 프론트에서는 REDACTED 근거 링크를 비활성화하고 null 비교값을 삭제된 내용으로 표시한다.

@@ -47,18 +47,22 @@ public class CareContentRedactionRepository {
         WHERE i.space_id=? AND NOT i.needs_reconfirmation
           AND EXISTS (SELECT 1 FROM proposal_decision decision WHERE decision.space_id=i.space_id AND decision.item_id=i.id)
           AND (
-          NOT care_document_available(i.current_document_id) OR EXISTS (
+          NOT care_document_available(i.current_document_id) OR (
+          NOT EXISTS (SELECT 1 FROM care_item_history h
+            WHERE h.space_id=i.space_id AND h.item_id=i.id AND h.operation='RECONFIRM')
+          AND EXISTS (
             SELECT 1 FROM care_item_basis b LEFT JOIN evidence e ON e.id=b.source_evidence_id
             LEFT JOIN content_document d ON d.id=b.direct_document_id
             WHERE b.space_id=i.space_id AND b.item_id=i.id AND
               ((b.source_evidence_id IS NOT NULL AND e.redacted_at IS NOT NULL)
-               OR (b.direct_document_id IS NOT NULL AND d.redacted_at IS NOT NULL))))
+               OR (b.direct_document_id IS NOT NULL AND d.redacted_at IS NOT NULL)))))
         """,
         space);
     jdbc.update(
         """
         DELETE FROM care_item_edit_lock l USING care_item i
-        WHERE l.space_id=? AND i.space_id=l.space_id AND i.id=l.item_id AND i.needs_reconfirmation
+        WHERE l.space_id=? AND i.space_id=l.space_id AND i.id=l.item_id
+          AND i.needs_reconfirmation AND l.purpose='EDIT'
         """,
         space);
   }
