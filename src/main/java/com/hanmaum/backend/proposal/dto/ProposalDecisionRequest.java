@@ -17,7 +17,8 @@ public record ProposalDecisionRequest(UUID clientRequestId, List<Entry> entries)
               example = "1")
           Long expectedItemVersion,
       String leaseToken,
-      JsonNode values) {
+      JsonNode values,
+      Long expectedSpaceVersion) {
     @Override
     public String toString() {
       return "ProposalEntry[id=" + proposalId + "]";
@@ -52,7 +53,10 @@ public record ProposalDecisionRequest(UUID clientRequestId, List<Entry> entries)
                     "leaseToken",
                     "values"))
             : Set.of("proposalId", "reviewToken");
-    if (submission) allowed.add("sourceType");
+    if (submission) {
+      allowed.add("sourceType");
+      allowed.add("expectedSpaceVersion");
+    }
     for (int i = 0; i < array.size(); i++) {
       var e = array.get(i);
       String path = "entries[" + i + "]";
@@ -82,15 +86,28 @@ public record ProposalDecisionRequest(UUID clientRequestId, List<Entry> entries)
           throw CareItemInput.invalid(path + ".action", "허용된 반영 동작을 입력해주세요.");
         }
       }
-      if (action == ProposalAction.DELETE_ITEM && !direct)
-        throw CareItemInput.invalid(path + ".action", "삭제는 직접 입력 요청으로 제출해주세요.");
+      if ((action == ProposalAction.DELETE_ITEM || action == ProposalAction.UPDATE_SPACE)
+          && !direct) throw CareItemInput.invalid(path + ".action", "삭제·공간 수정은 직접 입력 요청으로 제출해주세요.");
       if (direct
           && action != ProposalAction.CREATE_ITEM
           && action != ProposalAction.UPDATE_ITEM
-          && action != ProposalAction.DELETE_ITEM)
-        throw CareItemInput.invalid(path + ".action", "직접 입력은 생성·수정·삭제만 지원합니다.");
+          && action != ProposalAction.DELETE_ITEM
+          && action != ProposalAction.UPDATE_SPACE)
+        throw CareItemInput.invalid(path + ".action", "직접 입력은 생성·수정·삭제·공간 수정을 지원합니다.");
       if (action == ProposalAction.DELETE_ITEM && e.hasNonNull("values"))
         throw CareItemInput.invalid(path + ".values", "삭제에는 values를 전달하지 않습니다.");
+      Long spaceVersion =
+          CareMutationInput.version(
+              e.path("expectedSpaceVersion"),
+              path + ".expectedSpaceVersion",
+              action == ProposalAction.UPDATE_SPACE);
+      if (action == ProposalAction.UPDATE_SPACE) {
+        if (e.hasNonNull("targetItemId")
+            || e.hasNonNull("expectedItemVersion")
+            || e.hasNonNull("leaseToken"))
+          throw CareItemInput.invalid(path, "공간 수정에는 항목 대상·버전·잠금을 전달하지 않습니다.");
+      } else if (spaceVersion != null)
+        throw CareItemInput.invalid(path + ".expectedSpaceVersion", "공간 수정에만 공간 버전을 전달해주세요.");
       entries.add(
           new Entry(
               id,
@@ -100,7 +117,8 @@ public record ProposalDecisionRequest(UUID clientRequestId, List<Entry> entries)
               CareMutationInput.version(
                   e.path("expectedItemVersion"), path + ".expectedItemVersion", false),
               CareMutationInput.text(e.path("leaseToken"), path + ".leaseToken", false),
-              e.has("values") ? e.get("values") : null));
+              e.has("values") ? e.get("values") : null,
+              spaceVersion));
     }
     return new ProposalDecisionRequest(key, List.copyOf(entries));
   }

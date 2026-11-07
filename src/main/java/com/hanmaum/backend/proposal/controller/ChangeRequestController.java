@@ -73,6 +73,7 @@ public class ChangeRequestController {
       description =
           "현재 MEMBER가 AI 제안 또는 직접 입력 1~20개를 검증 후 승인 대기로 제출합니다. AI 제안은 proposalId 필수, DIRECT_INPUT은 제안 없이 제출하며 현재 항목은 변경하지 않습니다. "
               + "기존 항목은 최신 버전·본인 편집 잠금이 필요하고 성공 시 잠금을 해제합니다. DIRECT_INPUT DELETE_ITEM은 values를 생략하거나 null로 전달하며, 내용 확인이 불가능한 항목은 DELETION 잠금을 사용합니다. 같은 참여자·제안의 유효 대기 요청은 중복 제출할 수 없습니다. "
+              + "UPDATE_SPACE는 DIRECT_INPUT, values.subjectLabel과 expectedSpaceVersion을 사용하며 항목 대상·버전·잠금은 전달하지 않습니다. 한 묶음에서 같은 공간을 두 번 수정할 수 없습니다. "
               + "동일 요청 재전송에는 기존 clientRequestId를 사용합니다. 본문 1 MiB, 문자열 10,000 UTF-16, 저장 요청 문서 합계 512 KiB 상한입니다.")
   @io.swagger.v3.oas.annotations.parameters.RequestBody(
       content =
@@ -159,7 +160,7 @@ public class ChangeRequestController {
   @Operation(
       summary = "소유자 선택 변경 요청 반영",
       description =
-          "현재 소유자가 선택한 1~20개 요청을 변경 전 상태에서 검증하고 전부 반영하거나 전부 실패합니다. 기존 항목은 소유자 본인의 잠금과 요청 당시와 같은 현재 버전이 필요합니다. values 생략은 저장된 요청값 사용, 전달하면 해당 작업 입력 전체를 대체하며 원래 requestedValues는 보존합니다. 가족 답변 요청은 values를 생략하고 저장된 답변과 근거를 그대로 반영합니다. 요청 종류·대상은 바꿀 수 없습니다. 같은 AI 제안의 직접 반영과 중복되지 않습니다.")
+          "현재 소유자가 선택한 1~20개 요청을 변경 전 상태에서 검증하고 전부 반영하거나 전부 실패합니다. 기존 항목은 소유자 본인의 잠금과 요청 당시와 같은 현재 버전이 필요합니다. UPDATE_SPACE는 요청 당시와 같은 expectedSpaceVersion을 전달하며 항목 버전·잠금은 전달하지 않습니다. values 생략은 저장된 요청값 사용, 전달하면 해당 작업 입력 전체를 대체하며 원래 requestedValues는 보존합니다. 가족 답변 요청은 values를 생략하고 저장된 답변과 근거를 그대로 반영합니다. 요청 종류·대상은 바꿀 수 없습니다. 같은 AI 제안의 직접 반영과 중복되지 않습니다.")
   @io.swagger.v3.oas.annotations.parameters.RequestBody(
       content =
           @Content(
@@ -271,6 +272,7 @@ public class ChangeRequestController {
       String reviewToken,
       UUID targetItemId,
       String expectedItemVersion,
+      String expectedSpaceVersion,
       String leaseToken,
       JsonNode values) {}
 
@@ -286,8 +288,13 @@ public class ChangeRequestController {
       @Schema(
               types = {"string", "null"},
               example = "1",
-              description = "기존 항목 필수, 신규 생성은 생략/null")
+              description = "기존 항목 필수, 신규 생성·공간 수정은 생략/null")
           String expectedItemVersion,
+      @Schema(
+              types = {"string", "null"},
+              example = "3",
+              description = "UPDATE_SPACE만 필수. 그 외 생략/null")
+          String expectedSpaceVersion,
       String leaseToken,
       @Schema(
               description =
@@ -321,7 +328,14 @@ public class ChangeRequestController {
   public record AppliedRequests(UUID batchId, Instant appliedAt, List<AppliedEntry> results) {}
 
   @Schema(name = "ChangeRequestAppliedEntry")
-  public record AppliedEntry(UUID requestEntryId, UUID itemId, String itemVersion) {}
+  public record AppliedEntry(
+      UUID requestEntryId,
+      UUID itemId,
+      String itemVersion,
+      @Schema(
+              types = {"string", "null"},
+              description = "공간 수정 결과 버전. 항목 작업은 null")
+          String spaceVersion) {}
 
   @Schema(name = "ChangeRequestDeclined")
   public record DeclinedRequests(
@@ -378,6 +392,8 @@ public class ChangeRequestController {
       UUID proposalId,
       String expectedItemVersion,
       String currentItemVersion,
+      @Schema(types = {"string", "null"}) String expectedSpaceVersion,
+      @Schema(types = {"string", "null"}) String currentSpaceVersion,
       JsonNode requestedValues,
       JsonNode currentValues,
       List<UUID> evidenceIds,
@@ -392,8 +408,9 @@ public class ChangeRequestController {
       Instant decidedAt,
       UUID itemId,
       String itemVersion,
+      @Schema(types = {"string", "null"}) String spaceVersion,
       @Schema(
               description =
-                  "생성·수정·답변 확정 시 저장한 최종 문서 값. LINK_EVIDENCE·DELETE_ITEM·미적용·취소는 null이며 근거 연결·삭제의 기존 항목 문서는 반환하지 않습니다.")
+                  "생성·수정·답변 확정·공간 수정 시 저장한 최종 문서 값. 공간 수정은 subjectLabel만 포함합니다. LINK_EVIDENCE·DELETE_ITEM·미적용·취소는 null이며 근거 연결·삭제의 기존 항목 문서는 반환하지 않습니다.")
           JsonNode appliedValues) {}
 }

@@ -55,6 +55,42 @@ public class CareSpaceOpenApiConfiguration {
             .setSecurity(
                 List.of(new SecurityRequirement().addList("SessionCookie").addList("CsrfToken")));
       }
+      var updateMedia =
+          new MediaType().schema(new Schema<>().$ref("#/components/schemas/ApiResponse"));
+      for (ErrorCode code :
+          List.of(
+              CommonErrorCode.VERSION_CONFLICT,
+              CareSpaceErrorCode.SPACE_LABEL_DUPLICATED,
+              CommonErrorCode.IDEMPOTENCY_KEY_REUSED,
+              CommonErrorCode.REQUEST_IN_PROGRESS)) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("success", false);
+        body.put("code", code.code());
+        body.put("message", code.message());
+        body.put("data", null);
+        body.put("errors", List.of());
+        body.put("timestamp", "2026-11-07T08:00:00Z");
+        updateMedia.addExamples(code.code(), new Example().value(body));
+      }
+      api.getComponents()
+          .addResponses(
+              "UPDATE_CARE_SPACE_CONFLICT",
+              new ApiResponse()
+                  .description("공간 버전·호칭 중복·반복 요청 충돌")
+                  .content(new Content().addMediaType("application/json", updateMedia)));
+      var update = api.getPaths().get("/api/spaces/{spaceId}");
+      if (update != null && update.getPatch() != null) {
+        update
+            .getPatch()
+            .setSecurity(
+                List.of(new SecurityRequirement().addList("SessionCookie").addList("CsrfToken")));
+        update.getPatch().getRequestBody().setRequired(true);
+      }
+      var schema = api.getComponents().getSchemas().get("CareSpaceUpdateBody");
+      if (schema != null) {
+        schema.setRequired(List.of("subjectLabel", "expectedSpaceVersion", "clientRequestId"));
+        schema.setAdditionalProperties(false);
+      }
     };
   }
 }

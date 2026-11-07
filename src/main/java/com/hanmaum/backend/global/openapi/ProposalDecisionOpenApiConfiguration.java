@@ -1,6 +1,7 @@
 package com.hanmaum.backend.global.openapi;
 
 import com.hanmaum.backend.careitem.code.CareItemErrorCode;
+import com.hanmaum.backend.carespace.code.CareSpaceErrorCode;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.code.ErrorCode;
 import com.hanmaum.backend.proposal.code.ProposalErrorCode;
@@ -39,6 +40,7 @@ public class ProposalDecisionOpenApiConfiguration {
               "/change-requests",
                   List.of(
                       ProposalErrorCode.CHANGE_REQUEST_ALREADY_PENDING,
+                      CareSpaceErrorCode.SPACE_LABEL_DUPLICATED,
                       CareItemErrorCode.ITEM_STATE_CONFLICT,
                       ProposalErrorCode.PROPOSAL_STATE_CONFLICT,
                       ProposalErrorCode.PROPOSAL_BATCH_CONFLICT,
@@ -50,6 +52,7 @@ public class ProposalDecisionOpenApiConfiguration {
               "/request-applications",
                   List.of(
                       ProposalErrorCode.CHANGE_REQUEST_STATE_CONFLICT,
+                      CareSpaceErrorCode.SPACE_LABEL_DUPLICATED,
                       ProposalErrorCode.PROPOSAL_STATE_CONFLICT,
                       ProposalErrorCode.PROPOSAL_BATCH_CONFLICT,
                       CareItemErrorCode.ITEM_STATE_CONFLICT,
@@ -123,7 +126,7 @@ public class ProposalDecisionOpenApiConfiguration {
                   schema.setAdditionalProperties(false);
                 }
               });
-      // DELETE_ITEM belongs to direct member requests, never AI proposal application.
+      // DELETE_ITEM and UPDATE_SPACE are direct member requests, never AI proposal application.
       var applicationEntry = api.getComponents().getSchemas().get("ApplicationEntry");
       if (applicationEntry != null && applicationEntry.getProperties().get("action") != null)
         ((Schema<String>) applicationEntry.getProperties().get("action"))

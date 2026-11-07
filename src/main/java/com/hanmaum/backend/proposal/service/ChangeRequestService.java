@@ -5,6 +5,7 @@ import com.hanmaum.backend.careitem.repository.CareItemApplicationRepository;
 import com.hanmaum.backend.careitem.service.*;
 import com.hanmaum.backend.carespace.dto.*;
 import com.hanmaum.backend.carespace.service.CareSpaceAccessService;
+import com.hanmaum.backend.carespace.service.CareSpaceInformationApplicationService;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.command.*;
 import com.hanmaum.backend.global.exception.ApiException;
@@ -35,6 +36,7 @@ public class ChangeRequestService {
   private final CommandDigest digests;
   private final ObjectMapper mapper;
   private final Clock clock;
+  private final CareSpaceInformationApplicationService spaceInformation;
 
   public ChangeRequestService(
       CareSpaceAccessService access,
@@ -47,7 +49,8 @@ public class ChangeRequestService {
       CommandReceiptRepository receipts,
       CommandDigest digests,
       ObjectMapper mapper,
-      Clock clock) {
+      Clock clock,
+      CareSpaceInformationApplicationService spaceInformation) {
     this.access = access;
     this.requests = requests;
     this.proposals = proposals;
@@ -59,6 +62,7 @@ public class ChangeRequestService {
     this.digests = digests;
     this.mapper = mapper;
     this.clock = clock;
+    this.spaceInformation = spaceInformation;
   }
 
   public JsonNode submit(UUID actor, UUID space, JsonNode input) {
@@ -73,6 +77,7 @@ public class ChangeRequestService {
               .put("action", e.action().name());
       l.put("targetItemId", text(e.targetItemId()));
       l.put("expectedItemVersion", e.expectedItemVersion());
+      if (e.expectedSpaceVersion() != null) l.put("expectedSpaceVersion", e.expectedSpaceVersion());
       l.set("values", e.values() == null ? mapper.nullNode() : e.values());
     }
     var command =
@@ -81,6 +86,8 @@ public class ChangeRequestService {
     if (current.role() != CareSpaceRole.MEMBER) throw forbidden();
     if (command.previous() != null)
       return requests.submissionResult(space, replay(command, current.membershipId()));
+    if (request.entries().stream().filter(e -> e.action() == ProposalAction.UPDATE_SPACE).count()
+        > 1) throw batchConflict();
     var loaded =
         loadProposals(
             space,
@@ -97,7 +104,11 @@ public class ChangeRequestService {
       var e = request.entries().get(i);
       var p = loaded.get(e.proposalId());
       String path = "entries[" + i + "]";
-      if (p == null) {
+      if (e.action() == ProposalAction.UPDATE_SPACE) {
+        spaceInformation.prepare(space, e.expectedSpaceVersion(), e.values());
+        if (requests.hasPendingSpace(space, current.membershipId(), e.expectedSpaceVersion()))
+          throw new ApiException(ProposalErrorCode.CHANGE_REQUEST_ALREADY_PENDING);
+      } else if (p == null) {
         prepareDirect(space, current.membershipId(), e, locked.get(e.targetItemId()), path);
         if (e.targetItemId() != null
             && requests.hasPendingDirect(
@@ -188,7 +199,7 @@ public class ChangeRequestService {
     requests.createRequest(space, request, member, now);
     var entry =
         new ProposalDecisionRequest.Entry(
-            null, ProposalAction.RESOLVE_QUESTION, null, item, expected, null, values);
+            null, ProposalAction.RESOLVE_QUESTION, null, item, expected, null, values, null);
     UUID document = requests.document(space, values, null, null, target.document(), now);
     requests.insertEntry(space, request, UUID.randomUUID(), 0, entry, document);
     save(command, member, request, now);
@@ -212,6 +223,7 @@ public class ChangeRequestService {
       var l = logical.addObject().put("requestEntryId", e.id().toString());
       if (apply) {
         l.put("expectedItemVersion", e.version());
+        if (e.spaceVersion() != null) l.put("expectedSpaceVersion", e.spaceVersion());
         // Omitted override is not equivalent to an explicit null override.
         if (e.values() != null) l.set("values", e.values());
       }
@@ -236,7 +248,9 @@ public class ChangeRequestService {
       if (cancel && !e.requestId().equals(requestId)) throw missing();
       if (cancel && !e.memberId().equals(current.membershipId())) throw forbidden();
       if (!e.status().equals("PENDING")) {
-        if (apply && "TARGET_VERSION_CHANGED".equals(e.invalidReason()))
+        if (apply
+            && Set.of("TARGET_VERSION_CHANGED", "SPACE_VERSION_CHANGED")
+                .contains(Objects.toString(e.invalidReason(), "")))
           throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
         throw state();
       }
@@ -244,6 +258,8 @@ public class ChangeRequestService {
     Map<UUID, ProposalDecisionRepository.Proposal> loaded = Map.of();
     Map<UUID, CareItemApplicationRepository.Item> locked = Map.of();
     if (apply) {
+      if (entries.values().stream().filter(e -> e.action().equals("UPDATE_SPACE")).count() > 1)
+        throw batchConflict();
       var proposalIds =
           selection.entries().stream()
               .map(e -> entries.get(e.id()).proposalId())
@@ -266,6 +282,28 @@ public class ChangeRequestService {
         throw state();
       CareItemApplicationService.Prepared prepared = null;
       if (apply) {
+        if (e.action().equals("UPDATE_SPACE")) {
+          if (chosen.version() != null || chosen.lease() != null)
+            throw CareItemInput.invalid("entries[" + i + "]", "공간 수정에는 항목 버전·잠금을 전달하지 않습니다.");
+          if (chosen.spaceVersion() == null)
+            throw CareItemInput.invalid(
+                "entries[" + i + "].expectedSpaceVersion", "검토한 공간 버전을 입력해주세요.");
+          if (!Objects.equals(chosen.spaceVersion(), e.expectedSpaceVersion()))
+            throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
+          var values = chosen.values() == null ? mapper.readTree(e.values()) : chosen.values();
+          var spacePlan = spaceInformation.prepare(space, chosen.spaceVersion(), values);
+          documentBytes +=
+              CareMutationSizeLimits.bytes(
+                  mapper,
+                  mapper.createObjectNode().put("subjectLabel", spacePlan.label()),
+                  CareMutationSizeLimits.DOCUMENT_BYTES - documentBytes,
+                  "entries[" + i + "].values");
+          plans.add(new DecisionPlan(e, null, spacePlan));
+          continue;
+        }
+        if (chosen.spaceVersion() != null)
+          throw CareItemInput.invalid(
+              "entries[" + i + "].expectedSpaceVersion", "공간 수정에만 공간 버전을 전달해주세요.");
         if (!Objects.equals(chosen.version(), e.expectedItemVersion())) {
           if (e.expectedItemVersion() != null && chosen.version() == null)
             throw CareItemInput.invalid(
@@ -290,7 +328,8 @@ public class ChangeRequestService {
                 e.targetItemId(),
                 e.expectedItemVersion(),
                 chosen.lease(),
-                values);
+                values,
+                null);
         if (proposal == null
             && e.action().equals("CREATE_ITEM")
             && !Objects.equals(
@@ -322,7 +361,7 @@ public class ChangeRequestService {
                   "entries[" + i + "].values");
         }
       }
-      plans.add(new DecisionPlan(e, prepared));
+      plans.add(new DecisionPlan(e, prepared, null));
     }
     UUID batch = UUID.randomUUID();
     var now = now();
@@ -333,6 +372,11 @@ public class ChangeRequestService {
       var plan = plans.get(i);
       var e = plan.entry();
       if (apply) {
+        if (plan.spacePrepared() != null) {
+          var result = spaceInformation.apply(space, plan.spacePrepared(), now);
+          requests.decideSpace(space, e.id(), batch, result.version(), result.document());
+          continue;
+        }
         var p = loaded.get(e.proposalId());
         var result =
             p == null
@@ -428,7 +472,12 @@ public class ChangeRequestService {
           path,
           apply
               ? Set.of(
-                  "requestEntryId", "reviewToken", "expectedItemVersion", "leaseToken", "values")
+                  "requestEntryId",
+                  "reviewToken",
+                  "expectedItemVersion",
+                  "expectedSpaceVersion",
+                  "leaseToken",
+                  "values")
               : cancel ? Set.of("requestEntryId") : Set.of("requestEntryId", "reviewToken"));
       UUID id = CareMutationInput.uuid(e.path("requestEntryId"), path + ".requestEntryId", true);
       if (!ids.add(id))
@@ -446,7 +495,9 @@ public class ChangeRequestService {
               CareMutationInput.version(
                   e.path("expectedItemVersion"), path + ".expectedItemVersion", false),
               CareMutationInput.text(e.path("leaseToken"), path + ".leaseToken", false),
-              e.has("values") ? e.get("values") : null));
+              e.has("values") ? e.get("values") : null,
+              CareMutationInput.version(
+                  e.path("expectedSpaceVersion"), path + ".expectedSpaceVersion", false)));
     }
     return new Selection(key, List.copyOf(result));
   }
@@ -523,7 +574,7 @@ public class ChangeRequestService {
   private record Selection(UUID key, List<SelectionEntry> entries) {}
 
   private record SelectionEntry(
-      UUID id, String token, Long version, String lease, JsonNode values) {
+      UUID id, String token, Long version, String lease, JsonNode values, Long spaceVersion) {
     @Override
     public String toString() {
       return "RequestSelection[id=" + id + "]";
@@ -531,5 +582,7 @@ public class ChangeRequestService {
   }
 
   private record DecisionPlan(
-      ChangeRequestRepository.Entry entry, CareItemApplicationService.Prepared prepared) {}
+      ChangeRequestRepository.Entry entry,
+      CareItemApplicationService.Prepared prepared,
+      CareSpaceInformationApplicationService.Prepared spacePrepared) {}
 }

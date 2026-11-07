@@ -86,9 +86,9 @@ class ProductionDocumentationIntegrationTests {
       assertThat(itemRef).startsWith("#/components/schemas/");
       assertThat(document.at(itemRef.substring(1)).path("properties").propertyNames())
           .containsExactlyInAnyOrder(
-              suffix.equals("/proposal-applications") ? "proposalId" : "requestEntryId",
-              "itemId",
-              "itemVersion");
+              suffix.equals("/proposal-applications")
+                  ? new String[] {"proposalId", "itemId", "itemVersion"}
+                  : new String[] {"requestEntryId", "itemId", "itemVersion", "spaceVersion"});
     }
     assertThat(operation.path("security").size()).isEqualTo(1);
     assertThat(operation.path("security").get(0).propertyNames())

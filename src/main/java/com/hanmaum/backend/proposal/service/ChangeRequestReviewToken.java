@@ -28,19 +28,23 @@ public class ChangeRequestReviewToken {
     String proposal =
         e.proposalId() == null ? "DIRECT_INPUT" : proposals.issue(actor, space, e.proposalId());
     if (proposal == null) return null;
-    return digests.digest(
-        "CHANGE_REQUEST_REVIEW",
-        actor.toString(),
-        space.toString(),
-        owner.toString(),
-        e.id().toString(),
-        e.requestId().toString(),
-        e.memberId().toString(),
-        e.documentId().toString(),
-        e.action(),
-        e.values(),
-        String.valueOf(e.targetItemId()),
-        String.valueOf(e.expectedItemVersion()),
-        proposal);
+    String proof =
+        digests.digest(
+            "CHANGE_REQUEST_REVIEW",
+            actor.toString(),
+            space.toString(),
+            owner.toString(),
+            e.id().toString(),
+            e.requestId().toString(),
+            e.memberId().toString(),
+            e.documentId().toString(),
+            e.action(),
+            e.values(),
+            String.valueOf(e.targetItemId()),
+            String.valueOf(e.expectedItemVersion()),
+            proposal);
+    return e.expectedSpaceVersion() == null
+        ? proof
+        : digests.digest("SPACE_CHANGE_REQUEST_REVIEW", proof, e.expectedSpaceVersion().toString());
   }
 }
