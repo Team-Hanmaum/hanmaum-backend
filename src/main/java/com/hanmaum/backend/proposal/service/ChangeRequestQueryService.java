@@ -3,6 +3,7 @@ package com.hanmaum.backend.proposal.service;
 import com.hanmaum.backend.careitem.dto.CareItemDetail;
 import com.hanmaum.backend.careitem.repository.CareItemQueryRepository;
 import com.hanmaum.backend.careitem.service.CareItemInput;
+import com.hanmaum.backend.carespace.service.CareSpaceQueryService;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.exception.ApiException;
 import com.hanmaum.backend.proposal.repository.ChangeRequestRepository;
@@ -26,18 +27,21 @@ public class ChangeRequestQueryService {
   private final ChangeRequestReviewToken tokens;
   private final ChangeRequestCursor cursors;
   private final ObjectMapper mapper;
+  private final CareSpaceQueryService spaces;
 
   public ChangeRequestQueryService(
       ChangeRequestRepository requests,
       CareItemQueryRepository items,
       ChangeRequestReviewToken tokens,
       ChangeRequestCursor cursors,
-      ObjectMapper mapper) {
+      ObjectMapper mapper,
+      CareSpaceQueryService spaces) {
     this.requests = requests;
     this.items = items;
     this.tokens = tokens;
     this.cursors = cursors;
     this.mapper = mapper;
+    this.spaces = spaces;
   }
 
   public JsonNode list(UUID actor, UUID space, String status, String cursor, int size) {
@@ -92,6 +96,16 @@ public class ChangeRequestQueryService {
       row.put("reviewToken", tokens.issue(actor, space, e));
       row.putNull("currentItemVersion");
       row.putNull("currentValues");
+      row.put(
+          "expectedSpaceVersion",
+          e.expectedSpaceVersion() == null ? null : e.expectedSpaceVersion().toString());
+      row.putNull("currentSpaceVersion");
+      if (e.action().equals("UPDATE_SPACE")) {
+        var current = spaces.detail(actor, space);
+        row.put("currentSpaceVersion", current.version());
+        row.set(
+            "currentValues", mapper.createObjectNode().put("subjectLabel", current.subjectLabel()));
+      }
       var removed = row.putArray("redactedFields");
       if (e.values() == null) removed.add("requestedValues");
       if (e.targetItemId() != null) {
@@ -135,6 +149,7 @@ public class ChangeRequestQueryService {
                 .put("decidedAt", e.decidedAt() == null ? null : e.decidedAt().toString())
                 .put("itemId", e.resultItemId() == null ? null : e.resultItemId().toString())
                 .put("itemVersion", e.resultVersion());
+        decision.put("spaceVersion", e.resultSpaceVersion());
         decision.set(
             "appliedValues",
             e.appliedValues() == null ? mapper.nullNode() : mapper.readTree(e.appliedValues()));

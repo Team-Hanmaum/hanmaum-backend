@@ -151,8 +151,8 @@ public class ChangeRequestRepository {
       UUID document) {
     jdbc.update(
         """
-        INSERT INTO change_request_entry(id,space_id,request_id,ordinal_no,proposal_id,action,target_item_id,expected_item_version,request_document_id,source_type)
-        VALUES (?,?,?,?,?,?,?,?,?,?)
+        INSERT INTO change_request_entry(id,space_id,request_id,ordinal_no,proposal_id,action,target_item_id,expected_item_version,request_document_id,source_type,expected_space_version)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
         """,
         id,
         space,
@@ -163,7 +163,8 @@ public class ChangeRequestRepository {
         e.targetItemId(),
         e.expectedItemVersion(),
         document,
-        e.proposalId() == null ? "DIRECT_INPUT" : "AI_PROPOSAL");
+        e.proposalId() == null ? "DIRECT_INPUT" : "AI_PROPOSAL",
+        e.expectedSpaceVersion());
   }
 
   private static final String ENTRY_SELECT =
@@ -222,7 +223,9 @@ public class ChangeRequestRepository {
         rs.getObject("decision_batch_id", UUID.class),
         rs.getObject("decided_by_membership_id", UUID.class),
         instant(rs, "decided_at"),
-        rs.getString("applied_values"));
+        rs.getString("applied_values"),
+        rs.getObject("expected_space_version", Long.class),
+        rs.getString("result_space_version"));
   }
 
   private static final String HEADER_SELECT =
@@ -315,6 +318,20 @@ public class ChangeRequestRepository {
         Timestamp.from(now));
   }
 
+  public boolean hasPendingSpace(UUID space, UUID member, long version) {
+    return Boolean.TRUE.equals(
+        jdbc.queryForObject(
+            """
+        SELECT EXISTS(SELECT 1 FROM change_request_entry e JOIN change_request r ON r.space_id=e.space_id AND r.id=e.request_id
+          WHERE e.space_id=? AND r.submitted_by_membership_id=? AND e.action='UPDATE_SPACE'
+            AND e.expected_space_version=? AND e.status='PENDING' AND change_request_entry_invalid_reason(e.id) IS NULL)
+        """,
+            Boolean.class,
+            space,
+            member,
+            version));
+  }
+
   public void decide(
       UUID space,
       UUID id,
@@ -323,12 +340,28 @@ public class ChangeRequestRepository {
       UUID resultItem,
       Long resultVersion,
       UUID resultDocument) {
+    decide(space, id, batch, status, resultItem, resultVersion, resultDocument, null);
+  }
+
+  public void decideSpace(UUID space, UUID id, UUID batch, long version, UUID document) {
+    decide(space, id, batch, "APPLIED", null, null, document, version);
+  }
+
+  private void decide(
+      UUID space,
+      UUID id,
+      UUID batch,
+      String status,
+      UUID resultItem,
+      Long resultVersion,
+      UUID resultDocument,
+      Long resultSpaceVersion) {
     int changed =
         jdbc.update(
             """
         UPDATE change_request_entry SET status=?,decision_batch_id=?,decision_ordinal_no=(
           SELECT count(*) FROM change_request_entry WHERE decision_batch_id=?),
-          result_item_id=?,result_item_version=?,result_document_id=?
+          result_item_id=?,result_item_version=?,result_document_id=?,result_space_version=?
         WHERE space_id=? AND id=? AND status='PENDING'
         """,
             status,
@@ -337,6 +370,7 @@ public class ChangeRequestRepository {
             resultItem,
             resultVersion,
             resultDocument,
+            resultSpaceVersion,
             space,
             id);
     if (changed != 1)
@@ -408,13 +442,14 @@ public class ChangeRequestRepository {
       out.put("appliedAt", at.toString());
       var results = out.putArray("results");
       jdbc.query(
-          "SELECT id,result_item_id,result_item_version FROM change_request_entry WHERE space_id=? AND decision_batch_id=? ORDER BY decision_ordinal_no",
+          "SELECT id,result_item_id,result_item_version,result_space_version FROM change_request_entry WHERE space_id=? AND decision_batch_id=? ORDER BY decision_ordinal_no",
           (rs, n) -> {
             results
                 .addObject()
                 .put("requestEntryId", rs.getString(1))
                 .put("itemId", rs.getString(2))
-                .put("itemVersion", rs.getString(3));
+                .put("itemVersion", rs.getString(3))
+                .put("spaceVersion", rs.getString(4));
             return 0;
           },
           space,
@@ -459,7 +494,9 @@ public class ChangeRequestRepository {
       UUID decisionBatchId,
       UUID decidedBy,
       Instant decidedAt,
-      String appliedValues) {
+      String appliedValues,
+      Long expectedSpaceVersion,
+      String resultSpaceVersion) {
     @Override
     public String toString() {
       return "ChangeRequestEntry[id=" + id + "]";
