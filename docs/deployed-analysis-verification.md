@@ -15,7 +15,7 @@
 2. CI/CD의 실패 단계와 원인을 구분한다. 이미지 빌드 중 Gradle 다운로드 HTTP 504처럼 일시적인 외부 장애라면 로그·동일 SHA·현재 dev를 확인한 뒤 실패 작업과 후속 작업을 재실행한다. 테스트·체크섬·권한·시작 실패를 같은 원인으로 취급하지 않는다. dev가 바뀌면 배포의 최신 커밋 보호 절차를 따른다.
 3. `GET /actuator/health`·`/v3/api-docs`를 읽는다. 공간 생성, 소식 저장·분석 상태 조회, 제안 상세·반영, 항목·근거·이력·현황판 조회 작업을 확인한다.
 4. 로그인한 같은 브라우저 프로필로 `https://api.hanmaum.site/swagger-ui/index.html`을 연다. `GET /api/users/me`의 200 확인 후 `GET /api/auth/csrf`의 토큰을 Swagger `CsrfToken` 인증 입력에 연결한다. HttpOnly 세션 쿠키는 브라우저가 보내며 직접 복사하지 않는다.
-5. 워커 설정의 활성화 여부를 확인한다. GitHub Variables의 `ANALYSIS_WORKER_ENABLED=true`는 배포 입력이며 실제 적용은 성공한 릴리스의 설정과 실행 결과로 확인한다. 전체 환경 파일을 출력하지 않는다. 설정·타임아웃은 [워커 배포 안내](deployment.md)의 활성화·비활성화 절차를 따른다.
+5. 워커 설정의 활성화 여부를 확인한다. GitHub Variables의 `ANALYSIS_WORKER_ENABLED=true`는 배포 입력이며 실제 적용은 성공한 릴리스의 설정과 아래 합성 시나리오의 실행 결과로 확인한다. 별도 점검용 소식을 추가 접수하지 않는다. 전체 환경 파일을 출력하지 않는다. 설정·타임아웃은 [워커 배포 안내](deployment.md)의 활성화·비활성화 절차를 따른다.
 
 ## 합성 시나리오
 
@@ -25,7 +25,7 @@
 | --- | --- | --- |
 | 1 | `POST /api/spaces`에 검증 호칭과 새 `clientRequestId` 제출 | 201, `spaceId`·본인 `membershipId`, 소유자 역할 확보 |
 | 2 | 공간의 항목·제안·현황판 조회 | 기존 항목과 혼동하지 않도록 초기 빈 상태 확인 |
-| 3 | `POST /api/spaces/{spaceId}/source-records`에 합성 `content`와 별도 `clientRequestId` 제출 | 201, `recordId`·`analysis.analysisId`, 저장 원문 일치 |
+| 3 | `POST /api/spaces/{spaceId}/source-records`에 합성 `content`와 별도 `clientRequestId` 제출 후 `GET /api/spaces/{spaceId}/source-records/{recordId}` 조회 | POST 201에서 `recordId`·`analysis.analysisId` 확보, 상세 GET 200의 `content`와 제출 원문 일치 확인 |
 | 4 | `GET /api/spaces/{spaceId}/source-records/{recordId}/analyses/{analysisId}`를 제한된 시간 동안 조회 | 최종 COMPLETED, `proposalIds`·처리 시각 확인. 빠른 처리는 QUEUED/RUNNING을 관찰하지 못할 수 있음 |
 | 5 | 해당 소식의 제안 목록과 선택 제안 상세 조회 | 원래 `recordId`·`analysisId`, 검토 대기 상태, 원문 근거, 예상 유형·날짜·시각·장소 비교 |
 | 6 | 소유자가 `POST /api/spaces/{spaceId}/proposal-applications` 호출 | 200, `batchId` 및 반영 `itemId`·문자열 `itemVersion` 확보 |
