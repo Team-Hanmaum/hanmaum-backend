@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.hanmaum.backend.global.security.SecurityProperties;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -43,6 +44,7 @@ import tools.jackson.databind.ObjectMapper;
       "AI_BASE_URL=https://ai.invalid",
       "AI_INTERNAL_API_KEY=synthetic-internal-api-key",
       "app.security.allowed-origins[0]=https://hanmaum.site",
+      "app.security.allowed-origins[1]=https://local.hanmaum.site:5173",
       "GOOGLE_CLIENT_ID=synthetic-google-client",
       "GOOGLE_CLIENT_SECRET=synthetic-google-secret",
       "KAKAO_CLIENT_ID=synthetic-kakao-client",
@@ -68,50 +70,82 @@ class ProductionDocumentationIntegrationTests {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"google", "kakao"})
-  void keepsProviderCallbackOnBackendBehindProductionProxy(String provider) throws Exception {
-    var response =
-        mvc.perform(
-                get("http://backend:8080/oauth2/authorization/" + provider)
-                    .header("X-Forwarded-Host", "api.hanmaum.site")
-                    .header("X-Forwarded-Proto", "https")
-                    .header("X-Forwarded-Port", "443"))
-            .andExpect(status().isFound())
-            .andReturn()
-            .getResponse();
+  @CsvSource({"google,default", "google,local", "kakao,default", "kakao,local"})
+  void keepsProviderCallbackOnBackendBehindProductionProxy(String provider, String frontend)
+      throws Exception {
+    var start =
+        get("http://backend:8080/oauth2/authorization/" + provider)
+            .header("X-Forwarded-Host", "api.hanmaum.site")
+            .header("X-Forwarded-Proto", "https")
+            .header("X-Forwarded-Port", "443");
+    if (frontend.equals("local")) start.param("frontend", "local");
+    var response = mvc.perform(start).andExpect(status().isFound()).andReturn().getResponse();
     var query =
         UriComponentsBuilder.fromUriString(response.getRedirectedUrl()).build().getQueryParams();
     assertThat(UriUtils.decode(query.getFirst("redirect_uri"), StandardCharsets.UTF_8))
         .isEqualTo("https://api.hanmaum.site/login/oauth2/code/" + provider);
+    assertThat(query).doesNotContainKeys("frontend", "hanmaum.loginSuccessUrl");
+    assertThat(response.getRedirectedUrl()).doesNotContain("local.hanmaum.site");
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"", "production", "LOCAL", "local ", "https://evil.invalid", "//evil.invalid"})
+  void rejectsUnknownFrontendSelectorsBeforeProviderRedirect(String frontend) throws Exception {
+    for (String provider : List.of("google", "kakao")) {
+      mvc.perform(get("/oauth2/authorization/" + provider).param("frontend", frontend))
+          .andExpect(status().isUnauthorized())
+          .andExpect(header().doesNotExist("Location"))
+          .andExpect(jsonPath("$.code").value("OAUTH_LOGIN_FAILED"));
+    }
   }
 
   @Test
-  void allowsCredentialedFrontendPreflightWithCsrfHeaderOnlyForConfiguredOrigin() throws Exception {
+  void rejectsRepeatedFrontendSelectors() throws Exception {
+    mvc.perform(get("/oauth2/authorization/google").param("frontend", "local", "local"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(header().doesNotExist("Location"))
+        .andExpect(jsonPath("$.code").value("OAUTH_LOGIN_FAILED"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"https://hanmaum.site", "https://local.hanmaum.site:5173"})
+  void allowsCredentialedFrontendPreflightWithCsrfHeader(String origin) throws Exception {
+    for (String method : List.of("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")) {
+      mvc.perform(
+              options("/api/auth/logout")
+                  .header("Origin", origin)
+                  .header("Access-Control-Request-Method", method)
+                  .header("Access-Control-Request-Headers", "Content-Type,X-CSRF-TOKEN"))
+          .andExpect(status().isOk())
+          .andExpect(header().string("Access-Control-Allow-Origin", origin))
+          .andExpect(header().string("Access-Control-Allow-Credentials", "true"))
+          .andExpect(header().string("Access-Control-Allow-Headers", "Content-Type, X-CSRF-TOKEN"));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "https://untrusted.invalid", "http://local.hanmaum.site:5173",
+        "https://local.hanmaum.site:5174", "https://hanmaum.site.evil.invalid"
+      })
+  void rejectsUnconfiguredFrontendOrigin(String origin) throws Exception {
     mvc.perform(
             options("/api/auth/logout")
-                .header("Origin", "https://hanmaum.site")
-                .header("Access-Control-Request-Method", "POST")
-                .header("Access-Control-Request-Headers", "Content-Type,X-CSRF-TOKEN"))
-        .andExpect(status().isOk())
-        .andExpect(header().string("Access-Control-Allow-Origin", "https://hanmaum.site"))
-        .andExpect(header().string("Access-Control-Allow-Credentials", "true"))
-        .andExpect(header().string("Access-Control-Allow-Headers", "Content-Type, X-CSRF-TOKEN"));
-    mvc.perform(
-            options("/api/auth/logout")
-                .header("Origin", "https://untrusted.invalid")
+                .header("Origin", origin)
                 .header("Access-Control-Request-Method", "POST"))
         .andExpect(status().isForbidden())
         .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
   }
 
-  @Test
-  void preservesProductionCookieAndCsrfLogoutContract() throws Exception {
+  @ParameterizedTest
+  @ValueSource(strings = {"https://hanmaum.site", "https://local.hanmaum.site:5173"})
+  void preservesProductionCookieAndCsrfLogoutContract(String origin) throws Exception {
     var response =
-        mvc.perform(
-                get("https://api.hanmaum.site/api/auth/csrf")
-                    .header("Origin", "https://hanmaum.site"))
+        mvc.perform(get("https://api.hanmaum.site/api/auth/csrf").header("Origin", origin))
             .andExpect(status().isOk())
-            .andExpect(header().string("Access-Control-Allow-Origin", "https://hanmaum.site"))
+            .andExpect(header().string("Access-Control-Allow-Origin", origin))
             .andExpect(header().string("Access-Control-Allow-Credentials", "true"))
             .andExpect(header().string("Cache-Control", "no-store"))
             .andExpect(jsonPath("$.headerName").value("X-CSRF-TOKEN"))
@@ -129,7 +163,7 @@ class ProductionDocumentationIntegrationTests {
     assertThat(csrf.propertyNames()).containsExactlyInAnyOrder("headerName", "token");
     mvc.perform(
             post("https://api.hanmaum.site/api/auth/logout")
-                .header("Origin", "https://hanmaum.site")
+                .header("Origin", origin)
                 .cookie(cookie)
                 .header(csrf.get("headerName").asText(), csrf.get("token").asText()))
         .andExpect(status().isNoContent())

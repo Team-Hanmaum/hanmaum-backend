@@ -3,23 +3,32 @@ package com.hanmaum.backend.global.security;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.code.ErrorCode;
 import com.hanmaum.backend.global.response.ApiResponse;
+import com.hanmaum.backend.global.security.oauth.FrontendAuthorizationRequestResolver;
 import com.hanmaum.backend.global.security.oauth.HanmaumOAuth2UserService;
 import com.hanmaum.backend.global.security.oauth.HanmaumOidcUserService;
 import com.hanmaum.backend.global.security.oauth.OAuthLoginFailureHandler;
+import com.hanmaum.backend.global.security.oauth.OAuthStartSerializationFilter;
+import com.hanmaum.backend.global.security.oauth.StateAuthorizationRequestRepository;
 import com.hanmaum.backend.user.service.MemberIdentityService;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.time.Clock;
 import java.util.List;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.security.config.ObjectPostProcessor;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestRedirectFilter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.savedrequest.NullRequestCache;
+import org.springframework.session.web.http.SessionRepositoryFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -27,6 +36,13 @@ import tools.jackson.databind.ObjectMapper;
 
 @Configuration(proxyBeanMethods = false)
 public class SecurityConfig {
+  @Bean
+  FilterRegistrationBean<OAuthStartSerializationFilter> oauthStartSerializationFilter() {
+    var registration = new FilterRegistrationBean<>(new OAuthStartSerializationFilter());
+    registration.setOrder(SessionRepositoryFilter.DEFAULT_ORDER - 1);
+    return registration;
+  }
+
   /**
    * Builds the session/CSRF chain, checking withdrawal identity before CSRF for old-cookie 401s.
    * Existing OAuth redirects and the authentication order of other routes remain unchanged.
@@ -40,7 +56,8 @@ public class SecurityConfig {
       HanmaumOAuth2UserService oauth2Users,
       HanmaumOidcUserService oidcUsers,
       OAuthLoginFailureHandler oauthLoginFailureHandler,
-      MemberIdentityService memberIdentities)
+      MemberIdentityService memberIdentities,
+      Clock clock)
       throws Exception {
     http.addFilterBefore(
         new WithdrawalAuthenticationFilter(memberIdentities, mapper),
@@ -82,16 +99,40 @@ public class SecurityConfig {
                         (request, response, authentication) -> response.setStatus(204)));
 
     // The oauth profile is opt-in until provider credentials are configured.
-    if (clients.getIfAvailable() != null) {
+    var registrations = clients.getIfAvailable();
+    if (registrations != null) {
+      var requests = new StateAuthorizationRequestRepository(clock);
+      var resolver =
+          new FrontendAuthorizationRequestResolver(registrations, properties.loginSuccessUrl());
+      AuthenticationFailureHandler failureHandler =
+          (request, response, exception) -> {
+            requests.clear(request, response);
+            oauthLoginFailureHandler.onAuthenticationFailure(request, response, exception);
+          };
       http.oauth2Login(
           oauth ->
               oauth
+                  .authorizationEndpoint(
+                      endpoint ->
+                          endpoint
+                              .authorizationRequestResolver(resolver)
+                              .authorizationRequestRepository(requests))
+                  .withObjectPostProcessor(
+                      new ObjectPostProcessor<OAuth2AuthorizationRequestRedirectFilter>() {
+                        @Override
+                        public <O extends OAuth2AuthorizationRequestRedirectFilter> O postProcess(
+                            O filter) {
+                          filter.setAuthenticationFailureHandler(failureHandler);
+                          return filter;
+                        }
+                      })
                   .userInfoEndpoint(
                       userInfo -> userInfo.userService(oauth2Users).oidcUserService(oidcUsers))
                   .successHandler(
                       (request, response, authentication) ->
-                          response.sendRedirect(properties.loginSuccessUrl().toString()))
-                  .failureHandler(oauthLoginFailureHandler));
+                          response.sendRedirect(
+                              requests.takeSuccessUrl(request, properties.loginSuccessUrl())))
+                  .failureHandler(failureHandler));
     }
     // Keep Spring Security's session-based CSRF protection enabled.
     return http.build();
