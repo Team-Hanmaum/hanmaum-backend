@@ -106,6 +106,12 @@ def validate_compose():
             "Proxy must wait for the backend")
     allowed = json.loads(settings["SPRING_APPLICATION_JSON"])["app"]["security"]["allowed-origins"]
     require(allowed == ["https://hanmaum.site"], "Unexpected production CORS origin")
+    require(settings["FRONTEND_URL"] == "https://hanmaum.site",
+            "Frontend base URL must remain separate from the login callback")
+    require(settings["LOGIN_SUCCESS_URL"] == "https://hanmaum.site/auth/callback",
+            "OAuth success must return to the frontend callback")
+    require(settings["INVITATION_URL_PREFIX"] == "https://hanmaum.site/invitations/",
+            "Unexpected production invitation URL prefix")
     for name in ("nginx", "certbot"):
         require(not services[name].get("environment"), f"{name} receives unnecessary credentials")
 

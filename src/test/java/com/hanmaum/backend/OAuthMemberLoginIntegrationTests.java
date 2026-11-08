@@ -78,7 +78,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.web.util.UriUtils;
 import tools.jackson.databind.ObjectMapper;
 
-@SpringBootTest
+@SpringBootTest(properties = "app.security.login-success-url=https://hanmaum.site/auth/callback")
 @AutoConfigureMockMvc
 @ActiveProfiles("test")
 @Import({TestcontainersConfiguration.class, OAuthMemberLoginIntegrationTests.ProviderConfig.class})
@@ -584,7 +584,7 @@ class OAuthMemberLoginIntegrationTests {
 
   private void assertRedirect(MvcResult result) throws Exception {
     status().is3xxRedirection().match(result);
-    redirectedUrl("/").match(result);
+    redirectedUrl("https://hanmaum.site/auth/callback").match(result);
   }
 
   private void assertFailure(MvcResult result) throws Exception {

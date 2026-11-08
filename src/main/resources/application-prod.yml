@@ -23,7 +23,7 @@ app:
   commands:
     digest-key: ${COMMAND_DIGEST_KEY}
   security:
-    login-success-url: ${FRONTEND_URL}
+    login-success-url: ${LOGIN_SUCCESS_URL:${FRONTEND_URL}}
     # Publish API documentation; API session authentication and CSRF still apply.
     public-docs: true
   ai:
