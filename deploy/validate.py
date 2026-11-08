@@ -105,7 +105,8 @@ def validate_compose():
     require(services["nginx"]["depends_on"]["backend"]["condition"] == "service_healthy",
             "Proxy must wait for the backend")
     allowed = json.loads(settings["SPRING_APPLICATION_JSON"])["app"]["security"]["allowed-origins"]
-    require(allowed == ["https://hanmaum.site"], "Unexpected production CORS origin")
+    require(allowed == ["https://hanmaum.site", "https://local.hanmaum.site:5173"],
+            "Only the production and exact local HTTPS frontend origins may be allowed")
     require(settings["FRONTEND_URL"] == "https://hanmaum.site",
             "Frontend base URL must remain separate from the login callback")
     require(settings["LOGIN_SUCCESS_URL"] == "https://hanmaum.site/auth/callback",

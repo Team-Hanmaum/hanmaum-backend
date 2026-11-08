@@ -57,7 +57,7 @@ services:
       FRONTEND_URL: https://hanmaum.site
       LOGIN_SUCCESS_URL: https://hanmaum.site/auth/callback
       INVITATION_URL_PREFIX: https://hanmaum.site/invitations/
-      SPRING_APPLICATION_JSON: '{"app":{"security":{"allowed-origins":["https://hanmaum.site"]}}}'
+      SPRING_APPLICATION_JSON: '{"app":{"security":{"allowed-origins":["https://hanmaum.site","https://local.hanmaum.site:5173"]}}}'
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID in .env.prod}
       GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:?Set GOOGLE_CLIENT_SECRET in .env.prod}
       KAKAO_CLIENT_ID: ${KAKAO_CLIENT_ID:?Set KAKAO_CLIENT_ID to the Kakao REST API key}

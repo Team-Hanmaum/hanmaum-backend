@@ -29,7 +29,7 @@ AI 컨테이너는 `hanmaum-ai` 저장소에서 별도로 배포한다. 현재 B
 | `FRONTEND_URL` | `https://hanmaum.site` | FE 기본 주소, 기본 공유 링크 `/share/` 생성 |
 | `LOGIN_SUCCESS_URL` | `https://hanmaum.site/auth/callback` | OAuth 인증·회원 세션 생성 성공 후 브라우저 복귀 |
 | `INVITATION_URL_PREFIX` | `https://hanmaum.site/invitations/` | 초대 링크 생성 |
-| `SPRING_APPLICATION_JSON`의 `app.security.allowed-origins` | `["https://hanmaum.site"]` | credential 요청의 CORS 허용 Origin |
+| `SPRING_APPLICATION_JSON`의 `app.security.allowed-origins` | `["https://hanmaum.site", "https://local.hanmaum.site:5173"]` | credential 요청의 정확한 CORS 허용 Origin |
 
 CD는 배포 대상 커밋의 `deploy/`를 `git archive`로 전송하고, 서버 릴리스의 `deploy/compose.sh`가 같은 릴리스의 `.env.prod`와 `compose.prod.yml`로 컨테이너를 만든다. 위 공개 주소는 Compose의 명시적 값이므로 GitHub Variables나 `.env.prod`에 같은 이름을 추가해도 바뀌지 않는다. 컨테이너의 `LOGIN_SUCCESS_URL` → `application-prod.yml`의 `app.security.login-success-url` → `SecurityProperties` → `SecurityConfig` 성공 핸들러의 `302 Location` 순서로 적용된다. 별도 prod 실행에서 `LOGIN_SUCCESS_URL`을 생략하면 기존 `FRONTEND_URL`로 복귀한다.
 
@@ -40,9 +40,40 @@ Google·Kakao 개발자 콘솔의 Redirect URI는 계속 BE 주소를 사용한�
 
 FE는 BE의 `/oauth2/authorization/google` 또는 `/oauth2/authorization/kakao`로 브라우저를 이동시켜 로그인한다. 성공 후 FE `/auth/callback`에서 `credentials: 'include'`로 `GET https://api.hanmaum.site/api/users/me`와 `GET https://api.hanmaum.site/api/auth/csrf`를 호출한다. 내 정보는 기존 공통 성공 응답의 `data`에 `userId`, `displayName`, `providers`를 반환하며, CSRF는 `{headerName, token}`으로 반환한다. 세션이 없거나 만료되면 내 정보는 `401 UNAUTHENTICATED`다.
 
-CORS는 `https://hanmaum.site`에 credentials와 `Content-Type`, `X-CSRF-TOKEN` 헤더를 허용한다. `HANMAUM_SESSION`은 BE 호스트 전용 `HttpOnly; Secure; SameSite=Lax; Path=/` 쿠키로 유지한다. FE JavaScript가 세션 쿠키를 읽을 필요는 없다. 변경 요청에는 credentials와 CSRF 헤더를 함께 전송한다. `POST /api/auth/logout`은 유효한 CSRF 토큰으로 세션을 무효화하고 쿠키를 삭제하며 본문 없는 `204`를 반환한다. 로그인·로그아웃 뒤에는 CSRF 토큰을 다시 받는다.
+CORS는 `https://hanmaum.site`와 `https://local.hanmaum.site:5173`에만 credentials와 `Content-Type`, `X-CSRF-TOKEN` 헤더를 허용한다. 메서드는 GET·POST·PUT·PATCH·DELETE·OPTIONS를 유지하고 와일드카드 Origin을 사용하지 않는다. `HANMAUM_SESSION`은 BE 호스트 전용 `HttpOnly; Secure; SameSite=Lax; Path=/` 쿠키로 유지한다. FE JavaScript가 세션 쿠키를 읽을 필요는 없다. 변경 요청에는 credentials와 CSRF 헤더를 함께 전송한다. `POST /api/auth/logout`은 유효한 CSRF 토큰으로 세션을 무효화하고 쿠키를 삭제하며 본문 없는 `204`를 반환한다. 로그인·로그아웃 뒤에는 CSRF 토큰을 다시 받는다.
 
 **OAuth 실패 시에는 FE로 리다이렉트하지 않는다.** 현재 실패 핸들러가 BE 콜백에서 `401`과 공통 오류 JSON(`code: OAUTH_LOGIN_FAILED`, `message: 소셜 로그인에 실패했습니다.`)을 반환한다. 실패용 FE 화면 연결은 이번 변경에 포함하지 않는다. 배포 후 실제 Google·Kakao 로그인 성공 복귀와 FE의 내 정보·CSRF·로그아웃 요청은 브라우저에서 별도로 확인한다.
+
+### 로컬 HTTPS FE에서 배포 BE 사용
+
+FE의 `docs/local-development.md`에 따라 개발 인증서·hosts·HTTPS Vite를 준비하고 `https://local.hanmaum.site:5173`으로 접속한다. API는 운영과 동일한 `https://api.hanmaum.site`이며 브라우저 요청에 `credentials: 'include'`를 사용한다.
+
+| 로그인 시작의 frontend | 성공 복귀 |
+| --- | --- |
+| 생략 | 기존 `LOGIN_SUCCESS_URL`인 `https://hanmaum.site/auth/callback` |
+| `local` 한 개 | `https://local.hanmaum.site:5173/auth/callback` |
+| 빈 값·다른 값·중복 | `401 OAUTH_LOGIN_FAILED` JSON, 리다이렉트 없음 |
+
+로컬 FE는 `/oauth2/authorization/google?frontend=local` 또는 `/oauth2/authorization/kakao?frontend=local`로 브라우저를 이동시킨다. 이 선택자는 URL 입력이 아니며 공급자에게 전달하지 않는다. BE callback 두 개는 기존 `/login/oauth2/code/google`, `/login/oauth2/code/kakao` 그대로다. callback의 frontend·redirect_uri 쿼리 및 Referer는 복귀 주소 결정에 사용하지 않는다.
+
+`FrontendAuthorizationRequestResolver`는 Spring이 만든 state·nonce·PKCE·BE 콜백을 유지하고 복귀 주소만 서버 전용 속성으로 추가한다. `StateAuthorizationRequestRepository`는 하나의 공용 목적지나 공용 Map 대신 state마다 별도 JDBC 세션 속성을 사용한다. **동일한 BE 세션 쿠키를 공유하는** 동시 요청의 복귀 대상을 분리하며, 세션 ID가 로그인 후 변경되어도 남은 요청을 유지한다. 성공·거부·인증 실패·유효한 state가 있는 잘못된 callback은 해당 요청만 소비하고 요청 내부 임시 주소도 정리한다. 알 수 없거나 모호한 state는 다른 요청을 지우지 않는다. Spring의 legacy 저장소도 state 일치 여부를 검사하므로, 알 수 없는 state로 배포 전에 시작한 legacy 요청을 소비하지 않는다.
+
+합의한 대기 요청 정책은 **세션당 최대 10개, 시작 후 10분**이다. 시간이 지난 state는 인증에 사용할 수 없고, 다음 OAuth 시작·조회 시 저장 속성을 정리한다. 사용 중인 세션이라도 새 요청·조회로 기존 요청의 만료를 연장하지 않는다. 모두 유효한 10개가 있으면 기존 요청을 보존하고 새 시작만 `401 OAUTH_LOGIN_FAILED`로 거절한다. 완료·만료 후 다시 시작할 수 있다. legacy 요청도 개수에 포함하며, 배포 전 생성 시각이 없는 요청에는 최초 확인 시각을 한 번만 저장하여 10분의 유예를 적용한다. 세션 만료·로그아웃 시에는 기존 세션 정리도 적용된다. 활동이 없는 요청을 지우는 별도 주기 작업은 없으며, 세션 안에 남는 방치 데이터도 개수 제한을 받는다.
+
+현재 단일 BE 컨테이너에서는 `OAuthStartSerializationFilter`가 Spring Session의 조회 전부터 DB 저장 완료까지 로그인 **시작** 요청을 순서대로 처리하여, 병렬 요청이 같은 여유 슬롯을 보고 10개 제한을 넘지 않도록 한다. 공급자 callback과 일반 API는 이 잠금을 사용하지 않는다. BE를 여러 프로세스·인스턴스로 확장할 때는 이 제한을 DB의 원자적 예약 등으로 옮겨야 하며, 인스턴스별 잠금만으로 전체 한도를 보장할 수 없다.
+
+**첫 세션이 없는 동시 로그인은 별도 FE 연동 과제다.** 쿠키 없이 들어온 두 요청은 같은 브라우저인지 BE가 판별할 수 없어 서로 다른 세션을 만든다. 브라우저가 마지막 `Set-Cookie`만 보관하면 다른 세션의 callback은 401이 된다. IP·User-Agent나 요청 쿼리로 익명 세션을 합치지 않는다. 병렬 로그인을 시작하기 전에 `credentials: 'include'`로 `GET /api/auth/csrf` 응답을 한 번 완료하여 공통 BE 세션을 준비하고, 이후 탭들이 그 쿠키를 공유해야 한다. 각 탭이 쿠키 없는 상태에서 CSRF 요청을 동시에 보내는 것만으로는 최초 생성 경쟁이 해결되지 않는다. 운영·로컬은 Origin이 달라 FE별 메모리 Promise·Web Lock만으로 서로를 조율할 수 없으므로, 자동 보장이 필요하면 같은 BE Origin의 세션 준비 화면 등 별도 공통 조율을 설계해야 한다. 기존 단일 로그인 시작의 302·callback·쿠키 계약은 유지하며, 이 BE 변경만으로 최초 세션 생성 경쟁까지 해결됐다고 간주하지 않는다.
+
+배포 입력 변경은 Compose의 `SPRING_APPLICATION_JSON`에 정확한 로컬 Origin을 추가하는 것뿐이다. 기존 `LOGIN_SUCCESS_URL`은 운영 주소를 유지하고 새 Secret·Variable·DB 마이그레이션·OAuth 공급자 설정은 필요 없다. 로컬 성공 주소는 서버의 고정 허용값이다. GitHub 설정 저장만으로 반영되지 않으며 이 커밋의 BE 이미지·Compose 재배포가 필요하다.
+
+실제 배포 후에는 테스트 계정·공간으로 다음 순서를 확인한다.
+
+1. 운영·로컬 FE 각각 Google·Kakao 로그인 후 시작한 쪽의 `/auth/callback` 복귀 확인.
+2. `/api/users/me` 200과 `/api/auth/csrf` 200 확인 후, 세션·CSRF를 포함한 테스트 공간 생성과 로그아웃 204 확인. 로그아웃 후 내 정보는 401이며 재로그인 후 CSRF 재발급.
+3. 먼저 한 탭에서 CSRF 발급 응답을 완료하여 공통 BE 세션을 준비한 뒤, 운영·로컬 로그인 탭을 모두 시작하고 완료 순서를 바꿔도 복귀 대상이 바뀌지 않는지 확인. 한쪽 로그인 취소 후 다른 쪽 로그인 완료도 확인. 실패 응답은 기존 BE 401 JSON이며 FE 실패 화면으로 이동하지 않음.
+4. Network에서 운영·로컬 Origin의 preflight 허용, HttpOnly·Secure·SameSite=Lax 및 BE 호스트 쿠키 범위 확인. 다른 Origin은 계속 거절.
+
+운영·로컬은 같은 BE 세션과 DB를 공유한다. 한쪽에서 계정을 바꾸거나 로그아웃하면 다른 쪽에도 영향을 주며, 테스트 데이터도 운영 DB에 저장된다. 두 탭의 복귀 주소 분리는 로그인 계정이나 데이터를 분리하는 기능이 아니다.
 
 ## BE와 배포된 AI 연결
 
