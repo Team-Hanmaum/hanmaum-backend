@@ -13,6 +13,7 @@ import com.hanmaum.backend.global.command.CommandReceipt;
 import com.hanmaum.backend.global.command.CommandReceiptRepository;
 import com.hanmaum.backend.global.exception.ApiException;
 import com.hanmaum.backend.global.response.ApiFieldError;
+import com.hanmaum.backend.user.service.MemberLifecycleAccess;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -36,6 +37,7 @@ public class InvitationService {
   private final CommandReceiptRepository receipts;
   private final CommandDigest digests;
   private final Clock clock;
+  private final MemberLifecycleAccess lifecycle;
 
   public InvitationService(
       InvitationRepository invitations,
@@ -43,13 +45,15 @@ public class InvitationService {
       CareSpaceAccessService access,
       CommandReceiptRepository receipts,
       CommandDigest digests,
-      Clock clock) {
+      Clock clock,
+      MemberLifecycleAccess lifecycle) {
     this.invitations = invitations;
     this.tokens = tokens;
     this.access = access;
     this.receipts = receipts;
     this.digests = digests;
     this.clock = clock;
+    this.lifecycle = lifecycle;
   }
 
   public CreateInvitationResponse issue(UUID userId, UUID spaceId, UUID requestId) {
@@ -107,10 +111,12 @@ public class InvitationService {
         invitation.id(), invitation.spaceId(), invitation.expiresAt(), member);
   }
 
+  /** Serializes participation and replay with account deletion before acquiring any space lock. */
   public JoinResult join(UUID userId, String token, UUID requestId) {
     String hash = tokens.hash(token);
     String scope = "INVITATION_HASH:" + hash;
     var previous = begin(userId, requestId, JOIN, scope);
+    lifecycle.requireExisting(userId);
     if (previous.isPresent()) return replayJoin(userId, previous.get());
 
     var invitation = find(hash);

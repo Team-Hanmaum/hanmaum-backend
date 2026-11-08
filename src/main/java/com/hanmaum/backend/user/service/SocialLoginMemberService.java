@@ -17,16 +17,23 @@ public class SocialLoginMemberService {
   private final AppUserRepository users;
   private final SocialAccountRepository socialAccounts;
   private final SocialAccountIdentityLockRepository identityLocks;
+  private final MemberLifecycleAccess lifecycle;
 
   public SocialLoginMemberService(
       AppUserRepository users,
       SocialAccountRepository socialAccounts,
-      SocialAccountIdentityLockRepository identityLocks) {
+      SocialAccountIdentityLockRepository identityLocks,
+      MemberLifecycleAccess lifecycle) {
     this.users = users;
     this.socialAccounts = socialAccounts;
     this.identityLocks = identityLocks;
+    this.lifecycle = lifecycle;
   }
 
+  /**
+   * Resolves a verified provider identity under its registration lock, then checks member
+   * lifecycle. Removed mappings create a new account without reconnecting historical memberships.
+   */
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public UUID findOrCreate(
       SocialProvider provider, String providerUserId, String initialDisplayName) {
@@ -39,7 +46,12 @@ public class SocialLoginMemberService {
     identityLocks.lock(provider, providerUserId);
     return socialAccounts
         .findByProviderAndProviderUserId(provider, providerUserId)
-        .map(account -> account.getUser().getId())
+        .map(
+            account -> {
+              UUID id = account.getUser().getId();
+              lifecycle.requireExisting(id);
+              return id;
+            })
         .orElseGet(
             () -> {
               AppUser user = users.saveAndFlush(new AppUser(initialDisplayName));

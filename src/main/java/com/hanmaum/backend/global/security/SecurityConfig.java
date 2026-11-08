@@ -6,6 +6,7 @@ import com.hanmaum.backend.global.response.ApiResponse;
 import com.hanmaum.backend.global.security.oauth.HanmaumOAuth2UserService;
 import com.hanmaum.backend.global.security.oauth.HanmaumOidcUserService;
 import com.hanmaum.backend.global.security.oauth.OAuthLoginFailureHandler;
+import com.hanmaum.backend.user.service.MemberIdentityService;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.List;
@@ -26,6 +27,10 @@ import tools.jackson.databind.ObjectMapper;
 
 @Configuration(proxyBeanMethods = false)
 public class SecurityConfig {
+  /**
+   * Builds the session/CSRF chain, checking withdrawal identity before CSRF for old-cookie 401s.
+   * Existing OAuth redirects and the authentication order of other routes remain unchanged.
+   */
   @Bean
   SecurityFilterChain securityFilterChain(
       HttpSecurity http,
@@ -34,8 +39,12 @@ public class SecurityConfig {
       ObjectProvider<ClientRegistrationRepository> clients,
       HanmaumOAuth2UserService oauth2Users,
       HanmaumOidcUserService oidcUsers,
-      OAuthLoginFailureHandler oauthLoginFailureHandler)
+      OAuthLoginFailureHandler oauthLoginFailureHandler,
+      MemberIdentityService memberIdentities)
       throws Exception {
+    http.addFilterBefore(
+        new WithdrawalAuthenticationFilter(memberIdentities, mapper),
+        org.springframework.security.web.csrf.CsrfFilter.class);
     http.cors(cors -> cors.configurationSource(corsConfigurationSource(properties)))
         .formLogin(AbstractHttpConfigurer::disable)
         .httpBasic(AbstractHttpConfigurer::disable)
