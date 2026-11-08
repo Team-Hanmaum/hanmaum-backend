@@ -13,11 +13,14 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import com.hanmaum.backend.global.security.SecurityProperties;
 import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.Environment;
@@ -135,16 +138,34 @@ class ProductionDocumentationIntegrationTests {
 
   @ParameterizedTest
   @ValueSource(strings = {"google", "kakao"})
-  void keepsOAuthFailureAsJsonWithoutFrontendRedirect(String provider) throws Exception {
+  @ExtendWith(OutputCaptureExtension.class)
+  void keepsProviderDenialAsJsonWithoutFrontendRedirect(String provider, CapturedOutput output)
+      throws Exception {
+    var start =
+        mvc.perform(get("https://api.hanmaum.site/oauth2/authorization/" + provider))
+            .andExpect(status().isFound())
+            .andReturn()
+            .getResponse();
+    var cookie = start.getCookie("HANMAUM_SESSION");
+    assertThat(cookie).isNotNull();
+    var state =
+        UriComponentsBuilder.fromUriString(start.getRedirectedUrl())
+            .build()
+            .getQueryParams()
+            .getFirst("state");
+    assertThat(state).isNotBlank();
     mvc.perform(
-            get("/login/oauth2/code/" + provider)
+            get("https://api.hanmaum.site/login/oauth2/code/" + provider)
+                .cookie(cookie)
                 .param("error", "access_denied")
-                .param("state", "missing-authorization-session"))
+                .param("state", UriUtils.decode(state, StandardCharsets.UTF_8)))
         .andExpect(status().isUnauthorized())
         .andExpect(header().doesNotExist("Location"))
         .andExpect(jsonPath("$.success").value(false))
         .andExpect(jsonPath("$.code").value("OAUTH_LOGIN_FAILED"))
         .andExpect(jsonPath("$.message").value("소셜 로그인에 실패했습니다."));
+    // A missing authorization session also returns 401; verify the intended failure path.
+    assertThat(output.getAll()).contains("provider=" + provider + ", reason=PROVIDER_DENIED,");
   }
 
   /**
