@@ -17,14 +17,17 @@ public class SocialLoginMemberService {
   private final AppUserRepository users;
   private final SocialAccountRepository socialAccounts;
   private final SocialAccountIdentityLockRepository identityLocks;
+  private final MemberLifecycleAccess lifecycle;
 
   public SocialLoginMemberService(
       AppUserRepository users,
       SocialAccountRepository socialAccounts,
-      SocialAccountIdentityLockRepository identityLocks) {
+      SocialAccountIdentityLockRepository identityLocks,
+      MemberLifecycleAccess lifecycle) {
     this.users = users;
     this.socialAccounts = socialAccounts;
     this.identityLocks = identityLocks;
+    this.lifecycle = lifecycle;
   }
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -39,7 +42,12 @@ public class SocialLoginMemberService {
     identityLocks.lock(provider, providerUserId);
     return socialAccounts
         .findByProviderAndProviderUserId(provider, providerUserId)
-        .map(account -> account.getUser().getId())
+        .map(
+            account -> {
+              UUID id = account.getUser().getId();
+              lifecycle.requireExisting(id);
+              return id;
+            })
         .orElseGet(
             () -> {
               AppUser user = users.saveAndFlush(new AppUser(initialDisplayName));

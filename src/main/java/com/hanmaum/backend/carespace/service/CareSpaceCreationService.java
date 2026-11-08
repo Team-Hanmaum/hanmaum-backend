@@ -13,6 +13,7 @@ import com.hanmaum.backend.global.command.CommandReceipt;
 import com.hanmaum.backend.global.command.CommandReceiptRepository;
 import com.hanmaum.backend.global.exception.ApiException;
 import com.hanmaum.backend.global.response.ApiFieldError;
+import com.hanmaum.backend.user.service.MemberLifecycleAccess;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -30,18 +31,21 @@ public class CareSpaceCreationService {
   private final CommandReceiptRepository receipts;
   private final CommandDigest digests;
   private final CareSpaceAccessService access;
+  private final MemberLifecycleAccess lifecycle;
 
   public CareSpaceCreationService(
       CareSpaceRepository spaces,
       SpaceMembershipRepository memberships,
       CommandReceiptRepository receipts,
       CommandDigest digests,
-      CareSpaceAccessService access) {
+      CareSpaceAccessService access,
+      MemberLifecycleAccess lifecycle) {
     this.spaces = spaces;
     this.memberships = memberships;
     this.receipts = receipts;
     this.digests = digests;
     this.access = access;
+    this.lifecycle = lifecycle;
   }
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -56,6 +60,7 @@ public class CareSpaceCreationService {
     String digest = digests.digest(userId.toString(), requestId.toString(), KIND, SCOPE, label);
     if (!receipts.tryLock(userId, requestId))
       throw new ApiException(CommonErrorCode.REQUEST_IN_PROGRESS);
+    lifecycle.requireExisting(userId);
     var previous = receipts.find(userId, requestId);
     if (previous.isPresent()) {
       var receipt = previous.get();
