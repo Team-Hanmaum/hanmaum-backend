@@ -27,7 +27,7 @@
 목록 행은 `version, changeKind, changedBy, changedAt, redactedFields`다. 대기 제안·요청은 포함하지 않는다. 저장 이력이 없으면 빈 배열이다. 일반 삭제 항목도 현재 참여자에게 보존된 이력을 제공한다.
 
 - 공개 changeKind는 현재 저장 동작 `CREATE, UPDATE, RESOLVE, LINK_EVIDENCE, RECONFIRM, DELETE`와 `ASSIGNEE_CHANGE, STATUS_CHANGE`다. `UNASSIGN`은 ASSIGNEE_CHANGE로 표시한다. UPDATE 중 조회 가능한 전후 값에서 상태만 바뀌었으면 STATUS_CHANGE, 담당자만 바뀌었으면 ASSIGNEE_CHANGE다. 여러 필드가 바뀌거나 내용을 확인할 수 없으면 UPDATE를 유지한다.
-- changedBy는 기존 작성자 표현 `{membershipId, displayName, withdrawn}`을 사용한다. 회원 연결 제거 시 앞의 두 값은 null, withdrawn=true다. 단순 공간 참여 종료는 탈퇴로 표시하지 않는다. 회원 탈퇴 실행 API 자체의 구현을 의미하지 않는다.
+- changedBy는 기존 작성자 표현 `{membershipId, displayName, withdrawn}`을 사용한다. 회원 연결 제거 시 앞의 두 값은 null, withdrawn=true다. 단순 공간 참여 종료는 탈퇴로 표시하지 않는다. 회원 탈퇴 실행은 [회원 탈퇴 API](member-withdrawal.md)를 사용한다.
 - 상세는 `itemId, version, previousVersion, before, after, changedBy, changedAt, evidenceIds, redactedFields`다. before/after는 당시 title·description·유형별 fields·status, 질문의 confirmedAnswer만 제공한다. 내부 AI 제안·요청 문서를 그대로 반환하지 않는다.
 - 최초 버전은 previousVersion과 before가 null이다. 그 외에는 선택 버전보다 작은 가장 최근 저장 버전과 비교한다. 과거 담당자 ID는 현재 담당자로 바꿔 쓰거나 현재 참여 여부 때문에 지우지 않는다.
 - DELETE 버전은 `before`에 조회 가능한 직전 값을 제공하며 `after`는 항상 null이다. 이 after는 원본 삭제에 따른 가림이 아니므로 `redactedFields`에 after를 추가하지 않는다. 이후 원본 삭제로 직전 내용이 제거되면 before를 null로 가리고 해당 표시를 추가한다.

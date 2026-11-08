@@ -281,7 +281,7 @@ FE는 초대 경로·비로그인 사용자의 로그인 후 복귀를 합의해
 - `data.items` 원소는 `recordId`, `content`(원문 전체), `author`, `recordedAt`, `isMine`, `latestAnalysis`입니다. 마지막 페이지 또는 빈 목록은 `nextCursor: null`, `hasNext: false`입니다. 나머지는 반환된 커서를 그대로 다음 요청에 전달합니다.
 - 커서는 마지막 반환 원본의 시각·ID 위치이며 당시 전체 목록을 동결하지 않습니다. 이후 새로 들어온 최신 소식은 첫 목록 재조회로 확인합니다. 중간 삭제를 반영하며 커서 기준 원본이 삭제돼도 다음 위치를 조회할 수 있습니다. 매 페이지 현재 권한을 다시 검사하고 총 개수·검색·필터는 추가하지 않습니다.
 - 상세는 `recordId`, `spaceId`, `content`, `author`, `recordedAt`, `version`, `isMine`, `latestAnalysis`, `proposalIds`, `canDelete`입니다. 다른 공간의 소식 ID·삭제 원본은 404입니다.
-- `author`는 작성 당시 `membershipId`, 현재 표시 이름 `displayName`, `withdrawn`입니다. 이름 미설정은 null이며 회원 연결이 제거된 경우 ID·이름도 null, withdrawn=true입니다. 공간에서 나가기/내보내기만으로 withdrawn=true가 되거나 원본이 삭제되지 않습니다. 실제 회원 탈퇴 처리는 별도 후속 작업입니다.
+- `author`는 작성 당시 `membershipId`, 현재 표시 이름 `displayName`, `withdrawn`입니다. 이름 미설정은 null이며 회원 연결이 제거된 경우 ID·이름도 null, withdrawn=true입니다. 공간에서 나가기/내보내기만으로 withdrawn=true가 되거나 원본이 삭제되지 않습니다. 실제 탈퇴 처리는 [회원 탈퇴](member-withdrawal.md)의 `POST /api/users/me/withdrawals`에서 수행합니다.
 - `isMine`은 같은 회원 기준으로 재참여 후에도 true일 수 있습니다. `canDelete`는 현재 소유자 또는 본인 원본의 권한 안내입니다.
 - 새 소식 저장의 `analysis`는 `{analysisId, status: "QUEUED"}`이며 원본과 같은 트랜잭션에서 생성한 실제 접수 정보입니다. 생성 재전송에도 최초 ID·QUEUED를 반환합니다. 조회의 `latestAnalysis`는 `{analysisId, status}`로 최신 실행의 현재 상태입니다. 분석 도입 전 원본에는 null을 유지하고 자동 일괄 분석하지 않습니다.
 - 상세의 `proposalIds`는 최신 실행이 COMPLETED인 경우의 유효한 저장 제안 ID이며 나머지는 빈 배열입니다.
