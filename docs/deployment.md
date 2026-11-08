@@ -44,6 +44,31 @@ CORS는 `https://hanmaum.site`와 `https://local.hanmaum.site:5173`에만 creden
 
 **OAuth 실패 시에는 FE로 리다이렉트하지 않는다.** 현재 실패 핸들러가 BE 콜백에서 `401`과 공통 오류 JSON(`code: OAUTH_LOGIN_FAILED`, `message: 소셜 로그인에 실패했습니다.`)을 반환한다. 실패용 FE 화면 연결은 이번 변경에 포함하지 않는다. 배포 후 실제 Google·Kakao 로그인 성공 복귀와 FE의 내 정보·CSRF·로그아웃 요청은 브라우저에서 별도로 확인한다.
 
+### 로컬 HTTPS FE에서 배포 BE 사용
+
+FE의 `docs/local-development.md`에 따라 개발 인증서·hosts·HTTPS Vite를 준비하고 `https://local.hanmaum.site:5173`으로 접속한다. API는 운영과 동일한 `https://api.hanmaum.site`이며 브라우저 요청에 `credentials: 'include'`를 사용한다.
+
+| 로그인 시작의 frontend | 성공 복귀 |
+| --- | --- |
+| 생략 | 기존 `LOGIN_SUCCESS_URL`인 `https://hanmaum.site/auth/callback` |
+| `local` 한 개 | `https://local.hanmaum.site:5173/auth/callback` |
+| 빈 값·다른 값·중복 | `401 OAUTH_LOGIN_FAILED` JSON, 리다이렉트 없음 |
+
+로컬 FE는 `/oauth2/authorization/google?frontend=local` 또는 `/oauth2/authorization/kakao?frontend=local`로 브라우저를 이동시킨다. 이 선택자는 URL 입력이 아니며 공급자에게 전달하지 않는다. BE callback 두 개는 기존 `/login/oauth2/code/google`, `/login/oauth2/code/kakao` 그대로다. callback의 frontend·redirect_uri 쿼리 및 Referer는 복귀 주소 결정에 사용하지 않는다.
+
+`FrontendAuthorizationRequestResolver`는 Spring이 만든 state·nonce·PKCE·BE 콜백을 유지하고 복귀 주소만 서버 전용 속성으로 추가한다. `StateAuthorizationRequestRepository`는 하나의 공용 목적지나 공용 Map 대신 state마다 별도 JDBC 세션 속성을 사용한다. 동시 시작한 요청을 별도로 저장하고, 세션 ID가 로그인 후 변경되어도 남은 요청을 유지한다. 성공·거부·인증 실패·유효한 state가 있는 잘못된 callback은 해당 요청만 소비하고 요청 내부 임시 주소도 정리한다. 알 수 없거나 모호한 state는 다른 요청을 지우지 않는다. callback 없이 중단한 요청은 기존 세션 만료·로그아웃 시 함께 정리하며 별도 TTL을 추가하지 않는다. 배포 전에 기존 방식으로 시작한 요청도 state가 일치하면 기존 운영 성공 주소로 완료할 수 있다.
+
+배포 입력 변경은 Compose의 `SPRING_APPLICATION_JSON`에 정확한 로컬 Origin을 추가하는 것뿐이다. 기존 `LOGIN_SUCCESS_URL`은 운영 주소를 유지하고 새 Secret·Variable·DB 마이그레이션·OAuth 공급자 설정은 필요 없다. 로컬 성공 주소는 서버의 고정 허용값이다. GitHub 설정 저장만으로 반영되지 않으며 이 커밋의 BE 이미지·Compose 재배포가 필요하다.
+
+실제 배포 후에는 테스트 계정·공간으로 다음 순서를 확인한다.
+
+1. 운영·로컬 FE 각각 Google·Kakao 로그인 후 시작한 쪽의 `/auth/callback` 복귀 확인.
+2. `/api/users/me` 200과 `/api/auth/csrf` 200 확인 후, 세션·CSRF를 포함한 테스트 공간 생성과 로그아웃 204 확인. 로그아웃 후 내 정보는 401이며 재로그인 후 CSRF 재발급.
+3. 같은 브라우저 세션에서 운영·로컬 로그인 탭을 모두 시작한 뒤 완료 순서를 바꿔도 복귀 대상이 바뀌지 않는지 확인. 한쪽 로그인 취소 후 다른 쪽 로그인 완료도 확인. 실패 응답은 기존 BE 401 JSON이며 FE 실패 화면으로 이동하지 않음.
+4. Network에서 운영·로컬 Origin의 preflight 허용, HttpOnly·Secure·SameSite=Lax 및 BE 호스트 쿠키 범위 확인. 다른 Origin은 계속 거절.
+
+운영·로컬은 같은 BE 세션과 DB를 공유한다. 한쪽에서 계정을 바꾸거나 로그아웃하면 다른 쪽에도 영향을 주며, 테스트 데이터도 운영 DB에 저장된다. 두 탭의 복귀 주소 분리는 로그인 계정이나 데이터를 분리하는 기능이 아니다.
+
 ## BE와 배포된 AI 연결
 
 AI 최초 배포 성공 후 이 BE 변경을 dev에 머지하면 기존 CD가 BE를 자동 재배포한다. 기존 IAM 역할·SSH 키·GitHub Secrets를 유지하며 이 연결만을 위한 새 Variable·Secret·DNS·공개 포트는 필요하지 않다. `AI_INTERNAL_API_KEY`는 두 서버가 공유하는 기존 값을 보존한다. OpenAI 키·HMAC 키는 AI에만 둔다.

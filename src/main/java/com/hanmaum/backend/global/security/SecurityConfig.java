@@ -3,9 +3,11 @@ package com.hanmaum.backend.global.security;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.code.ErrorCode;
 import com.hanmaum.backend.global.response.ApiResponse;
+import com.hanmaum.backend.global.security.oauth.FrontendAuthorizationRequestResolver;
 import com.hanmaum.backend.global.security.oauth.HanmaumOAuth2UserService;
 import com.hanmaum.backend.global.security.oauth.HanmaumOidcUserService;
 import com.hanmaum.backend.global.security.oauth.OAuthLoginFailureHandler;
+import com.hanmaum.backend.global.security.oauth.StateAuthorizationRequestRepository;
 import com.hanmaum.backend.user.service.MemberIdentityService;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -15,10 +17,13 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.MediaType;
+import org.springframework.security.config.ObjectPostProcessor;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.oauth2.client.registration.ClientRegistrationRepository;
+import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequestRedirectFilter;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.savedrequest.NullRequestCache;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
@@ -82,16 +87,40 @@ public class SecurityConfig {
                         (request, response, authentication) -> response.setStatus(204)));
 
     // The oauth profile is opt-in until provider credentials are configured.
-    if (clients.getIfAvailable() != null) {
+    var registrations = clients.getIfAvailable();
+    if (registrations != null) {
+      var requests = new StateAuthorizationRequestRepository();
+      var resolver =
+          new FrontendAuthorizationRequestResolver(registrations, properties.loginSuccessUrl());
+      AuthenticationFailureHandler failureHandler =
+          (request, response, exception) -> {
+            requests.clear(request, response);
+            oauthLoginFailureHandler.onAuthenticationFailure(request, response, exception);
+          };
       http.oauth2Login(
           oauth ->
               oauth
+                  .authorizationEndpoint(
+                      endpoint ->
+                          endpoint
+                              .authorizationRequestResolver(resolver)
+                              .authorizationRequestRepository(requests))
+                  .withObjectPostProcessor(
+                      new ObjectPostProcessor<OAuth2AuthorizationRequestRedirectFilter>() {
+                        @Override
+                        public <O extends OAuth2AuthorizationRequestRedirectFilter> O postProcess(
+                            O filter) {
+                          filter.setAuthenticationFailureHandler(failureHandler);
+                          return filter;
+                        }
+                      })
                   .userInfoEndpoint(
                       userInfo -> userInfo.userService(oauth2Users).oidcUserService(oidcUsers))
                   .successHandler(
                       (request, response, authentication) ->
-                          response.sendRedirect(properties.loginSuccessUrl().toString()))
-                  .failureHandler(oauthLoginFailureHandler));
+                          response.sendRedirect(
+                              requests.takeSuccessUrl(request, properties.loginSuccessUrl())))
+                  .failureHandler(failureHandler));
     }
     // Keep Spring Security's session-based CSRF protection enabled.
     return http.build();

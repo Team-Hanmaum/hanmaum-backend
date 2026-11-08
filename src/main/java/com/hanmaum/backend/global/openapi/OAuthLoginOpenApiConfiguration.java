@@ -5,6 +5,7 @@ import io.swagger.v3.oas.models.PathItem;
 import io.swagger.v3.oas.models.headers.Header;
 import io.swagger.v3.oas.models.media.StringSchema;
 import io.swagger.v3.oas.models.parameters.PathParameter;
+import io.swagger.v3.oas.models.parameters.QueryParameter;
 import io.swagger.v3.oas.models.responses.ApiResponse;
 import io.swagger.v3.oas.models.responses.ApiResponses;
 import jakarta.servlet.ServletContext;
@@ -62,6 +63,11 @@ public class OAuthLoginOpenApiConfiguration {
               2. 제공자가 `/login/oauth2/code/{provider}`로 돌아오면 BE가 회원을 연결하고 로그인 세션을 설정합니다. 콜백을 직접 호출할 필요는 없습니다.
               3. 로그인 성공 시 설정된 FE 주소로 이동합니다. 같은 브라우저에서 Swagger로 돌아와 `GET /api/users/me`로 확인할 수 있습니다.
 
+              운영 FE는 frontend를 생략합니다. 로컬 HTTPS FE에서 시작할 때만 `?frontend=local`을 추가하면
+              `https://local.hanmaum.site:5173/auth/callback`으로 복귀합니다. frontend는 고정 선택자이며 URL 입력이 아닙니다.
+              빈 값·다른 값·중복 frontend는 `401 OAUTH_LOGIN_FAILED` JSON으로 거절합니다.
+              선택은 OAuth state별로 서버에 저장하며 공급자 콜백 주소는 계속 BE 주소를 사용합니다.
+
               로그인 후 변경 API를 실행하려면 `GET /api/auth/csrf`로 토큰을 다시 받고 Authorize의 CsrfToken에 입력해주세요.
               """
                       .formatted(links)
@@ -74,6 +80,12 @@ public class OAuthLoginOpenApiConfiguration {
                       .description("현재 서버에 설정된 소셜 로그인 제공자")
                       .schema(new StringSchema()._enum(providers))
                       .example(providers.getFirst()))
+              .addParametersItem(
+                  new QueryParameter()
+                      .name("frontend")
+                      .required(false)
+                      .description("생략하면 기존 FE 성공 주소, local이면 로컬 HTTPS FE 콜백. 로그인 시작 때만 사용")
+                      .schema(new StringSchema()._enum(List.of("local"))))
               .responses(
                   new ApiResponses()
                       .addApiResponse(
@@ -84,7 +96,10 @@ public class OAuthLoginOpenApiConfiguration {
                                   "Location",
                                   new Header()
                                       .description("제공자의 인증 요청 URL. 브라우저가 이동할 주소")
-                                      .schema(new StringSchema().format("uri")))));
+                                      .schema(new StringSchema().format("uri"))))
+                      .addApiResponse(
+                          "401",
+                          new ApiResponse().$ref("#/components/responses/OAUTH_LOGIN_FAILED")));
       // Spring Security owns the route. This is documentation only, not another MVC handler.
       api.getPaths().addPathItem("/oauth2/authorization/{provider}", new PathItem().get(operation));
     };

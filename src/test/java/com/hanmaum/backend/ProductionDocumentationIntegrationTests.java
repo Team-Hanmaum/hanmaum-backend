@@ -70,21 +70,42 @@ class ProductionDocumentationIntegrationTests {
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"google", "kakao"})
-  void keepsProviderCallbackOnBackendBehindProductionProxy(String provider) throws Exception {
-    var response =
-        mvc.perform(
-                get("http://backend:8080/oauth2/authorization/" + provider)
-                    .header("X-Forwarded-Host", "api.hanmaum.site")
-                    .header("X-Forwarded-Proto", "https")
-                    .header("X-Forwarded-Port", "443"))
-            .andExpect(status().isFound())
-            .andReturn()
-            .getResponse();
+  @CsvSource({"google,default", "google,local", "kakao,default", "kakao,local"})
+  void keepsProviderCallbackOnBackendBehindProductionProxy(String provider, String frontend)
+      throws Exception {
+    var start =
+        get("http://backend:8080/oauth2/authorization/" + provider)
+            .header("X-Forwarded-Host", "api.hanmaum.site")
+            .header("X-Forwarded-Proto", "https")
+            .header("X-Forwarded-Port", "443");
+    if (frontend.equals("local")) start.param("frontend", "local");
+    var response = mvc.perform(start).andExpect(status().isFound()).andReturn().getResponse();
     var query =
         UriComponentsBuilder.fromUriString(response.getRedirectedUrl()).build().getQueryParams();
     assertThat(UriUtils.decode(query.getFirst("redirect_uri"), StandardCharsets.UTF_8))
         .isEqualTo("https://api.hanmaum.site/login/oauth2/code/" + provider);
+    assertThat(query).doesNotContainKeys("frontend", "hanmaum.loginSuccessUrl");
+    assertThat(response.getRedirectedUrl()).doesNotContain("local.hanmaum.site");
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {"", "production", "LOCAL", "local ", "https://evil.invalid", "//evil.invalid"})
+  void rejectsUnknownFrontendSelectorsBeforeProviderRedirect(String frontend) throws Exception {
+    for (String provider : List.of("google", "kakao")) {
+      mvc.perform(get("/oauth2/authorization/" + provider).param("frontend", frontend))
+          .andExpect(status().isUnauthorized())
+          .andExpect(header().doesNotExist("Location"))
+          .andExpect(jsonPath("$.code").value("OAUTH_LOGIN_FAILED"));
+    }
+  }
+
+  @Test
+  void rejectsRepeatedFrontendSelectors() throws Exception {
+    mvc.perform(get("/oauth2/authorization/google").param("frontend", "local", "local"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(header().doesNotExist("Location"))
+        .andExpect(jsonPath("$.code").value("OAUTH_LOGIN_FAILED"));
   }
 
   @ParameterizedTest
