@@ -29,7 +29,7 @@ AI 컨테이너는 `hanmaum-ai` 저장소에서 별도로 배포한다. 현재 B
 | `FRONTEND_URL` | `https://hanmaum.site` | FE 기본 주소, 기본 공유 링크 `/share/` 생성 |
 | `LOGIN_SUCCESS_URL` | `https://hanmaum.site/auth/callback` | OAuth 인증·회원 세션 생성 성공 후 브라우저 복귀 |
 | `INVITATION_URL_PREFIX` | `https://hanmaum.site/invitations/` | 초대 링크 생성 |
-| `SPRING_APPLICATION_JSON`의 `app.security.allowed-origins` | `["https://hanmaum.site"]` | credential 요청의 CORS 허용 Origin |
+| `SPRING_APPLICATION_JSON`의 `app.security.allowed-origins` | `["https://hanmaum.site", "https://local.hanmaum.site:5173"]` | credential 요청의 정확한 CORS 허용 Origin |
 
 CD는 배포 대상 커밋의 `deploy/`를 `git archive`로 전송하고, 서버 릴리스의 `deploy/compose.sh`가 같은 릴리스의 `.env.prod`와 `compose.prod.yml`로 컨테이너를 만든다. 위 공개 주소는 Compose의 명시적 값이므로 GitHub Variables나 `.env.prod`에 같은 이름을 추가해도 바뀌지 않는다. 컨테이너의 `LOGIN_SUCCESS_URL` → `application-prod.yml`의 `app.security.login-success-url` → `SecurityProperties` → `SecurityConfig` 성공 핸들러의 `302 Location` 순서로 적용된다. 별도 prod 실행에서 `LOGIN_SUCCESS_URL`을 생략하면 기존 `FRONTEND_URL`로 복귀한다.
 
@@ -40,7 +40,7 @@ Google·Kakao 개발자 콘솔의 Redirect URI는 계속 BE 주소를 사용한�
 
 FE는 BE의 `/oauth2/authorization/google` 또는 `/oauth2/authorization/kakao`로 브라우저를 이동시켜 로그인한다. 성공 후 FE `/auth/callback`에서 `credentials: 'include'`로 `GET https://api.hanmaum.site/api/users/me`와 `GET https://api.hanmaum.site/api/auth/csrf`를 호출한다. 내 정보는 기존 공통 성공 응답의 `data`에 `userId`, `displayName`, `providers`를 반환하며, CSRF는 `{headerName, token}`으로 반환한다. 세션이 없거나 만료되면 내 정보는 `401 UNAUTHENTICATED`다.
 
-CORS는 `https://hanmaum.site`에 credentials와 `Content-Type`, `X-CSRF-TOKEN` 헤더를 허용한다. `HANMAUM_SESSION`은 BE 호스트 전용 `HttpOnly; Secure; SameSite=Lax; Path=/` 쿠키로 유지한다. FE JavaScript가 세션 쿠키를 읽을 필요는 없다. 변경 요청에는 credentials와 CSRF 헤더를 함께 전송한다. `POST /api/auth/logout`은 유효한 CSRF 토큰으로 세션을 무효화하고 쿠키를 삭제하며 본문 없는 `204`를 반환한다. 로그인·로그아웃 뒤에는 CSRF 토큰을 다시 받는다.
+CORS는 `https://hanmaum.site`와 `https://local.hanmaum.site:5173`에만 credentials와 `Content-Type`, `X-CSRF-TOKEN` 헤더를 허용한다. 메서드는 GET·POST·PUT·PATCH·DELETE·OPTIONS를 유지하고 와일드카드 Origin을 사용하지 않는다. `HANMAUM_SESSION`은 BE 호스트 전용 `HttpOnly; Secure; SameSite=Lax; Path=/` 쿠키로 유지한다. FE JavaScript가 세션 쿠키를 읽을 필요는 없다. 변경 요청에는 credentials와 CSRF 헤더를 함께 전송한다. `POST /api/auth/logout`은 유효한 CSRF 토큰으로 세션을 무효화하고 쿠키를 삭제하며 본문 없는 `204`를 반환한다. 로그인·로그아웃 뒤에는 CSRF 토큰을 다시 받는다.
 
 **OAuth 실패 시에는 FE로 리다이렉트하지 않는다.** 현재 실패 핸들러가 BE 콜백에서 `401`과 공통 오류 JSON(`code: OAUTH_LOGIN_FAILED`, `message: 소셜 로그인에 실패했습니다.`)을 반환한다. 실패용 FE 화면 연결은 이번 변경에 포함하지 않는다. 배포 후 실제 Google·Kakao 로그인 성공 복귀와 FE의 내 정보·CSRF·로그아웃 요청은 브라우저에서 별도로 확인한다.
 
