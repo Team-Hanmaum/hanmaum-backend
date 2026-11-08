@@ -87,6 +87,8 @@ throw new ApiException(ProposalErrorCode.PROPOSAL_BATCH_CONFLICT);
 - 정상 응답은 `302`와 제공자 인증 URL인 `Location` 헤더입니다. 공통 성공 JSON은 반환하지 않습니다. 설명의 로그인 링크는 현재 BE 호스트를 기준으로 하며 localhost 주소를 고정하지 않습니다.
 - 실제 로그인은 링크를 통한 브라우저 이동으로 진행합니다. Swagger의 Try it out은 브라우저 페이지 이동을 대신하지 않습니다. 제공자가 호출하는 `/login/oauth2/code/{provider}` 콜백은 BE 주소를 유지합니다. 로그인 시작의 `frontend` 생략은 기존 성공 FE 주소, `frontend=local`은 `https://local.hanmaum.site:5173/auth/callback`으로 복귀합니다. 빈 값·다른 값·중복 선택자는 `401 OAUTH_LOGIN_FAILED` 공통 오류 JSON으로 거절합니다.
 - 복귀 대상은 authorization request의 서버 전용 속성으로 저장하며 state별 JDBC 세션 속성으로 구분합니다. 공급자에게 frontend를 전달하지 않고, 콜백 쿼리·Referer는 성공 주소 선택에 사용하지 않습니다. 해당 요청 완료/실패 시 임시 정보를 정리하고, 식별할 수 없는 state로 다른 탭의 요청을 삭제하지 않습니다. 기존 state·nonce·PKCE·세션 고정 공격 방지 처리를 유지합니다.
+- 대기 OAuth 요청은 세션당 최대 10개·시작 후 10분입니다. 만료된 요청은 거절·정리하고, 유효한 10개가 있으면 기존 요청을 보존하며 새 시작에 `401 OAUTH_LOGIN_FAILED`를 반환합니다. 타임스탬프 없는 배포 전 요청에는 최초 확인부터 한 번의 10분 유예를 적용합니다.
+- 여러 탭 분리는 동일한 BE 세션 쿠키를 이미 공유하는 경우입니다. 쿠키 없는 최초 요청을 여러 개 보내면 별도 세션이 생성되므로, 먼저 한 번의 `/api/auth/csrf` 발급 완료로 공통 세션을 준비해야 합니다. 여러 탭의 동시 최초 발급까지 보장하는 공통 조율은 별도 FE 연동 과제이며, 운영·로컬의 서로 다른 Origin 사이에는 FE별 잠금만으로 충분하지 않습니다.
 - 로그인 후 같은 브라우저의 Swagger에서 `/api/users/me`를 확인할 수 있습니다. 변경 API를 호출하기 전 CSRF를 다시 발급하고 Authorize에 설정합니다. 이 문서 등록은 OAuth 처리 Controller나 새로운 인증 방식을 추가하지 않습니다.
 
 ### Controller에서 현재 회원 사용

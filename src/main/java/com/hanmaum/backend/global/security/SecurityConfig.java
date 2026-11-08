@@ -7,12 +7,15 @@ import com.hanmaum.backend.global.security.oauth.FrontendAuthorizationRequestRes
 import com.hanmaum.backend.global.security.oauth.HanmaumOAuth2UserService;
 import com.hanmaum.backend.global.security.oauth.HanmaumOidcUserService;
 import com.hanmaum.backend.global.security.oauth.OAuthLoginFailureHandler;
+import com.hanmaum.backend.global.security.oauth.OAuthStartSerializationFilter;
 import com.hanmaum.backend.global.security.oauth.StateAuthorizationRequestRepository;
 import com.hanmaum.backend.user.service.MemberIdentityService;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.time.Clock;
 import java.util.List;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.web.servlet.FilterRegistrationBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -25,6 +28,7 @@ import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequest
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.AuthenticationFailureHandler;
 import org.springframework.security.web.savedrequest.NullRequestCache;
+import org.springframework.session.web.http.SessionRepositoryFilter;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
@@ -32,6 +36,13 @@ import tools.jackson.databind.ObjectMapper;
 
 @Configuration(proxyBeanMethods = false)
 public class SecurityConfig {
+  @Bean
+  FilterRegistrationBean<OAuthStartSerializationFilter> oauthStartSerializationFilter() {
+    var registration = new FilterRegistrationBean<>(new OAuthStartSerializationFilter());
+    registration.setOrder(SessionRepositoryFilter.DEFAULT_ORDER - 1);
+    return registration;
+  }
+
   /**
    * Builds the session/CSRF chain, checking withdrawal identity before CSRF for old-cookie 401s.
    * Existing OAuth redirects and the authentication order of other routes remain unchanged.
@@ -45,7 +56,8 @@ public class SecurityConfig {
       HanmaumOAuth2UserService oauth2Users,
       HanmaumOidcUserService oidcUsers,
       OAuthLoginFailureHandler oauthLoginFailureHandler,
-      MemberIdentityService memberIdentities)
+      MemberIdentityService memberIdentities,
+      Clock clock)
       throws Exception {
     http.addFilterBefore(
         new WithdrawalAuthenticationFilter(memberIdentities, mapper),
@@ -89,7 +101,7 @@ public class SecurityConfig {
     // The oauth profile is opt-in until provider credentials are configured.
     var registrations = clients.getIfAvailable();
     if (registrations != null) {
-      var requests = new StateAuthorizationRequestRepository();
+      var requests = new StateAuthorizationRequestRepository(clock);
       var resolver =
           new FrontendAuthorizationRequestResolver(registrations, properties.loginSuccessUrl());
       AuthenticationFailureHandler failureHandler =

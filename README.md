@@ -173,7 +173,7 @@ Flyway가 세션 테이블을 포함한 스키마 변경을 담당하고, Hibern
 
 로그인 시작 주소는 `/oauth2/authorization/google`, `/oauth2/authorization/kakao`입니다.
 
-로컬 HTTPS FE(`https://local.hanmaum.site:5173`)에서 배포 BE를 사용할 때만 시작 주소에 `?frontend=local`을 붙입니다. 성공 시 고정된 로컬 `/auth/callback`으로 복귀하며, 파라미터가 없으면 기존 `LOGIN_SUCCESS_URL`을 사용합니다. 빈 값·다른 값·중복 값은 `401 OAUTH_LOGIN_FAILED`로 거절합니다. 선택은 state별 서버 세션에 저장하므로 운영·로컬의 여러 탭에서 시작한 로그인을 구분합니다. 공급자 BE 콜백, 쿠키와 CSRF 계약은 유지합니다. [운영 BE와 로컬 HTTPS FE 연결](docs/deployment.md#로컬-https-fe에서-배포-be-사용)의 설정·검증 순서를 따릅니다.
+로컬 HTTPS FE(`https://local.hanmaum.site:5173`)에서 배포 BE를 사용할 때만 시작 주소에 `?frontend=local`을 붙입니다. 성공 시 고정된 로컬 `/auth/callback`으로 복귀하며, 파라미터가 없으면 기존 `LOGIN_SUCCESS_URL`을 사용합니다. 빈 값·다른 값·중복 값은 `401 OAUTH_LOGIN_FAILED`로 거절합니다. 동일한 BE 세션 쿠키를 공유하는 탭의 요청을 state별로 분리하며, 대기 요청은 세션당 10개·10분으로 제한하고 가득 차면 새 시작만 거절합니다. 쿠키 없는 최초 동시 요청의 세션 생성 조율은 별도 FE 연동이 필요합니다. 공급자 BE 콜백, 쿠키와 CSRF 계약은 유지합니다. [운영 BE와 로컬 HTTPS FE 연결](docs/deployment.md#로컬-https-fe에서-배포-be-사용)의 설정·검증 순서를 따릅니다.
 
 OAuth 제공자가 설정된 환경에서는 Swagger **Auth → GET /oauth2/authorization/{provider}**에도 로그인 시작 경로를 표시합니다. `provider`는 현재 설정된 `google`·`kakao` 중 선택하며 로그인 세션·CSRF 토큰은 필요하지 않습니다. 실제 로그인은 설명의 **Google/Kakao 로그인 시작** 링크를 브라우저에서 열어 진행합니다. 정상 응답은 JSON 대신 `302 Location`으로 제공자 화면을 안내합니다. Swagger의 Try it out으로 로그인 화면 이동을 테스트하지 않습니다.
 

@@ -62,6 +62,7 @@ public class OAuthLoginFailureHandler implements AuthenticationFailureHandler {
       case "invalid_grant" -> "GRANT_REJECTED";
       case "access_denied" -> "PROVIDER_DENIED";
       case "invalid_request" -> "REQUEST_INVALID";
+      case "hanmaum_oauth_capacity_exceeded" -> "PENDING_REQUEST_LIMIT";
       case "hanmaum_member_mapping_failed" -> "MEMBER_MAPPING_FAILED";
       case "hanmaum_invalid_provider_identity" -> "PROVIDER_IDENTITY_INVALID";
       case "hanmaum_unsupported_provider" -> "PROVIDER_UNSUPPORTED";

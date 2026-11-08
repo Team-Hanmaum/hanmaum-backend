@@ -56,7 +56,13 @@ FE의 `docs/local-development.md`에 따라 개발 인증서·hosts·HTTPS Vite�
 
 로컬 FE는 `/oauth2/authorization/google?frontend=local` 또는 `/oauth2/authorization/kakao?frontend=local`로 브라우저를 이동시킨다. 이 선택자는 URL 입력이 아니며 공급자에게 전달하지 않는다. BE callback 두 개는 기존 `/login/oauth2/code/google`, `/login/oauth2/code/kakao` 그대로다. callback의 frontend·redirect_uri 쿼리 및 Referer는 복귀 주소 결정에 사용하지 않는다.
 
-`FrontendAuthorizationRequestResolver`는 Spring이 만든 state·nonce·PKCE·BE 콜백을 유지하고 복귀 주소만 서버 전용 속성으로 추가한다. `StateAuthorizationRequestRepository`는 하나의 공용 목적지나 공용 Map 대신 state마다 별도 JDBC 세션 속성을 사용한다. 동시 시작한 요청을 별도로 저장하고, 세션 ID가 로그인 후 변경되어도 남은 요청을 유지한다. 성공·거부·인증 실패·유효한 state가 있는 잘못된 callback은 해당 요청만 소비하고 요청 내부 임시 주소도 정리한다. 알 수 없거나 모호한 state는 다른 요청을 지우지 않는다. callback 없이 중단한 요청은 기존 세션 만료·로그아웃 시 함께 정리하며 별도 TTL을 추가하지 않는다. 배포 전에 기존 방식으로 시작한 요청도 state가 일치하면 기존 운영 성공 주소로 완료할 수 있다.
+`FrontendAuthorizationRequestResolver`는 Spring이 만든 state·nonce·PKCE·BE 콜백을 유지하고 복귀 주소만 서버 전용 속성으로 추가한다. `StateAuthorizationRequestRepository`는 하나의 공용 목적지나 공용 Map 대신 state마다 별도 JDBC 세션 속성을 사용한다. **동일한 BE 세션 쿠키를 공유하는** 동시 요청의 복귀 대상을 분리하며, 세션 ID가 로그인 후 변경되어도 남은 요청을 유지한다. 성공·거부·인증 실패·유효한 state가 있는 잘못된 callback은 해당 요청만 소비하고 요청 내부 임시 주소도 정리한다. 알 수 없거나 모호한 state는 다른 요청을 지우지 않는다. Spring의 legacy 저장소도 state 일치 여부를 검사하므로, 알 수 없는 state로 배포 전에 시작한 legacy 요청을 소비하지 않는다.
+
+합의한 대기 요청 정책은 **세션당 최대 10개, 시작 후 10분**이다. 시간이 지난 state는 인증에 사용할 수 없고, 다음 OAuth 시작·조회 시 저장 속성을 정리한다. 사용 중인 세션이라도 새 요청·조회로 기존 요청의 만료를 연장하지 않는다. 모두 유효한 10개가 있으면 기존 요청을 보존하고 새 시작만 `401 OAUTH_LOGIN_FAILED`로 거절한다. 완료·만료 후 다시 시작할 수 있다. legacy 요청도 개수에 포함하며, 배포 전 생성 시각이 없는 요청에는 최초 확인 시각을 한 번만 저장하여 10분의 유예를 적용한다. 세션 만료·로그아웃 시에는 기존 세션 정리도 적용된다. 활동이 없는 요청을 지우는 별도 주기 작업은 없으며, 세션 안에 남는 방치 데이터도 개수 제한을 받는다.
+
+현재 단일 BE 컨테이너에서는 `OAuthStartSerializationFilter`가 Spring Session의 조회 전부터 DB 저장 완료까지 로그인 **시작** 요청을 순서대로 처리하여, 병렬 요청이 같은 여유 슬롯을 보고 10개 제한을 넘지 않도록 한다. 공급자 callback과 일반 API는 이 잠금을 사용하지 않는다. BE를 여러 프로세스·인스턴스로 확장할 때는 이 제한을 DB의 원자적 예약 등으로 옮겨야 하며, 인스턴스별 잠금만으로 전체 한도를 보장할 수 없다.
+
+**첫 세션이 없는 동시 로그인은 별도 FE 연동 과제다.** 쿠키 없이 들어온 두 요청은 같은 브라우저인지 BE가 판별할 수 없어 서로 다른 세션을 만든다. 브라우저가 마지막 `Set-Cookie`만 보관하면 다른 세션의 callback은 401이 된다. IP·User-Agent나 요청 쿼리로 익명 세션을 합치지 않는다. 병렬 로그인을 시작하기 전에 `credentials: 'include'`로 `GET /api/auth/csrf` 응답을 한 번 완료하여 공통 BE 세션을 준비하고, 이후 탭들이 그 쿠키를 공유해야 한다. 각 탭이 쿠키 없는 상태에서 CSRF 요청을 동시에 보내는 것만으로는 최초 생성 경쟁이 해결되지 않는다. 운영·로컬은 Origin이 달라 FE별 메모리 Promise·Web Lock만으로 서로를 조율할 수 없으므로, 자동 보장이 필요하면 같은 BE Origin의 세션 준비 화면 등 별도 공통 조율을 설계해야 한다. 기존 단일 로그인 시작의 302·callback·쿠키 계약은 유지하며, 이 BE 변경만으로 최초 세션 생성 경쟁까지 해결됐다고 간주하지 않는다.
 
 배포 입력 변경은 Compose의 `SPRING_APPLICATION_JSON`에 정확한 로컬 Origin을 추가하는 것뿐이다. 기존 `LOGIN_SUCCESS_URL`은 운영 주소를 유지하고 새 Secret·Variable·DB 마이그레이션·OAuth 공급자 설정은 필요 없다. 로컬 성공 주소는 서버의 고정 허용값이다. GitHub 설정 저장만으로 반영되지 않으며 이 커밋의 BE 이미지·Compose 재배포가 필요하다.
 
@@ -64,7 +70,7 @@ FE의 `docs/local-development.md`에 따라 개발 인증서·hosts·HTTPS Vite�
 
 1. 운영·로컬 FE 각각 Google·Kakao 로그인 후 시작한 쪽의 `/auth/callback` 복귀 확인.
 2. `/api/users/me` 200과 `/api/auth/csrf` 200 확인 후, 세션·CSRF를 포함한 테스트 공간 생성과 로그아웃 204 확인. 로그아웃 후 내 정보는 401이며 재로그인 후 CSRF 재발급.
-3. 같은 브라우저 세션에서 운영·로컬 로그인 탭을 모두 시작한 뒤 완료 순서를 바꿔도 복귀 대상이 바뀌지 않는지 확인. 한쪽 로그인 취소 후 다른 쪽 로그인 완료도 확인. 실패 응답은 기존 BE 401 JSON이며 FE 실패 화면으로 이동하지 않음.
+3. 먼저 한 탭에서 CSRF 발급 응답을 완료하여 공통 BE 세션을 준비한 뒤, 운영·로컬 로그인 탭을 모두 시작하고 완료 순서를 바꿔도 복귀 대상이 바뀌지 않는지 확인. 한쪽 로그인 취소 후 다른 쪽 로그인 완료도 확인. 실패 응답은 기존 BE 401 JSON이며 FE 실패 화면으로 이동하지 않음.
 4. Network에서 운영·로컬 Origin의 preflight 허용, HttpOnly·Secure·SameSite=Lax 및 BE 호스트 쿠키 범위 확인. 다른 Origin은 계속 거절.
 
 운영·로컬은 같은 BE 세션과 DB를 공유한다. 한쪽에서 계정을 바꾸거나 로그아웃하면 다른 쪽에도 영향을 주며, 테스트 데이터도 운영 DB에 저장된다. 두 탭의 복귀 주소 분리는 로그인 계정이나 데이터를 분리하는 기능이 아니다.

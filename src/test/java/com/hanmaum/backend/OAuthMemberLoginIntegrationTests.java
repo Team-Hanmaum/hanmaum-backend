@@ -2,11 +2,14 @@ package com.hanmaum.backend;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.redirectedUrl;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -37,6 +40,7 @@ import jakarta.servlet.http.Cookie;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.time.Instant;
 import java.util.Base64;
 import java.util.Date;
@@ -97,6 +101,7 @@ class OAuthMemberLoginIntegrationTests {
   @Autowired CurrentUserProbe currentUserProbe;
   @MockitoSpyBean SocialAccountRepository socialAccounts;
   @MockitoSpyBean MemberIdentityService identities;
+  @MockitoSpyBean Clock clock;
 
   @BeforeEach
   void resetIsolatedDataAndProvider() {
@@ -107,6 +112,89 @@ class OAuthMemberLoginIntegrationTests {
     provider.googleUserInfoSubject = "42";
     provider.userInfoFails = false;
     currentUserProbe.invocations.set(0);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"GET", "HEAD"})
+  void simultaneousStartsCannotExceedTenPendingRequestsInJdbcSession(String method)
+      throws Exception {
+    var cookie =
+        mvc.perform(get("/api/auth/csrf")).andReturn().getResponse().getCookie("HANMAUM_SESSION");
+    for (int i = 0; i < 9; i++) beginLogin("kakao", false, cookie);
+    var ready = new CountDownLatch(2);
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      java.util.concurrent.Callable<MvcResult> start =
+          () -> {
+            ready.countDown();
+            assertThat(ready.await(10, TimeUnit.SECONDS)).isTrue();
+            var request =
+                method.equals("HEAD")
+                    ? head("/oauth2/authorization/kakao")
+                    : get("/oauth2/authorization/kakao");
+            return mvc.perform(request.cookie(cookie)).andReturn();
+          };
+      var first = executor.submit(start);
+      var second = executor.submit(start);
+      var results = List.of(first.get(30, TimeUnit.SECONDS), second.get(30, TimeUnit.SECONDS));
+      assertThat(results.stream().map(r -> r.getResponse().getStatus()))
+          .containsExactlyInAnyOrder(302, 401);
+      var rejected =
+          results.stream()
+              .filter(r -> r.getResponse().getStatus() == 401)
+              .findFirst()
+              .orElseThrow();
+      header().doesNotExist("Location").match(rejected);
+      jsonPath("$.code").value("OAUTH_LOGIN_FAILED").match(rejected);
+    }
+    assertPendingRequests(10);
+  }
+
+  @Test
+  void expiredStateIsRejectedAndNewStartReclaimsJdbcCapacity() throws Exception {
+    long issued = clock.millis();
+    doReturn(issued).when(clock).millis();
+    var expired = beginLogin("google", true, null);
+    for (int i = 0; i < 9; i++) beginLogin("kakao", false, expired.cookie());
+    doReturn(issued + StateAuthorizationRequestRepository.REQUEST_LIFETIME.toMillis())
+        .when(clock)
+        .millis();
+    mvc.perform(
+            get("/login/oauth2/code/google")
+                .cookie(expired.cookie())
+                .param("state", expired.state())
+                .param("code", "synthetic-code"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value("OAUTH_LOGIN_FAILED"));
+    assertPendingRequests(0);
+    var fresh = beginLogin("kakao", false, expired.cookie());
+    assertRedirect(completeLogin(fresh, fresh.cookie()));
+    assertPendingRequests(0);
+  }
+
+  @Test
+  void cookieLessStartsStayIndependentAndCannotBorrowAnotherSessionsState() throws Exception {
+    OAuthStart production;
+    OAuthStart local;
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var first = executor.submit(() -> beginLogin("kakao", false, null));
+      var second = executor.submit(() -> beginLogin("google", true, null));
+      production = first.get(30, TimeUnit.SECONDS);
+      local = second.get(30, TimeUnit.SECONDS);
+    }
+    assertThat(production.cookie().getValue()).isNotEqualTo(local.cookie().getValue());
+    // A browser retaining only the last Set-Cookie cannot complete the other session's state.
+    mvc.perform(
+            get("/login/oauth2/code/kakao")
+                .cookie(local.cookie())
+                .param("state", production.state())
+                .param("code", "synthetic-code"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(jsonPath("$.code").value("OAUTH_LOGIN_FAILED"));
+    assertPendingRequests(2);
+    assertRedirect(completeLogin(production, production.cookie()));
+    redirectedUrl("https://local.hanmaum.site:5173/auth/callback")
+        .match(completeLogin(local, local.cookie()));
+    assertPendingRequests(0);
   }
 
   @ParameterizedTest

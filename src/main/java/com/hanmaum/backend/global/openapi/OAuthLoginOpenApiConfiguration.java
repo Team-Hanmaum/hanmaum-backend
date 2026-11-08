@@ -67,6 +67,9 @@ public class OAuthLoginOpenApiConfiguration {
               `https://local.hanmaum.site:5173/auth/callback`으로 복귀합니다. frontend는 고정 선택자이며 URL 입력이 아닙니다.
               빈 값·다른 값·중복 frontend는 `401 OAUTH_LOGIN_FAILED` JSON으로 거절합니다.
               선택은 OAuth state별로 서버에 저장하며 공급자 콜백 주소는 계속 BE 주소를 사용합니다.
+              대기 요청은 세션당 10개·10분입니다. 유효한 요청 10개가 있으면 새 시작은 기존 요청을 보존하며 401로 거절합니다.
+              여러 탭의 로그인은 동일한 BE 세션 쿠키를 공유해야 합니다. 세션이 없으면 먼저 CSRF 발급을 완료해 준비하세요.
+              쿠키 없는 최초 요청을 여러 탭에서 동시에 보내는 경우의 세션 생성 조율은 별도 FE 연동이 필요합니다.
 
               로그인 후 변경 API를 실행하려면 `GET /api/auth/csrf`로 토큰을 다시 받고 Authorize의 CsrfToken에 입력해주세요.
               """
