@@ -55,6 +55,7 @@ services:
       DB_USERNAME: hanmaum_app
       DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env.prod}
       FRONTEND_URL: https://hanmaum.site
+      LOGIN_SUCCESS_URL: https://hanmaum.site/auth/callback
       INVITATION_URL_PREFIX: https://hanmaum.site/invitations/
       SPRING_APPLICATION_JSON: '{"app":{"security":{"allowed-origins":["https://hanmaum.site"]}}}'
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?Set GOOGLE_CLIENT_ID in .env.prod}

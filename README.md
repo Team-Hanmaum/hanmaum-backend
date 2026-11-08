@@ -148,6 +148,8 @@ CI는 검증을 담당하고, `dev` push의 CI가 성공하면 별도 `Deploy ba
 
 운영 필수 환경변수는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `FRONTEND_URL`, `AI_BASE_URL`, `AI_INTERNAL_API_KEY`, `COMMAND_DIGEST_KEY`, `INVITATION_ENCRYPTION_KEY`, `INVITATION_URL_PREFIX`입니다. 예를 들어 DB URL은 `jdbc:postgresql://postgres:5432/hanmaum` 형태입니다.
 
+운영 Compose는 FE 기본 주소 `FRONTEND_URL=https://hanmaum.site`와 로그인 성공 복귀 주소 `LOGIN_SUCCESS_URL=https://hanmaum.site/auth/callback`을 분리해서 주입합니다. `FRONTEND_URL`은 공유 URL의 기본 주소에도 사용하므로 콜백 경로를 붙이지 않습니다. `LOGIN_SUCCESS_URL`이 없는 별도 prod 실행에서는 기존처럼 `FRONTEND_URL`로 복귀합니다. 로컬 설정은 변경하지 않습니다. 운영 반영 순서와 공급자 콜백은 [운영 FE 로그인 연결](docs/deployment.md#운영-fe-로그인세션-연결)을 따릅니다.
+
 `COMMAND_DIGEST_KEY`는 반복 요청 본문 비교용 HMAC 비밀키입니다. 운영에서는 충분한 난수로 생성한 32바이트 이상의 값을 주입하고 서버 재시작·여러 인스턴스에서 유지합니다. 키를 단순 교체하면 기존 요청 영수증과 비교할 수 없으므로 이관 계획이 필요합니다. local/test에는 개발 전용 기본값이 있어 기존 `.env`로도 실행할 수 있으며, 이를 운영에서 사용하지 않습니다.
 
 `INVITATION_ENCRYPTION_KEY`는 같은 발급 요청에 원래 초대 URL을 다시 반환하기 위한 암호화 키입니다. 운영에서는 암호학적 난수 32바이트를 Base64로 인코딩한 값을 비밀 관리 환경에서 주입합니다. `COMMAND_DIGEST_KEY`와 별개이며 모든 인스턴스·재시작에서 유지합니다. 단순 교체하면 이전 발급 URL을 복원할 수 없으므로 키 이관이 필요합니다. local/test는 개발 전용 기본값을 사용하여 기존 `.env`로 실행할 수 있습니다.

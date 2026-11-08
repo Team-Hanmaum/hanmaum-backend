@@ -3,19 +3,28 @@ package com.hanmaum.backend;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.hanmaum.backend.global.security.SecurityProperties;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
+import org.springframework.core.env.Environment;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.util.UriComponentsBuilder;
+import org.springframework.web.util.UriUtils;
 import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest(
@@ -24,6 +33,7 @@ import tools.jackson.databind.ObjectMapper;
       "DB_USERNAME=unused",
       "DB_PASSWORD=synthetic-unused",
       "FRONTEND_URL=https://hanmaum.site",
+      "LOGIN_SUCCESS_URL=https://hanmaum.site/auth/callback",
       "INVITATION_URL_PREFIX=https://hanmaum.site/invitations/",
       "INVITATION_ENCRYPTION_KEY=dGVzdC1vbmx5LWludml0YXRpb24ta2V5LTMyYnl0ZXM=",
       "COMMAND_DIGEST_KEY=synthetic-production-test-key-at-least-32-bytes",
@@ -41,6 +51,101 @@ import tools.jackson.databind.ObjectMapper;
 class ProductionDocumentationIntegrationTests {
   @Autowired MockMvc mvc;
   @Autowired ObjectMapper mapper;
+  @Autowired SecurityProperties security;
+  @Autowired Environment environment;
+
+  @Test
+  void separatesLoginSuccessFromSharedLinkBaseInProduction() {
+    assertThat(security.loginSuccessUrl().toString())
+        .isEqualTo("https://hanmaum.site/auth/callback");
+    assertThat(environment.getProperty("app.sharing.url-prefix"))
+        .isEqualTo("https://hanmaum.site/share/");
+    assertThat(environment.getProperty("app.invitations.url-prefix"))
+        .isEqualTo("https://hanmaum.site/invitations/");
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"google", "kakao"})
+  void keepsProviderCallbackOnBackendBehindProductionProxy(String provider) throws Exception {
+    var response =
+        mvc.perform(
+                get("http://backend:8080/oauth2/authorization/" + provider)
+                    .header("X-Forwarded-Host", "api.hanmaum.site")
+                    .header("X-Forwarded-Proto", "https")
+                    .header("X-Forwarded-Port", "443"))
+            .andExpect(status().isFound())
+            .andReturn()
+            .getResponse();
+    var query =
+        UriComponentsBuilder.fromUriString(response.getRedirectedUrl()).build().getQueryParams();
+    assertThat(UriUtils.decode(query.getFirst("redirect_uri"), StandardCharsets.UTF_8))
+        .isEqualTo("https://api.hanmaum.site/login/oauth2/code/" + provider);
+  }
+
+  @Test
+  void allowsCredentialedFrontendPreflightWithCsrfHeaderOnlyForConfiguredOrigin() throws Exception {
+    mvc.perform(
+            options("/api/auth/logout")
+                .header("Origin", "https://hanmaum.site")
+                .header("Access-Control-Request-Method", "POST")
+                .header("Access-Control-Request-Headers", "Content-Type,X-CSRF-TOKEN"))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Access-Control-Allow-Origin", "https://hanmaum.site"))
+        .andExpect(header().string("Access-Control-Allow-Credentials", "true"))
+        .andExpect(header().string("Access-Control-Allow-Headers", "Content-Type, X-CSRF-TOKEN"));
+    mvc.perform(
+            options("/api/auth/logout")
+                .header("Origin", "https://untrusted.invalid")
+                .header("Access-Control-Request-Method", "POST"))
+        .andExpect(status().isForbidden())
+        .andExpect(header().doesNotExist("Access-Control-Allow-Origin"));
+  }
+
+  @Test
+  void preservesProductionCookieAndCsrfLogoutContract() throws Exception {
+    var response =
+        mvc.perform(
+                get("https://api.hanmaum.site/api/auth/csrf")
+                    .header("Origin", "https://hanmaum.site"))
+            .andExpect(status().isOk())
+            .andExpect(header().string("Access-Control-Allow-Origin", "https://hanmaum.site"))
+            .andExpect(header().string("Access-Control-Allow-Credentials", "true"))
+            .andExpect(header().string("Cache-Control", "no-store"))
+            .andExpect(jsonPath("$.headerName").value("X-CSRF-TOKEN"))
+            .andExpect(jsonPath("$.token").isNotEmpty())
+            .andReturn()
+            .getResponse();
+    var cookie = response.getCookie("HANMAUM_SESSION");
+    assertThat(cookie).isNotNull();
+    assertThat(cookie.isHttpOnly()).isTrue();
+    assertThat(cookie.getSecure()).isTrue();
+    assertThat(cookie.getAttribute("SameSite")).isEqualToIgnoringCase("Lax");
+    assertThat(cookie.getPath()).isEqualTo("/");
+    assertThat(cookie.getDomain()).isNull();
+    var csrf = mapper.readTree(response.getContentAsString());
+    assertThat(csrf.propertyNames()).containsExactlyInAnyOrder("headerName", "token");
+    mvc.perform(
+            post("https://api.hanmaum.site/api/auth/logout")
+                .header("Origin", "https://hanmaum.site")
+                .cookie(cookie)
+                .header(csrf.get("headerName").asText(), csrf.get("token").asText()))
+        .andExpect(status().isNoContent())
+        .andExpect(content().string(""));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"google", "kakao"})
+  void keepsOAuthFailureAsJsonWithoutFrontendRedirect(String provider) throws Exception {
+    mvc.perform(
+            get("/login/oauth2/code/" + provider)
+                .param("error", "access_denied")
+                .param("state", "missing-authorization-session"))
+        .andExpect(status().isUnauthorized())
+        .andExpect(header().doesNotExist("Location"))
+        .andExpect(jsonPath("$.success").value(false))
+        .andExpect(jsonPath("$.code").value("OAUTH_LOGIN_FAILED"))
+        .andExpect(jsonPath("$.message").value("소셜 로그인에 실패했습니다."));
+  }
 
   /**
    * 오류 응답을 명시한 API에서 추론된 200 응답이 누락되는 회귀를 검증한다. 운영 프로필의 생성 문서를 대상으로 공통 응답과 중첩 DTO, 기존 인증·오류 계약을 함께
