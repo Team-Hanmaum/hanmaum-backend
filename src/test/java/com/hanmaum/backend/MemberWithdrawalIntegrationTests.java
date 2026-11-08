@@ -324,6 +324,7 @@ class MemberWithdrawalIntegrationTests {
         .andExpect(status().isUnauthorized());
   }
 
+  /** Rejects invalid authentication, payloads and reused command IDs without partial deletion. */
   @Test
   void rejectsMissingAuthenticationCsrfUnknownFieldsAndReceiptReuse() throws Exception {
     mvc.perform(post(PATH).contentType(MediaType.APPLICATION_JSON).content(command().toString()))
@@ -518,6 +519,9 @@ class MemberWithdrawalIntegrationTests {
     }
   }
 
+  /**
+   * Requires PostgreSQL to confirm the exact blocker instead of treating a slow future as proof.
+   */
   private void assertBlocked(Connection monitor, int waiter, int blocker, Future<?> pending)
       throws Exception {
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);

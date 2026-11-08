@@ -48,6 +48,7 @@ public class CareSpaceCreationService {
     this.lifecycle = lifecycle;
   }
 
+  /** Rejects a withdrawn identity under the lifecycle lock before creating or replaying a space. */
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public CreateCareSpaceResponse create(UUID userId, CreateCareSpaceRequest request) {
     String label = SubjectLabel.normalize(request.subjectLabel());

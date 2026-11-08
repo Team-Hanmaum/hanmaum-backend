@@ -27,6 +27,10 @@ import tools.jackson.databind.ObjectMapper;
 
 @Configuration(proxyBeanMethods = false)
 public class SecurityConfig {
+  /**
+   * Builds the session/CSRF chain, checking withdrawal identity before CSRF for old-cookie 401s.
+   * Existing OAuth redirects and the authentication order of other routes remain unchanged.
+   */
   @Bean
   SecurityFilterChain securityFilterChain(
       HttpSecurity http,

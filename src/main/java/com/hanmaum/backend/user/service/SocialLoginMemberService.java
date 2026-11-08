@@ -30,6 +30,10 @@ public class SocialLoginMemberService {
     this.lifecycle = lifecycle;
   }
 
+  /**
+   * Resolves a verified provider identity under its registration lock, then checks member
+   * lifecycle. Removed mappings create a new account without reconnecting historical memberships.
+   */
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public UUID findOrCreate(
       SocialProvider provider, String providerUserId, String initialDisplayName) {

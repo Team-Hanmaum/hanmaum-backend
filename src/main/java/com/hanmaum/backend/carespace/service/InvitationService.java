@@ -111,6 +111,7 @@ public class InvitationService {
         invitation.id(), invitation.spaceId(), invitation.expiresAt(), member);
   }
 
+  /** Serializes participation and replay with account deletion before acquiring any space lock. */
   public JoinResult join(UUID userId, String token, UUID requestId) {
     String hash = tokens.hash(token);
     String scope = "INVITATION_HASH:" + hash;
