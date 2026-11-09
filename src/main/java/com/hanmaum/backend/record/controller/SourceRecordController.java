@@ -38,7 +38,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping(
     value = "/api/spaces/{spaceId}/source-records",
     produces = MediaType.APPLICATION_JSON_VALUE)
-@Tag(name = "Record", description = "소식 저장·분석 접수·목록·상세 및 원본 삭제 영향 조회")
+@Tag(name = "Record", description = "소식 저장·분석 접수·목록·상세 조회 및 원본 삭제 영향 확인·삭제")
 public class SourceRecordController {
   private final SourceRecordCreationService creation;
   private final SourceRecordQueryService queries;

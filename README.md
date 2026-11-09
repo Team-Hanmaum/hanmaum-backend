@@ -154,7 +154,7 @@ CI는 검증을 담당하고, `dev` push의 CI가 성공하면 별도 `Deploy ba
 
 `INVITATION_ENCRYPTION_KEY`는 같은 발급 요청에 원래 초대 URL을 다시 반환하기 위한 암호화 키입니다. 운영에서는 암호학적 난수 32바이트를 Base64로 인코딩한 값을 비밀 관리 환경에서 주입합니다. `COMMAND_DIGEST_KEY`와 별개이며 모든 인스턴스·재시작에서 유지합니다. 단순 교체하면 이전 발급 URL을 복원할 수 없으므로 키 이관이 필요합니다. local/test는 개발 전용 기본값을 사용하여 기존 `.env`로 실행할 수 있습니다.
 
-`INVITATION_URL_PREFIX`는 토큰 앞에 붙일 FE 주소이며 `/`로 끝나고 query·fragment·인증 정보를 포함하지 않는 절대 HTTP(S) URL입니다. local 기본값은 `http://localhost:5173/invitations/`이고 운영은 실제 HTTPS 주소를 설정합니다. FE 경로와 로그인 후 초대로 돌아오는 흐름은 아직 합의 전입니다. 이 기본값은 로컬 검증용이며 해당 FE 화면 구현을 뜻하지 않습니다. 기존 로그인 성공 URL은 유지합니다.
+`INVITATION_URL_PREFIX`는 토큰 앞에 붙일 FE 주소이며 `/`로 끝나고 query·fragment·인증 정보를 포함하지 않는 절대 HTTP(S) URL입니다. local 기본값은 `http://localhost:5173/invitations/`입니다. 운영은 `https://hanmaum.site/invitations/`를 사용하며 OAuth 복귀 주소와 로컬 HTTPS 설정은 [배포 안내](docs/deployment.md)를 따릅니다. FE의 초대 화면·로그인 후 초대 복귀 연동은 별도로 확인합니다.
 
 Flyway가 세션 테이블을 포함한 스키마 변경을 담당하고, Hibernate는 `validate`로 검증합니다. 적용된 마이그레이션은 수정하지 않고 다음 버전의 SQL을 추가합니다. 운영 세션에는 `HttpOnly`, `Secure`, `SameSite=Lax`를 적용합니다.
 
@@ -223,7 +223,7 @@ const headers = {
 - CSRF 발급 성공은 기존 `{headerName, token}`, OAuth 성공은 리다이렉트, 로그아웃 성공은 204를 유지합니다. 내부 AI 계약·Actuator·OpenAPI는 공통 응답으로 감싸지 않습니다.
 - Controller의 반환 타입, 예외 처리, UUID·버전·시각 표기는 [공통 규격](docs/api-conventions.md)을 따릅니다.
 
-Swagger에는 실제 구현된 OAuth 로그인 시작·CSRF·로그아웃·내 정보·돌봄 공간 생성/조회·초대·참여·구성원 목록·소유권 이전·나가기/내보내기·소식 저장/조회·분석 상태/재시도 경로와 공통 스키마를 제공합니다. OAuth 시작 경로는 제공자가 설정된 환경에서만 표시합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다. 미구현 도메인 API는 노션 초안에서 관리합니다.
+Swagger에는 Auth·User·CareSpace·Record·Analysis·Proposal·CareItem·Dashboard·Sharing의 실제 구현 경로와 공통 스키마를 제공합니다. 도메인별 범위는 아래 [구현 범위](#구현-범위)와 관련 계약 문서를 따릅니다. OAuth 시작 경로는 제공자가 설정된 환경에서만 표시합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다.
 
 ## 돌봄 공간 생성·조회
 
@@ -315,7 +315,7 @@ V11에 처리 묶음/결과, 항목 편집 잠금, 확정 문서 의존성을 �
 
 V12는 구성원 요청 제출·목록·상세·취소와 소유자 선택 반영·미적용을 추가합니다. 구성원 제출은 현재 항목을 바꾸지 않으며 요청자 원문과 소유자 최종 편집값을 별도로 보존합니다. 기존 항목은 제출 시 구성원 잠금을 해제하고, 승인 시 소유자가 새 잠금을 획득합니다. 제출 이후 버전·원본·원래 참여가 바뀐 요청을 자동 갱신하거나 되살리지 않습니다.
 
-동일 참여자·제안의 유효한 대기 요청은 하나만 허용하며, 소유자 직접 반영과 요청 반영도 같은 제안을 중복 처리하지 않습니다. 상세 API·크기 상한·재전송·원본 삭제 전파와 두 계정 Swagger 절차는 [구성원 변경 요청 계약](docs/member-change-requests.md)을 따릅니다. 직접 입력은 [관리 항목 직접 변경](docs/direct-care-items.md)을 따릅니다. 가족 답변 제출·공간 수정 요청은 후속입니다.
+동일 참여자·제안의 유효한 대기 요청은 하나만 허용하며, 소유자 직접 반영과 요청 반영도 같은 제안을 중복 처리하지 않습니다. 상세 API·크기 상한·재전송·원본 삭제 전파와 두 계정 Swagger 절차는 [구성원 변경 요청 계약](docs/member-change-requests.md)을 따릅니다. 직접 입력·일반 삭제는 [관리 항목 직접 변경](docs/direct-care-items.md), 가족 답변 제출·소유자 승인은 [확인사항 답변 제출](docs/api-conventions.md#확인사항-답변-제출-api), 공간 호칭 수정·구성원 요청은 [공간 정보 수정](docs/care-space-information.md)을 따릅니다.
 
 ## 컨테이너
 
@@ -336,6 +336,9 @@ Lightsail 시드니 리전의 Ubuntu 24.04·2 vCPU·4GB 서버를 사용합니�
 - [돌봄 현황판](docs/api-conventions.md#돌봄-현황판): `GET /api/spaces/{spaceId}/dashboard`. 돌봄 탭은 기존 `GET /api/spaces/{spaceId}/items`에 `itemType`과 `view`를 전달합니다.
 - [항목 근거·이력](docs/care-item-provenance.md): 현재 근거, 확정 버전 목록 및 변경 전후 조회. 제거된 내용은 비교에서도 가리고 메타데이터만 유지
 - [소식 원본 삭제](docs/api-conventions.md#소식-원본-삭제-api): 삭제 영향을 조회한 뒤 원본과 파생 내용을 정리합니다.
+- [항목 일반 삭제](docs/direct-care-items.md#일반-삭제): 본인 잠금·버전 확인 후 소유자 직접 삭제 또는 구성원 요청·소유자 승인
+- [가족 답변 제출](docs/api-conventions.md#확인사항-답변-제출-api): 참여자 답변 제출·이력 조회·소유자 승인 후 질문 해소
+- [공간 정보 수정](docs/care-space-information.md): 소유자 호칭 수정·구성원 변경 요청과 소유자 승인
 - [공유 링크](docs/share-links.md): 복수 확정 항목의 링크 발급·현재 참여자의 최신 내용 조회. 삭제·재확인 항목은 상태만 반환하며 카드에는 유형·변경 표시·URL만 포함
 - [공간 전체 삭제](docs/care-space-deletion.md): 현재 소유자의 영향 확인·버전/영향 재검증 후 소속 서비스 데이터 전체 제거. 완료 후 200, 삭제 재요청 404, 복구 미제공
 - [회원 탈퇴](docs/member-withdrawal.md): 소유 공간 검사·공동 기록 보존·미완료 담당/잠금 해제·대기 요청 무효화·계정 및 전체 세션 정리

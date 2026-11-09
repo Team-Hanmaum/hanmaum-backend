@@ -91,9 +91,9 @@
 - 제안 목록은 REVIEW_PENDING/INVALIDATED/APPLIED/DECLINED를 지원한다. 기본은 REVIEW_PENDING이다. 상세 `decision`은 `{batchId, decidedAt, itemId, itemVersion, appliedValues}`이며 처리 전에는 null, DECLINED의 항목/값은 null이다. `appliedValues`는 반영 시 문서의 title/description/fields/confirmedAnswer이고 상태는 항목 조회로 확인한다.
 - OPEN은 모든 캡처 입력의 현재 버전·문서·근거를 계속 확인한다. 선택한 제안을 반영해 버전이 바뀌면 선택하지 않은 다른 제안이 INVALIDATED가 될 수 있다. 다른 일정/할 일을 자동 수정하거나 새 분석을 실행하지 않는다.
 - 처리된 제안의 APPLIED/DECLINED는 처리 이력이다. 자신의 반영으로 변경된 항목 버전 때문에 이 이력이 사라지지 않는다. 다만 출처가 삭제/무효화되면 제목·제안 값·근거·파생 확정 값은 숨기고 처리 메타데이터만 남긴다.
-- `CareItem` 상세는 `editLock` 요약과 `confirmedAnswer`를 제공한다. 타인의 잠금 토큰은 조회되지 않는다. 기존 answers 배열은 별도 답변 제출 기능 전까지 빈 배열이다.
+- `CareItem` 상세는 `editLock` 요약과 `confirmedAnswer`를 제공한다. 타인의 잠금 토큰은 조회되지 않는다. 질문의 `answers`는 제출 이력을 반환하며 다른 유형은 빈 배열이다. 답변 제출·소유자 승인·무효 답변의 내용 가림은 [확인사항 답변 제출 계약](api-conventions.md#확인사항-답변-제출-api)을 따른다.
 - 확정 문서는 이전 문서와 AI 출력/입력 문서의 의존성을 기록한다. 소유자가 AI 내용을 수정했어도 삭제 의존성을 끊지 않는다. 원본·직접 입력 문서 삭제 연결점은 파생 현재 값·이력 문서·답변·후속 제안까지 같은 트랜잭션에서 내용을 제거한다. 독립 원문 문서는 유지한다.
-- 이후 원본 삭제/근거 편집 API는 기존 `invalidateSource` / `invalidateBasis` / `invalidateDirectDocument`를 같은 공간 잠금·트랜잭션에서 호출해야 한다. 공개 삭제 API·독립 근거로 현재 값을 재구성하는 기능은 후속이다.
+- [공개 원본 삭제 API](api-conventions.md#소식-원본-삭제-api)는 `SourceRecordDeletionService.delete` → `SourceRecordDeletionRepository.erase` 경로에서 영향 조회로 추적한 원본·파생 문서·근거·분석을 같은 공간 잠금·트랜잭션으로 직접 정리한다. 내부 `invalidateSource` / `invalidateBasis` / `invalidateDirectDocument`는 이 공개 삭제 경로에서 호출하지 않는 별도 무효화 연결점이다. 내부 연결점을 사용하는 호출자는 해당 변경과 같은 공간 잠금·트랜잭션에서 호출해야 하며, 삭제 전파 규칙 변경 시 공개 삭제의 `erase` 경로도 함께 검토한다. 재확인 대상의 소유자가 새 값과 유효한 근거를 선택해 저장하는 흐름은 [근거 재확인 API](api-conventions.md#돌봄-항목-근거-재확인-api)를 따른다. 별도 근거 편집 API는 후속이다.
 
 ## 오류와 로컬 검증
 
