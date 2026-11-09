@@ -4,7 +4,7 @@ v2 공통 fixture의 출처·무결성 검사·BE 연결 범위와 미구현/확
 
 v2 요청·응답 검증과 HTTP 어댑터는 별도로 준비되어 있습니다. [v2 어댑터 범위·오류 매핑·테스트](ai-contract-v2-client.md)를 참고합니다. 실행별 버전으로 v1/v2를 선택합니다. [v2 실행·저장·조회](ai-contract-v2-execution.md)를 참고하며, 아래 본문은 기존 v1 규칙입니다.
 
-이 문서는 기존 BE↔AI 내부 계약입니다. AI 레포에는 stub과 계약 검증 기반이 있으며 실제 LLM 분석 및 전체 런타임 연동 완료와 구분합니다. 현재 동작은 양쪽 코드와 테스트로 확인하고 계약 변경은 양쪽 담당자가 함께 합의합니다. 공개 API의 공통 응답과 별도로 유지합니다.
+이 문서는 기존 BE↔AI v1 내부 계약입니다. 아래 CREATE 제한과 예시는 v1에 해당하며, v2 실행·저장 및 배포 설정과 구분합니다. 배포 환경의 소식 저장→분석→소유자 반영 점검은 [배포 연동 검증 절차](deployed-analysis-verification.md)를 따릅니다. 현재 동작은 양쪽 코드와 테스트로 확인하고 계약 변경은 양쪽 담당자가 함께 합의합니다. 공개 API의 공통 응답과 별도로 유지합니다.
 
 ## 요청
 
@@ -81,7 +81,7 @@ v2 요청·응답 검증과 HTTP 어댑터는 별도로 준비되어 있습니�
 
 AI는 `changes`에 위 필드 이름을 사용해야 공개 조회에 해당 값이 나타납니다. 기존 예시의 `content`는 description, `date`는 해당 유형의 날짜, `time`은 scheduledTime으로만 호환합니다. 정식 필드와 별칭이 서로 다른 값을 가지면 null로 반환합니다. 저장 제목을 changes.title로 덮어쓰지 않습니다. 정의하지 않은 키·유형에 맞지 않는 키는 공개하지 않습니다.
 
-누락·빈 문자열·변환 불가 값은 null입니다. 날짜는 유효한 `YYYY-MM-DD`, 일정 시각은 `HH:mm` 문자열만 사용하고 누락 시각을 자정으로 만들지 않습니다. 상대 날짜 추론을 조회에서 다시 실행하지 않습니다. 담당자 ID는 BE가 같은 공간의 현재 참여를 확인합니다. 내부 계약에 관계/상충 판정 결과가 없으므로 공개 `relationKind`, `needsConflictReview`는 null이며 false를 추정하지 않습니다. CareItem 후보 수집·의존성 검증은 연결됐으며 공개 CREATE 제안의 candidates는 빈 배열을 유지합니다. 실제 모델의 유형별 출력 일치와 관계 판정·UPDATE/RESOLVE 후보 선택 계약은 AI/BE 후속 연동 사항입니다.
+누락·빈 문자열·변환 불가 값은 null입니다. 날짜는 유효한 `YYYY-MM-DD`, 일정 시각은 `HH:mm` 문자열만 사용하고 누락 시각을 자정으로 만들지 않습니다. 상대 날짜 추론을 조회에서 다시 실행하지 않습니다. 담당자 ID는 BE가 같은 공간의 현재 참여를 확인합니다. v1 내부 계약에 관계/상충 판정 결과가 없으므로 공개 `relationKind`, `needsConflictReview`는 null이며 false를 추정하지 않습니다. CareItem 후보 수집·의존성 검증은 연결됐으며 v1 CREATE 제안의 candidates는 빈 배열을 유지합니다. 관계 판정과 UPDATE/RESOLVE/LINK_EVIDENCE 후보 선택은 [v2 실행 계약](ai-contract-v2-execution.md)의 범위입니다. 실제 모델의 유형별 품질 검증은 계약 구현과 구분합니다.
 
 ## 실패·재시도
 
@@ -89,7 +89,7 @@ AI는 `changes`에 위 필드 이름을 사용해야 공개 조회에 해당 값
 
 클라이언트는 자동 재시도하지 않습니다. BE는 원본과 최초 QUEUED 실행을 함께 저장하고, 사용자가 최신 실패 실행을 명시적으로 재시도하면 새 analysisId/requestId를 발급합니다. 원본의 recordedAt·Asia/Seoul은 재시도에서도 유지합니다. FE의 같은 clientRequestId 재전송은 접수 기록을 재생하며 AI를 다시 호출하지 않습니다. 중단 실행도 실패로 정리하고 자동 재전송하지 않습니다. FastAPI의 동일 requestId 처리 정책은 AI 담당자와 별도로 합의해야 하며 네트워크 경계의 정확히 한 번 실행을 보장하지 않습니다.
 
-현재 BE는 같은 공간의 유효한 CareItem 후보를 전달하고 CREATE 제안을 저장합니다. 후보가 있어도 UPDATE/RESOLVE 저장은 아직 연결하지 않아 해당 결과를 `ANALYSIS_DEPENDENCY_UNAVAILABLE`로 처리합니다. 내부 DTO는 기존 세 작업을 그대로 유지하며, 제안 저장이 최종 관리 항목 반영을 의미하지 않습니다.
+v1 실행은 같은 공간의 유효한 CareItem 후보를 전달하고 CREATE 제안을 저장합니다. v1에서 UPDATE/RESOLVE 결과가 반환되면 `ANALYSIS_DEPENDENCY_UNAVAILABLE`로 처리합니다. v1 내부 DTO는 기존 세 작업을 그대로 유지하며, 제안 저장이 최종 관리 항목 반영을 의미하지 않습니다. v2의 네 작업 저장·조회·소유자 반영은 별도 계약을 따릅니다.
 
 ### CareItem 후보와 입력 근거 검증
 
