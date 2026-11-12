@@ -10,14 +10,18 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.hanmaum.backend.careitem.dto.CareItemDetail;
 import com.hanmaum.backend.careitem.dto.CareItemEvidenceResponse;
 import com.hanmaum.backend.careitem.dto.CareItemHistoryResponse;
 import com.hanmaum.backend.careitem.dto.CareItemSummary;
 import com.hanmaum.backend.carespace.dto.CareSpaceDeletionImpact;
 import com.hanmaum.backend.global.security.SecurityProperties;
 import com.hanmaum.backend.proposal.dto.ProposalDetail;
+import com.hanmaum.backend.record.dto.CreateSourceRecordResponse;
 import com.hanmaum.backend.record.dto.SourceRecordAuthor;
 import com.hanmaum.backend.record.dto.SourceRecordDeletionImpact;
+import com.hanmaum.backend.record.dto.SourceRecordDetail;
+import com.hanmaum.backend.record.dto.SourceRecordSummary;
 import com.hanmaum.backend.sharing.dto.SharedItemsResponse;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -409,6 +413,95 @@ class ProductionDocumentationIntegrationTests {
     var serialized = mapper.readTree(mapper.writeValueAsString(item));
     assertThat(serialized.path("fields")).isEqualTo(fields);
     assertThat(serialized.path("status").isNull()).isTrue();
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "CreateSourceRecordResponse,analysis,AnalysisSummary",
+    "SourceRecordSummary,latestAnalysis,AnalysisSummary",
+    "SourceRecordDetail,latestAnalysis,AnalysisSummary",
+    "ProposalDetail,decision,Decision",
+    "CareItemDetail,editLock,EditLockView",
+    "SharedItemEntry,item,CareItemDetail"
+  })
+  void documentsNullableObjectReferencesWithoutIntersectingNullAndObject(
+      String name, String field, String target) throws Exception {
+    var schemas = apiDocument().at("/components/schemas");
+    var property = schemas.path(name).path("properties").path(field);
+    assertThat(property.has("$ref")).isFalse();
+    assertThat(property.has("type")).isFalse();
+    assertThat(property.has("nullable")).isFalse();
+    assertThat(property.path("description").asText()).isNotBlank();
+    var alternatives = property.path("anyOf");
+    assertThat(alternatives.size()).isEqualTo(2);
+    assertThat(alternatives.get(0).propertyNames()).containsExactly("$ref");
+    assertThat(alternatives.at("/0/$ref").asText()).isEqualTo("#/components/schemas/" + target);
+    assertThat(alternatives.get(1).propertyNames()).containsExactly("type");
+    assertThat(alternatives.at("/1/type").asText()).isEqualTo("null");
+    // Nullability belongs to this property, not the reused object schema.
+    assertThat(schemas.path(target).path("type").asText()).isEqualTo("object");
+    assertThat(schemas.path(target).path("properties").isEmpty()).isFalse();
+  }
+
+  @ParameterizedTest
+  @MethodSource("nullableObjectSerializationContracts")
+  void keepsNullableObjectSerializationUnchanged(
+      Class<?> responseType, String field, String valueJson) throws Exception {
+    var expected = mapper.readTree(valueJson);
+    var input = mapper.createObjectNode().set(field, expected);
+    if (responseType == SourceRecordSummary.class || responseType == SourceRecordDetail.class) {
+      input.put("isMine", false);
+    }
+    if (responseType == SourceRecordDetail.class) input.put("canDelete", false);
+    if (responseType == CareItemDetail.class) {
+      input.put("needsReconfirmation", false);
+      input.put("needsConflictReview", false);
+    }
+    // Populate the actual response DTO through Jackson, then check its public JSON shape.
+    var response = mapper.treeToValue(input, responseType);
+    var serialized = mapper.readTree(mapper.writeValueAsString(response));
+    assertThat(serialized.path(field)).isEqualTo(expected);
+    input.putNull(field);
+    var absent = mapper.treeToValue(input, responseType);
+    var serializedAbsent = mapper.readTree(mapper.writeValueAsString(absent));
+    assertThat(serializedAbsent.has(field)).isTrue();
+    assertThat(serializedAbsent.path(field).isNull()).isTrue();
+  }
+
+  static Stream<Arguments> nullableObjectSerializationContracts() {
+    String analysis =
+        """
+        {"analysisId":"a693dfdc-03da-4cf7-af04-88f4917e4171","status":"QUEUED"}
+        """;
+    return Stream.of(
+        Arguments.of(CreateSourceRecordResponse.class, "analysis", analysis),
+        Arguments.of(SourceRecordSummary.class, "latestAnalysis", analysis),
+        Arguments.of(SourceRecordDetail.class, "latestAnalysis", analysis),
+        Arguments.of(
+            ProposalDetail.class,
+            "decision",
+            """
+            {"batchId":"a693dfdc-03da-4cf7-af04-88f4917e4171", "decidedAt":"2026-11-12T00:00:00Z",
+             "itemId":null,"itemVersion":null,"appliedValues":null}
+            """),
+        Arguments.of(
+            CareItemDetail.class,
+            "editLock",
+            """
+            {"holderMembershipId":"a693dfdc-03da-4cf7-af04-88f4917e4171",
+             "expiresAt":"2026-11-12T00:02:00Z","mine":true}
+            """),
+        Arguments.of(
+            SharedItemsResponse.Entry.class,
+            "item",
+            """
+            {"itemId":"a693dfdc-03da-4cf7-af04-88f4917e4171","spaceId":null,"itemType":"SCHEDULE",
+             "version":"1","title":"합성 일정","description":null,"status":"SCHEDULED",
+             "fields":{"scheduledDate":"2026-11-20"},"visibility":"VISIBLE",
+             "needsReconfirmation":false,"needsConflictReview":false,"redactedFields":[],
+             "editLock":null,"answers":[],"createdAt":"2026-11-12T00:00:00Z",
+             "updatedAt":"2026-11-12T00:00:00Z","confirmedAnswer":null}
+            """));
   }
 
   private JsonNode apiDocument() throws Exception {
