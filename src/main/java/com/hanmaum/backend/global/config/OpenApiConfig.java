@@ -15,13 +15,16 @@ import io.swagger.v3.oas.models.security.SecurityRequirement;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import io.swagger.v3.oas.models.tags.Tag;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import org.springdoc.core.customizers.OpenApiCustomizer;
 import org.springdoc.core.properties.SpringDocConfigProperties;
+import org.springdoc.core.utils.SpringDocUtils;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.ResourceLoader;
+import tools.jackson.databind.JsonNode;
 
 @Configuration(proxyBeanMethods = false)
 @ConditionalOnProperty(name = "springdoc.api-docs.enabled", havingValue = "true")
@@ -56,6 +59,16 @@ public class OpenApiConfig {
 
   @Bean
   OpenAPI hanmaumOpenApi(SpringDocConfigProperties properties, ResourceLoader resourceLoader) {
+    // Jackson tree nodes serialize as JSON values, not their Java introspection properties.
+    // Enumerate JSON types to avoid Springdoc's implicit object-only fallback, including null.
+    SpringDocUtils.getConfig()
+        .replaceWithSchema(
+            JsonNode.class,
+            new Schema<>()
+                .types(
+                    new LinkedHashSet<>(
+                        List.of("object", "array", "string", "number", "boolean", "null")))
+                .additionalProperties(true));
     var components =
         new Components()
             .schemas(
