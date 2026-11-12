@@ -10,6 +10,7 @@ public record SourceRecordDeletionImpact(
     Counts counts,
     List<AffectedItem> affectedItems,
     @Schema(description = "현재 요청자·원본·영향 범위에 묶인 확인값") String impactToken) {
+  @Schema(name = "SourceRecordDeletionCounts")
   public record Counts(long proposals, long evidence, long items, long historyEntries) {}
 
   public record AffectedItem(

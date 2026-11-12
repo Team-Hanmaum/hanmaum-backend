@@ -12,6 +12,7 @@ public record SharedItemsResponse(UUID spaceId, List<Entry> items) {
     DELETED
   }
 
+  @Schema(name = "SharedItemEntry")
   public record Entry(
       UUID itemId,
       State state,

@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.UUID;
 
 public record CareItemEvidenceResponse(List<Evidence> items) {
+  @Schema(name = "CareItemEvidence")
   public record Evidence(
       UUID evidenceId,
       @Schema(description = "RECORD_QUOTE, DIRECT_INPUT 또는 DERIVED") String kind,

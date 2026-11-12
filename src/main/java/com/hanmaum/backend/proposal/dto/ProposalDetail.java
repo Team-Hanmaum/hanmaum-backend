@@ -48,6 +48,7 @@ public record ProposalDetail(
 
   public record Candidate(UUID itemId, String version, String title) {}
 
+  @Schema(name = "ProposalEvidence")
   public record Evidence(
       UUID evidenceId,
       UUID recordId,

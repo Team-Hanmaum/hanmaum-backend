@@ -10,13 +10,25 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.hanmaum.backend.careitem.dto.CareItemEvidenceResponse;
+import com.hanmaum.backend.careitem.dto.CareItemHistoryResponse;
+import com.hanmaum.backend.carespace.dto.CareSpaceDeletionImpact;
 import com.hanmaum.backend.global.security.SecurityProperties;
+import com.hanmaum.backend.proposal.dto.ProposalDetail;
+import com.hanmaum.backend.record.dto.SourceRecordAuthor;
+import com.hanmaum.backend.record.dto.SourceRecordDeletionImpact;
+import com.hanmaum.backend.sharing.dto.SharedItemsResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.List;
+import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -29,6 +41,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.util.UriComponentsBuilder;
 import org.springframework.web.util.UriUtils;
+import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 @SpringBootTest(
@@ -267,6 +280,83 @@ class ProductionDocumentationIntegrationTests {
         .andExpect(
             jsonPath("$.components.securitySchemes.SessionCookie.name").value("HANMAUM_SESSION"))
         .andExpect(jsonPath("$.components.securitySchemes.CsrfToken.name").value("X-CSRF-TOKEN"));
+  }
+
+  @ParameterizedTest
+  @MethodSource("nestedResponseContracts")
+  void documentsDistinctNestedDtosWithTheirUnchangedSerializedFields(
+      String path, String propertyPath, Object responseValue, String fields) throws Exception {
+    var document = apiDocument();
+    var envelope =
+        schema(
+            document,
+            document
+                .path("paths")
+                .path(path)
+                .at("/get/responses/200/content/application~1json/schema"));
+    var data = schema(document, envelope.at("/properties/data"));
+    var nested = schema(document, data.at(propertyPath));
+    assertThat(mapper.valueToTree(responseValue).propertyNames())
+        .containsExactlyInAnyOrder(fields.split(","));
+    assertThat(nested.path("properties").propertyNames())
+        .containsExactlyInAnyOrder(fields.split(","));
+  }
+
+  static Stream<Arguments> nestedResponseContracts() {
+    UUID id = UUID.fromString("a693dfdc-03da-4cf7-af04-88f4917e4171");
+    Instant now = Instant.parse("2026-11-12T00:00:00Z");
+    var author = new SourceRecordAuthor(id, "합성 사용자", false);
+    return Stream.of(
+        Arguments.of(
+            "/api/spaces/{spaceId}/items/{itemId}/evidence",
+            "/properties/items/items",
+            new CareItemEvidenceResponse.Evidence(
+                id, "DIRECT_INPUT", "VALID", null, "합성 근거", id, now, List.of()),
+            "evidenceId,kind,status,recordId,text,createdByMembershipId,createdAt,fieldPaths"),
+        Arguments.of(
+            "/api/spaces/{spaceId}/proposals/{proposalId}",
+            "/properties/evidence/items",
+            new ProposalDetail.Evidence(id, id, "합성 인용", true, author, now),
+            "evidenceId,recordId,quote,valid,author,recordedAt"),
+        Arguments.of(
+            "/api/spaces/{spaceId}/deletion-impact",
+            "/properties/counts",
+            new CareSpaceDeletionImpact.Counts(1, 2, 3, 4, 5, 6),
+            "members,records,items,proposals,requests,historyEntries"),
+        Arguments.of(
+            "/api/spaces/{spaceId}/source-records/{recordId}/deletion-impact",
+            "/properties/counts",
+            new SourceRecordDeletionImpact.Counts(1, 2, 3, 4),
+            "proposals,evidence,items,historyEntries"),
+        Arguments.of(
+            "/api/share-links/{token}",
+            "/properties/items/items",
+            new SharedItemsResponse.Entry(id, SharedItemsResponse.State.DELETED, null),
+            "itemId,state,item"),
+        Arguments.of(
+            "/api/spaces/{spaceId}/items/{itemId}/history",
+            "/properties/items/items",
+            new CareItemHistoryResponse.Entry("2", "UPDATE", author, now, List.of()),
+            "version,changeKind,changedBy,changedAt,redactedFields"));
+  }
+
+  private JsonNode apiDocument() throws Exception {
+    return mapper.readTree(
+        mvc.perform(get("/v3/api-docs"))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString());
+  }
+
+  private JsonNode schema(JsonNode document, JsonNode node) {
+    if (node.has("$ref")) {
+      String reference = node.path("$ref").asText();
+      assertThat(reference).startsWith("#/components/schemas/");
+      node = document.at(reference.substring(1));
+    }
+    assertThat(node.isMissingNode()).isFalse();
+    return node;
   }
 
   @Test
