@@ -12,6 +12,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.hanmaum.backend.careitem.dto.CareItemEvidenceResponse;
 import com.hanmaum.backend.careitem.dto.CareItemHistoryResponse;
+import com.hanmaum.backend.careitem.dto.CareItemSummary;
 import com.hanmaum.backend.carespace.dto.CareSpaceDeletionImpact;
 import com.hanmaum.backend.global.security.SecurityProperties;
 import com.hanmaum.backend.proposal.dto.ProposalDetail;
@@ -338,6 +339,74 @@ class ProductionDocumentationIntegrationTests {
             "/properties/items/items",
             new CareItemHistoryResponse.Entry("2", "UPDATE", author, now, List.of()),
             "version,changeKind,changedBy,changedAt,redactedFields"));
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "ChangeRequestApplicationEntry,values",
+    "ApplicationEntry,values",
+    "SubmissionEntry,values",
+    "ContentPatch,values",
+    "Decision,appliedValues",
+    "CareItemSummary,fields",
+    "CareItemDetail,fields",
+    "CareItemHistoryDetail,before",
+    "CareItemHistoryDetail,after",
+    "ChangeRequestDecision,appliedValues",
+    "ChangeRequestEntryDetail,requestedValues",
+    "ChangeRequestEntryDetail,currentValues"
+  })
+  void documentsJsonValuesWithoutJacksonIntrospectionProperties(String name, String field)
+      throws Exception {
+    var document = apiDocument();
+    var schemas = document.at("/components/schemas");
+    var value = schema(document, schemas.path(name).path("properties").path(field));
+    assertThat(value.has("properties")).isFalse();
+    assertThat(value.path("type").valueStream().map(JsonNode::asText))
+        .containsExactlyInAnyOrder("object", "array", "string", "number", "boolean", "null");
+    assertThat(value.path("additionalProperties").asBoolean()).isTrue();
+    assertThat(schemas.has("JsonNode")).isFalse();
+  }
+
+  @Test
+  void preservesJsonFieldDescriptionsAndExplicitTypedSchemas() throws Exception {
+    var schemas = apiDocument().at("/components/schemas");
+    assertThat(schemas.at("/ChangeRequestApplicationEntry/properties/values/description").asText())
+        .contains("requestedValues", "null");
+    assertThat(schemas.at("/ChangeRequestDecision/properties/appliedValues/description").asText())
+        .contains("subjectLabel", "null");
+    assertThat(schemas.at("/ReconfirmationValues/properties/fields/description").asText())
+        .contains("QUESTION", "confirmedAnswer");
+    var alternatives = schemas.at("/CreateCareItemRequest/properties/fields/oneOf");
+    assertThat(alternatives.isArray()).isTrue();
+    assertThat(alternatives.valueStream().map(value -> value.path("$ref").asText()))
+        .containsExactlyInAnyOrder(
+            "#/components/schemas/ScheduleFields",
+            "#/components/schemas/TaskFields",
+            "#/components/schemas/QuestionFields");
+  }
+
+  @Test
+  void keepsActualDynamicJsonSerializationUnchanged() throws Exception {
+    var fields =
+        mapper.readTree(
+            """
+            {"scheduledDate":"2026-11-20","scheduledTime":"14:00","location":null}
+            """);
+    var item =
+        new CareItemSummary(
+            UUID.fromString("a693dfdc-03da-4cf7-af04-88f4917e4171"),
+            "SCHEDULE",
+            "1",
+            "합성 일정",
+            null,
+            false,
+            false,
+            fields,
+            null);
+    var serialized = mapper.readTree(mapper.writeValueAsString(item));
+    assertThat(serialized.path("fields")).isEqualTo(fields);
+    assertThat(serialized.path("status").isNull()).isTrue();
   }
 
   private JsonNode apiDocument() throws Exception {
