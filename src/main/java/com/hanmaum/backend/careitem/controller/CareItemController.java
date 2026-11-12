@@ -13,6 +13,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.security.SecurityRequirement;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import java.net.URI;
+import java.util.Map;
 import java.util.UUID;
 import org.springframework.http.*;
 import org.springframework.web.bind.annotation.*;
@@ -163,7 +164,7 @@ public class CareItemController {
   public record ReconfirmationValues(
       String title,
       @Schema(nullable = true) String description,
-      @Schema(type = "object", description = "기존 유형의 필드. QUESTION은 confirmedAnswer를 사용")
+      @Schema(implementation = Map.class, description = "기존 유형의 필드. QUESTION은 confirmedAnswer를 사용")
           JsonNode fields) {}
 
   @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)

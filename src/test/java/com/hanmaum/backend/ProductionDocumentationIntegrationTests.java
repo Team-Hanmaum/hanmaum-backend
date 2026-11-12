@@ -377,6 +377,8 @@ class ProductionDocumentationIntegrationTests {
         .contains("subjectLabel", "null");
     assertThat(schemas.at("/ReconfirmationValues/properties/fields/description").asText())
         .contains("QUESTION", "confirmedAnswer");
+    assertThat(schemas.at("/ReconfirmationValues/properties/fields/type").asText())
+        .isEqualTo("object");
     var alternatives = schemas.at("/CreateCareItemRequest/properties/fields/oneOf");
     assertThat(alternatives.isArray()).isTrue();
     assertThat(alternatives.valueStream().map(value -> value.path("$ref").asText()))
