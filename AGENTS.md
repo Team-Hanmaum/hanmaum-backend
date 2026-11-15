@@ -49,7 +49,7 @@
 - 알려진 업무 오류는 `ApiException`으로 전달해 전역 예외 처리기에서 처리한다. 필드 오류는 `ApiFieldError(field, reason)`을 사용하며, 도메인별 응답 래퍼나 중복 예외 처리기를 만들지 않는다.
 - 공개 코드 문자열은 서비스 전체에서 중복되지 않아야 한다. 코드·HTTP 상태·기본 메시지 변경은 API 계약 변경으로 검토한다. 현재 enum의 `code()`는 `name()`을 반환하므로 상수 이름 변경도 공개 코드 변경이다.
 - Swagger 오류 문서 조립은 `global.openapi`에서 담당한다. 애플리케이션 패키지 아래 `ErrorCode` 구현 enum을 자동으로 수집하며 각 API에는 실제 발생하는 오류 응답 참조를 명시한다. 자동 수집만으로 해당 API의 오류 명세가 완성되었다고 간주하지 않는다.
-- 코드 추가·변경 시 발생 조건과 HTTP 상태·공개 코드·메시지를 API 명세에 반영하고, 실제 응답과 일치하는지 관련 테스트로 검증한다. 공통 handoff·노션의 최종 동기화 시점은 사용자의 지시를 따른다.
+- 코드 추가·변경 시 발생 조건과 HTTP 상태·공개 코드·메시지를 API 명세에 반영하고, 실제 응답과 일치하는지 관련 테스트로 검증한다. 노션 API 명세의 갱신 시점은 사용자의 지시를 따른다.
 
 ## 제품·API 기준
 
@@ -104,14 +104,10 @@
 - 결과에는 변경 내용·실행한 검증·남은 미정 사항·FE/AI 의존성을 기록한다. 실행 환경 제약은 성공으로 기록하지 않는다.
 - 검증 결과는 PR과 완료 보고에 정리한다. 이슈별 검증 Markdown·스크린샷을 저장소에 기본 생성하지 않는다.
 - README·공통 규격 문서는 팀원이 알아야 할 실행 방법·설정·계약이 바뀔 때 갱신한다.
-- 공통 handoff 문서 최종 갱신과 push는 사용자가 지정한 일괄 정리 시점을 따른다.
 
 ## 참고 문서
 
-- 실행·개발 환경: `README.md`.
-- 구조·권한·삭제 정책: `docs/architecture.md`.
-- 공개 API 공통 규격: `docs/api-conventions.md` 및 연결된 노션 명세.
-- 내부 AI 통신: `docs/ai-contract.md`와 실제 DTO.
-- 공통 자료 위치와 읽는 순서: `../docs/handoff/README.md`.
-- 공통 작업은 `COMMON.md`, `BE.md`, 기능 작업은 `FEATURES.md`, `DECISIONS.md`, `sources/notion-policy.md`의 관련 부분을 확인한다. 화면 흐름은 `FIGMA.md`에서 필요한 노드를 확인한다.
-- 위 handoff 파일명은 `../docs/handoff/` 기준이다. 초기 상태가 포함되어 있으므로 현재 구현은 실제 코드와 최신 원문으로 재확인한다.
+- [실행·개발 환경](README.md)
+- [구조·권한·삭제 정책](docs/architecture.md)
+- [공개 API 공통 규격](docs/api-conventions.md) 및 연결된 노션 명세
+- [내부 AI 통신 계약](docs/ai-contract.md)과 실제 DTO
