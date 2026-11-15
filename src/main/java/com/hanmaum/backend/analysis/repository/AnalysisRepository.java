@@ -207,19 +207,18 @@ public class AnalysisRepository {
         run.id());
   }
 
-  public List<AnalysisRun> dependingOnBasis(UUID space, UUID basis, UUID document) {
+  public List<AnalysisRun> dependingOnDocument(UUID space, UUID document) {
     return jdbc.query(
         """
         SELECT a.* FROM analysis_run a WHERE a.space_id=? AND (EXISTS (
-          SELECT 1 FROM analysis_input_basis b WHERE b.run_id=a.id AND
-            (b.basis_id=CAST(? AS uuid) OR b.direct_document_id=CAST(? AS uuid)))
+          SELECT 1 FROM analysis_input_basis b WHERE b.run_id=a.id
+            AND b.direct_document_id=?)
           OR EXISTS (SELECT 1 FROM analysis_input_item i
-            WHERE i.run_id=a.id AND i.document_id=CAST(? AS uuid)))
+            WHERE i.run_id=a.id AND i.document_id=?))
         ORDER BY a.id
         """,
         this::map,
         space,
-        basis,
         document,
         document);
   }

@@ -1,346 +1,216 @@
-# 한마음 백엔드
+<p align="center">
+  <img src="https://raw.githubusercontent.com/Team-Hanmaum/hanmaum-frontend/dev/public/icons/pwa-192.png" width="96" alt="흰 배경의 한마음 로고" />
+</p>
 
-가족이 현재 유효한 돌봄 정보를 함께 관리하는 한마음의 Spring Boot API 서버입니다.
+<h1 align="center">한마음 · Backend</h1>
 
-## 개발 기준
+<p align="center">
+  <strong>흩어진 소식은 하나로, 돌봄은 한마음으로</strong><br />
+  가족이 남긴 소식을 AI가 정리하고, 확인한 일정과 할 일을 함께 관리하는 모바일 웹 서비스입니다.
+</p>
 
-- 개발 기준 브랜치: `dev`
-- 현재 Lightsail 배포 기준 브랜치: `dev` (`main` 전용 서버·배포는 미구성)
-- 작업 브랜치: `타입/이슈번호-기능명`
-- 커밋: `타입: 변경 내용 (#이슈번호)` 및 상세 본문
-- PR: `Type(#이슈번호): 핵심 작업 내용` 형식, `dev` 대상으로 생성하고 팀원 1명 이상의 승인 및 저장소 필수 검사 충족 후 병합
-- `dev`·`main` 직접 커밋·푸시 금지. 상세 개발 규칙은 [AGENTS.md](AGENTS.md) 참고
+<p align="center">
+  <a href="https://hanmaum.site">서비스 바로가기</a> ·
+  <a href="https://github.com/Team-Hanmaum/hanmaum-frontend">Frontend</a> ·
+  <a href="https://github.com/Team-Hanmaum/hanmaum-backend">Backend</a> ·
+  <a href="https://github.com/Team-Hanmaum/hanmaum-ai">AI</a> ·
+  <a href="https://github.com/Team-Hanmaum/hanmaum-docs">Docs</a>
+</p>
 
-## 기술 스택
+---
 
-Java 21 · Spring Boot 4.1.1 · Gradle 9.7.1 · Spring MVC · JPA · PostgreSQL 17.11 · Flyway
+**목차**
 
-Spring Security OAuth2 Client · Spring Session JDBC · Validation · Springdoc · Actuator · Spotless · Testcontainers
+- [프로젝트 소개](#프로젝트-소개)
+- [서비스 흐름](#서비스-흐름)
+- [시스템 구성](#시스템-구성)
+- [기술 스택](#기술-스택)
+- [인증·권한과 데이터 저장](#인증-권한과-데이터-저장)
+- [폴더 구조](#폴더-구조)
+- [API 계약과 AI 분석](#api-계약과-ai-분석)
+- [로컬 실행](#로컬-실행)
+- [개발 워크플로우](#개발-워크플로우)
+- [검증과 배포](#검증과-배포)
 
-AI 처리는 별도 `hanmaum-ai`의 Python/FastAPI에서 담당합니다. 이 서버는 로그인·권한·원본 기록·사용자 확정·데이터 변경과 이력을 담당합니다.
+<a id="프로젝트-소개"></a>
 
-## 코드 구조
+## 🌿 프로젝트 소개
 
-`src/main/java/com/hanmaum/backend` 아래 도메인 중심으로 구성합니다.
+한마음 백엔드는 가족의 돌봄 공간과 참여 권한을 관리합니다. 소식 원문, AI 제안, 가족이 확인한 일정과 할 일을 저장하고 웹 화면에 API로 제공합니다.
 
-```text
-backend/
-├── auth/              로그인·로그아웃·CSRF (기존 기반)
-├── user/              회원·소셜 계정 매핑·탈퇴
-├── carespace/         공간·참여·초대·소유권
-├── record/            원본 소식 작성·조회·삭제
-├── analysis/          분석 실행·상태·재시도
-├── proposal/          AI 제안·구성원 변경 요청·최종 반영
-├── careitem/          관리 항목·잠금·근거·이력
-├── dashboard/         현재 유효한 돌봄 현황 조회
-├── sharing/           공유 링크·접근 권한 확인
-├── ai/                내부 FastAPI 통신 어댑터 (기존 기반)
-│   ├── client/
-│   └── dto/
-└── global/            공통 개발 기반
-    ├── code/          ErrorCode 인터페이스·CommonErrorCode·SuccessCode
-    ├── config/
-    ├── openapi/       공통·도메인 오류의 Swagger 응답 등록
-    ├── security/
-    ├── response/
-    └── exception/
-```
+<a id="서비스-흐름"></a>
 
-회원·공간·기록·분석·제안·관리 항목·현황판·공유의 8개 도메인 폴더를 미리 준비했습니다. 회원 도메인은 OAuth 회원 매핑·내 정보 조회를, 공간 도메인은 공간 생성·조회·가족 초대·참여·구성원 목록·소유권 이전·참여 종료를 구현했습니다. 기록 도메인은 원본 저장·커서 목록·상세 조회·삭제, 분석 도메인은 DB 작업 접수·실행·상태 조회·실패 재시도를 구현했습니다. 제안 도메인은 v1 CREATE와 v2 네 작업의 검토 제안·근거 저장 및 조회, 소유자 직접 반영·미적용, 구성원 AI 제안 변경 요청·취소·소유자 검토를 지원합니다. AI 제안 없는 [직접 입력과 승인 요청](docs/direct-care-items.md)도 지원합니다. 패키지별 책임은 [설계 기준](docs/architecture.md)을 따릅니다.
-
-`auth`와 위 8개 업무 도메인은 아래 공통 하위 구조까지 준비했습니다. 빈 폴더에는 `.gitkeep`을 두어 같은 구조를 Git으로 공유합니다. 실제 파일이 있는 폴더에는 `.gitkeep`을 추가하지 않습니다.
+## 🧭 서비스 흐름
 
 ```text
-각 업무 도메인/
-├── code/              해당 도메인의 오류 코드
-├── controller/
-├── service/
-├── repository/
-├── entity/
-└── dto/
+로그인 → 공간 생성 또는 초대 참여
+  → 소식 작성 → AI 분석 → 제안·근거 검토
+  → 소유자 반영 → 일정·할 일 확인
 ```
 
-담당자는 실제 파일을 추가할 때 해당 폴더의 `.gitkeep`을 제거하고, 기능에 필요 없는 계층은 삭제하거나 조정할 수 있습니다. 예를 들어 `dashboard/entity`는 구조를 맞춰 둔 빈 폴더이며 별도의 현황판 테이블이 필요하다는 의미는 아닙니다. 기존 `ai`와 `global`은 각자의 통신·공통 기반 구조를 유지합니다.
+구성원은 제안을 검토하고 소유자에게 변경을 요청할 수 있습니다. [백엔드 구조·권한 정책](docs/architecture.md)
 
-공간 API는 `carespace/controller`, 공간 업무 로직은 `carespace/service`에 둡니다. 초대는 `carespace`에 포함하고, 공개 분석 업무인 `analysis`는 내부 통신을 맡은 `ai`를 사용합니다.
+<a id="시스템-구성"></a>
 
-오류 코드의 공통 인터페이스는 `global/code/ErrorCode.java`, 공통 오류 enum은 `CommonErrorCode.java`입니다. 도메인 오류 enum도 같은 인터페이스를 구현하며 `ApiException`과 `ApiResponse`를 함께 사용합니다. 현재 `AuthErrorCode`의 OAuth 실패, `CareSpaceErrorCode`의 호칭 중복·초대 사용 불가·만료, `AnalysisErrorCode`의 재시도 상태 충돌, `CareItemErrorCode`의 항목 잠금, `ProposalErrorCode`의 제안 묶음 충돌을 분리했습니다. `AnalysisFailureCode`는 비동기 작업의 실패 사유로 HTTP 오류와 구분합니다.
+## 🏗️ 시스템 구성
 
-성공은 `SuccessCode`의 `SUCCESS`·`ACCEPTED`를 재사용합니다. HTTP 상태는 Controller에서 지정하고 204는 본문 없이 반환합니다. 오류 코드 추가와 Swagger 문서화 방법은 [공통 규격](docs/api-conventions.md)을 따릅니다.
+![한마음 시스템 아키텍처](https://raw.githubusercontent.com/Team-Hanmaum/hanmaum-docs/main/assets/development/system-architecture.png)
 
-## 빠른 시작
+| 저장소 | 역할 |
+| --- | --- |
+| [Frontend](https://github.com/Team-Hanmaum/hanmaum-frontend) | Vercel에서 제공하는 모바일 웹과 BE API 연동 |
+| [Backend](https://github.com/Team-Hanmaum/hanmaum-backend) | 인증·세션·권한, 돌봄 API, PostgreSQL 저장, AI 분석 워커 |
+| [AI](https://github.com/Team-Hanmaum/hanmaum-ai) | FastAPI 기반 소식 분석과 구조화된 돌봄 제안 생성 |
 
-필수 환경은 **JDK 21**과 **실행 중인 Docker Desktop(Linux 컨테이너)**입니다. Gradle은 저장소의 Wrapper를 사용합니다.
+Nginx가 `https://api.hanmaum.site`의 요청을 BE로 전달합니다. BE·AI는 같은 Lightsail 인스턴스에서 별도 컨테이너로 실행되며 내부 HTTPS로 통신합니다.
 
-PowerShell에서 저장소 루트를 기준으로 실행합니다.
+<a id="기술-스택"></a>
+
+## 🛠️ 기술 스택
+
+| 영역 | 기술 | 사용 목적 |
+| --- | --- | --- |
+| 언어·빌드 | Java 21 · Gradle Wrapper 9.7.1 | 애플리케이션 빌드와 검사 |
+| 웹·보안 | Spring Boot 4.1.1 · Spring MVC · Spring Security · OAuth 2.0 · Spring Session JDBC | REST API, 소셜 로그인, 세션과 CSRF |
+| 데이터 | PostgreSQL 17.11 · Spring Data JPA · JDBC · Flyway | 업무 데이터·세션 저장, 스키마 마이그레이션 |
+| API 문서·상태 | springdoc-openapi 3.1.1 · Swagger UI · Spring Boot Actuator | OpenAPI 문서와 health 확인 |
+| 검사 | Spotless · Google Java Format · JUnit · Testcontainers | 포맷, 단위·통합 테스트 |
+| 배포 | GitHub Actions · GHCR · Docker Compose · Nginx · AWS Lightsail · S3 | 이미지 게시, 서비스 실행, HTTPS와 배포 시점 DB 백업 |
+
+<a id="인증-권한과-데이터-저장"></a>
+
+## 🔐 인증·권한과 데이터 저장
+
+| 영역 | 처리 방식 |
+| --- | --- |
+| 인증·세션 | Google·카카오 OAuth 로그인 후 `HANMAUM_SESSION` 쿠키 발급. 세션은 PostgreSQL에 저장 |
+| 권한 | 요청마다 대상 공간의 현재 참여 상태와 소유자·구성원 권한 확인 |
+| 데이터 | 소식 원문·분석 실행·AI 제안·확정 항목과 근거·이력을 구분해 저장. Flyway로 스키마 관리 |
+| 동시 변경·재전송 | 필요한 요청에 버전·편집 잠금 검사, `clientRequestId`로 중복 실행 방지 |
+
+운영 세션 쿠키는 BE 호스트 전용이며 `HttpOnly`, `Secure`, `SameSite=Lax`를 적용합니다. [로그인·세션 연결 설정](docs/deployment.md#운영-fe-로그인세션-연결)
+
+<a id="폴더-구조"></a>
+
+## 📁 폴더 구조
+
+```text
+hanmaum-backend/
+├── .github/
+│   ├── ISSUE_TEMPLATE/                   # 이슈 양식
+│   └── workflows/                        # Backend CI와 Deploy backend
+├── .githooks/                            # 커밋 전 Spotless 포맷 검사
+├── deploy/                               # 운영 Compose와 릴리스·백업·검증 스크립트
+│   ├── aws/                              # 배포 IAM 정책과 OIDC 신뢰 설정
+│   ├── nginx/                            # 공개 HTTP·HTTPS 프록시 설정
+│   ├── postgres/                         # PostgreSQL 앱 역할 초기 설정
+│   ├── systemd/                          # 인증서 갱신 유닛과 타이머
+│   └── tests/                            # 배포 설정 및 기동 검사
+├── docs/                                 # API·업무 규칙·AI 계약·배포 절차
+├── gradle/
+│   └── wrapper/                          # Gradle 실행 버전과 Wrapper
+└── src/
+    ├── main/
+    │   ├── java/com/hanmaum/backend/     # Spring 애플리케이션과 도메인 패키지
+    │   │   ├── ai/                       # 내부 FastAPI 클라이언트와 계약 DTO
+    │   │   ├── analysis/                 # 분석 접수·상태·실행 워커
+    │   │   ├── auth/                     # 로그인·세션·CSRF API
+    │   │   ├── careitem/                 # 돌봄 항목·답변·잠금·근거·이력
+    │   │   ├── carespace/                # 공간·초대·구성원·소유권
+    │   │   ├── dashboard/                # 돌봄 현황판
+    │   │   ├── global/                   # 공통 보안·응답·예외·OpenAPI
+    │   │   ├── proposal/                 # 제안 검토·반영과 변경 요청
+    │   │   ├── record/                   # 소식 원본 등록·조회·삭제
+    │   │   ├── sharing/                  # 공유 링크 발급과 조회
+    │   │   └── user/                     # 회원·내 정보·탈퇴
+    │   └── resources/                    # Spring 프로필과 환경 설정
+    │       └── db/migration/             # Flyway SQL
+    └── test/
+        ├── java/                         # 단위·통합 테스트
+        └── resources/                    # 테스트 프로필과 AI 계약 fixture
+```
+
+<a id="api-계약과-ai-분석"></a>
+
+## 🔌 API 계약과 AI 분석
+
+| 영역 | 핵심 계약 |
+| --- | --- |
+| 요청 | 인증이 필요한 요청에 세션 쿠키 포함. 변경 요청에는 `GET /api/auth/csrf` 토큰을 지정된 헤더에 담아 전달 |
+| 응답 | 일반 JSON은 `success`, `code`, `message`, `data`, `errors`, `timestamp` 사용. OAuth·CSRF 발급·로그아웃은 별도 형식 |
+| AI 분석 | 소식 저장 시 분석을 접수하고 워커가 내부 AI API 호출. 운영은 v2 계약을 사용하며 결과를 검토용 제안으로 저장 |
+
+[운영 Swagger](https://api.hanmaum.site/swagger-ui/index.html) · [노션 API 명세](https://app.notion.com/p/3ec0f25ea138807cad15e07696472145) · [공통 API 규격](docs/api-conventions.md) · [AI v2 실행 계약](docs/ai-contract-v2-execution.md)
+
+<a id="로컬-실행"></a>
+
+## 🚀 로컬 실행
+
+JDK 21과 Docker Compose v2가 필요합니다. Windows에서는 Docker Desktop을 Linux 컨테이너 모드로 실행합니다.
+
+```sh
+git clone https://github.com/Team-Hanmaum/hanmaum-backend.git
+cd hanmaum-backend
+git config core.hooksPath .githooks
+```
 
 ```powershell
-Copy-Item .env.example .env
-docker compose up -d --wait
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+docker compose up -d --wait postgres
 .\gradlew.bat bootRun
 ```
 
-기존 `.env`가 있다면 복사하지 않고 필요한 값을 확인합니다. 기본 프로필은 `local`입니다.
+Git Bash·macOS·Linux에서는 `test -f .env || cp .env.example .env`와 `./gradlew bootRun`을 사용합니다. Compose는 PostgreSQL을 실행하고 BE는 `local` 프로필로 시작합니다. [.env.example](.env.example)
 
-로컬 `docker-compose.yml`은 PostgreSQL 공식 이미지를 직접 사용해 DB만 실행하며, BE는 PC의 Gradle/JDK로 실행합니다. 루트 `Dockerfile`은 Actions가 BE 배포 이미지를 만드는 데 사용합니다. 운영 Compose의 Nginx·HTTPS·S3 백업·배포 스크립트는 이 로컬 실행 경로와 분리됩니다. Java 21·PostgreSQL 17.11과 애플리케이션 소스·Flyway 마이그레이션은 공통으로 유지합니다.
+- 실행 확인은 [서버 상태](http://localhost:8080/actuator/health)와 [로컬 Swagger](http://localhost:8080/swagger-ui/index.html)에서 할 수 있습니다.
+- 종료할 때는 BE 터미널에서 `Ctrl+C`를 누른 뒤 `docker compose down`을 실행합니다.
 
-- 상태 확인: `http://localhost:8080/actuator/health`
-- API 문서: `http://localhost:8080/swagger-ui/index.html`
-- OpenAPI JSON: `http://localhost:8080/v3/api-docs`
-- CSRF 토큰: `http://localhost:8080/api/auth/csrf`
+로컬 OAuth 테스트에는 `.env`의 공급자별 자격 증명과 `http://localhost:8080/login/oauth2/code/{provider}` 콜백 등록이 필요합니다. `{provider}`는 `google` 또는 `kakao`이며, 실행 명령에 `--args='--spring.profiles.active=local,oauth'`를 추가합니다. [로컬 HTTPS FE와 배포 BE 연결](docs/deployment.md#로컬-https-fe에서-배포-be-사용)
 
-Git Bash/macOS/Linux에서는 `cp .env.example .env`, `./gradlew bootRun`을 사용합니다.
+기본 로컬 설정에서는 분석 작업이 대기 상태로 남습니다. [AI 통신 계약](docs/ai-contract.md) · [워커 설정](docs/deployment.md#분석-워커-활성화비활성화)
 
-`.env`는 Spring의 `.properties` 문법으로 읽으므로 값에 따옴표를 붙이지 않습니다. 로컬 기본 DB 비밀번호는 개발 전용입니다. 포트가 이미 사용 중이면 `.env`의 `POSTGRES_PORT` 또는 `SERVER_PORT`를 변경합니다.
+<a id="개발-워크플로우"></a>
 
-DB를 종료할 때는 `docker compose down`을 사용합니다. `docker compose down -v`는 저장된 데이터를 삭제하므로 일반 종료에 사용하지 않습니다.
+## 🤝 개발 워크플로우
 
-## 포맷·테스트·빌드
+1. 이슈 생성
+2. 최신 `dev`에서 작업 브랜치 생성
+3. 구현·검증·커밋
+4. `dev` 대상 PR 생성
+5. 코드 리뷰·필수 검사
+6. `dev`에 머지
+7. Production 배포
+
+| 항목   | 규칙                                  | 예시                              |
+| ------ | ------------------------------------- | --------------------------------- |
+| 이슈   | `[Type] 작업 내용` · 담당자·라벨 지정 | `[Feat] 소식 작성 연동`           |
+| 브랜치 | `type/이슈번호-영문-작업명`           | `feat/123-record-create`          |
+| 커밋   | `type: 작업 내용 (#이슈번호)`         | `feat: 소식 작성 API 연동 (#123)` |
+| PR     | `Type(#이슈번호): 핵심 작업 내용`     | `Feat(#123): 소식 작성 API 연동`  |
+
+작업 타입은 `feat`, `fix`, `chore`, `docs`, `refactor`, `style`을 사용합니다. `dev`·`main`에 직접 커밋하지 않고, 검증을 마친 의미 있는 단위로 커밋합니다. PR은 [템플릿](.github/pull_request_template.md)에 관련 이슈·변경 내용·검증 결과를 기록하며, `dev` 머지는 팀원 1명 이상의 승인과 필수 검사를 기준으로 합니다.
+
+스택 PR의 base는 합의한 부모 브랜치를 사용합니다. 파일 명명·협업 규칙은 [AGENTS.md](AGENTS.md), CI 운영 방법은 [배포 문서](docs/deployment.md#구성)를 참고하세요.
+
+<a id="검증과-배포"></a>
+
+## ✅ 검증과 배포
+
+PowerShell에서 다음 명령을 실행합니다. Git Bash·macOS·Linux에서는 `.\gradlew.bat` 대신 `./gradlew`를 사용합니다.
 
 ```powershell
-git config core.hooksPath .githooks
 .\gradlew.bat spotlessApply
-.\gradlew.bat check bootJar
+.\gradlew.bat check bootJar --no-daemon
 ```
 
-- Java 포맷은 Google Java Format으로 통일합니다. VS Code의 `Java: format` 작업으로도 실행할 수 있습니다.
-- Git 훅은 관련 파일 커밋 시 `spotlessCheck`를 실행합니다. 각 팀원은 클론 후 훅 경로를 한 번 설정합니다.
-- 전체 테스트는 Docker가 필요합니다. Testcontainers가 격리된 PostgreSQL을 생성하므로 로컬 개발 DB를 변경하지 않습니다.
-- 테스트는 실제 소셜 로그인이나 유료 LLM API를 호출하지 않습니다.
-- 테스트 결과: `build/reports/tests/test/index.html`
-- 실행 파일: `build/libs/hanmaum-backend.jar`
+통합 테스트에는 Docker가 필요합니다. `bootJar`는 `build/libs/hanmaum-backend.jar`를 생성합니다. 배포 설정 검사 명령은 [CI 워크플로우](.github/workflows/ci.yml)에서 확인할 수 있습니다.
 
-Docker 없이 AI HTTP 계약 테스트만 실행할 때는 다음 명령을 사용합니다.
+![한마음 CI/CD 파이프라인](https://raw.githubusercontent.com/Team-Hanmaum/hanmaum-docs/main/assets/development/ci-cd.png)
 
-```powershell
-.\gradlew.bat test --tests '*HanmaumAiClientTests'
-```
-
-## CI
-
-[Backend CI](.github/workflows/ci.yml)는 GitHub Actions에서 아래 조건으로 실행합니다.
-
-| 이벤트 | 실행 조건 |
+| 시점 | 실행 내용 |
 | --- | --- |
-| PR | 대상 브랜치 제한 없이 `opened`, `synchronize`, `reopened` 실행. 스택 PR 포함 |
-| Push | `dev`, `main` 브랜치만 실행. 머지 후 최종 코드 재검증 |
-
-`Build and test` 작업은 Ubuntu 24.04·JDK 21에서 저장소의 Gradle Wrapper로 `./gradlew check bootJar --no-daemon`을 실행합니다. Spotless 포맷, 전체 테스트, 실행 JAR 생성을 검사하며 최대 실행 시간은 20분입니다. 같은 PR이나 브랜치의 새 실행이 시작되면 이전 실행을 취소합니다.
-
-- Testcontainers가 PostgreSQL을 실행하므로 별도 DB 서비스 설정이나 실제 OAuth·AI API 키가 필요하지 않습니다.
-- Gradle 캐시는 PR에서 읽기만 하며, `dev`·`main` push에서 갱신합니다. 공식 Action은 전체 커밋 SHA로 고정합니다.
-- 테스트 보고서가 생성되면 성공·실패 실행 모두 `backend-test-reports` 아티팩트로 7일간 보관합니다. 취소된 실행은 업로드를 생략합니다.
-- 실패 시 GitHub의 **Actions → Backend CI → 해당 실행 → Build and test** 로그와 테스트 보고서를 확인합니다. 로컬에서는 Docker를 실행한 뒤 `.\gradlew.bat check bootJar --no-daemon`으로 확인합니다.
-- 워크플로우 YAML도 Spotless의 공통 파일 포맷 검사 대상에 포함합니다.
-
-CI 파일 추가만으로 머지 제한이 설정되지는 않습니다. 첫 GitHub 실행을 확인한 뒤 `dev`·`main` 대상 Ruleset에서 `Build and test`를 필수 상태 검사로 등록하고 **Require branches to be up to date before merging**을 활성화해야 합니다. 이 저장소 설정은 별도 적용 대상이며, 스택 PR의 중간 대상 브랜치까지 자동으로 보호하지는 않습니다.
-
-CI는 검증을 담당하고, `dev` push의 CI가 성공하면 별도 `Deploy backend`가 같은 커밋을 자동 배포합니다. PR·`main` CI나 실패·취소된 CI는 배포하지 않습니다. 머지 후 검사 실패는 로그를 확인해 수정 PR 또는 revert PR로 처리합니다.
-
-## 환경 설정
-
-| 프로필 | 용도 |
-| --- | --- |
-| `local` | `.env` 읽기, localhost DB, 개발용 Swagger와 CORS |
-| `test` | Testcontainers DB, 외부 API 모킹 |
-| `prod` | 환경변수 필수, HTTPS 쿠키, Swagger 비활성화 |
-| `oauth` | 구글·카카오 OAuth 제공자 설정 추가 |
-
-운영 필수 환경변수는 `DB_URL`, `DB_USERNAME`, `DB_PASSWORD`, `FRONTEND_URL`, `AI_BASE_URL`, `AI_INTERNAL_API_KEY`, `COMMAND_DIGEST_KEY`, `INVITATION_ENCRYPTION_KEY`, `INVITATION_URL_PREFIX`입니다. 예를 들어 DB URL은 `jdbc:postgresql://postgres:5432/hanmaum` 형태입니다.
-
-운영 Compose는 FE 기본 주소 `FRONTEND_URL=https://hanmaum.site`와 로그인 성공 복귀 주소 `LOGIN_SUCCESS_URL=https://hanmaum.site/auth/callback`을 분리해서 주입합니다. `FRONTEND_URL`은 공유 URL의 기본 주소에도 사용하므로 콜백 경로를 붙이지 않습니다. `LOGIN_SUCCESS_URL`이 없는 별도 prod 실행에서는 기존처럼 `FRONTEND_URL`로 복귀합니다. 로컬 설정은 변경하지 않습니다. 운영 반영 순서와 공급자 콜백은 [운영 FE 로그인 연결](docs/deployment.md#운영-fe-로그인세션-연결)을 따릅니다.
-
-`COMMAND_DIGEST_KEY`는 반복 요청 본문 비교용 HMAC 비밀키입니다. 운영에서는 충분한 난수로 생성한 32바이트 이상의 값을 주입하고 서버 재시작·여러 인스턴스에서 유지합니다. 키를 단순 교체하면 기존 요청 영수증과 비교할 수 없으므로 이관 계획이 필요합니다. local/test에는 개발 전용 기본값이 있어 기존 `.env`로도 실행할 수 있으며, 이를 운영에서 사용하지 않습니다.
-
-`INVITATION_ENCRYPTION_KEY`는 같은 발급 요청에 원래 초대 URL을 다시 반환하기 위한 암호화 키입니다. 운영에서는 암호학적 난수 32바이트를 Base64로 인코딩한 값을 비밀 관리 환경에서 주입합니다. `COMMAND_DIGEST_KEY`와 별개이며 모든 인스턴스·재시작에서 유지합니다. 단순 교체하면 이전 발급 URL을 복원할 수 없으므로 키 이관이 필요합니다. local/test는 개발 전용 기본값을 사용하여 기존 `.env`로 실행할 수 있습니다.
-
-`INVITATION_URL_PREFIX`는 토큰 앞에 붙일 FE 주소이며 `/`로 끝나고 query·fragment·인증 정보를 포함하지 않는 절대 HTTP(S) URL입니다. local 기본값은 `http://localhost:5173/invitations/`입니다. 운영은 `https://hanmaum.site/invitations/`를 사용하며 OAuth 복귀 주소와 로컬 HTTPS 설정은 [배포 안내](docs/deployment.md)를 따릅니다. FE의 초대 화면·로그인 후 초대 복귀 연동은 별도로 확인합니다.
-
-Flyway가 세션 테이블을 포함한 스키마 변경을 담당하고, Hibernate는 `validate`로 검증합니다. 적용된 마이그레이션은 수정하지 않고 다음 버전의 SQL을 추가합니다. 운영 세션에는 `HttpOnly`, `Secure`, `SameSite=Lax`를 적용합니다.
-
-## 소셜 로그인 연동 준비
-
-개발자 콘솔에서 다음 Redirect URI를 등록합니다. 운영에서는 실제 HTTPS 도메인으로 교체합니다.
-
-- Google: `http://localhost:8080/login/oauth2/code/google`
-- Kakao: `http://localhost:8080/login/oauth2/code/kakao`
-
-`.env`에 각 제공자의 Client ID와 Client Secret을 설정한 뒤 실행합니다. Kakao는 REST API 키를 Client ID로 사용하고, Client Secret 및 `profile_nickname` 동의 항목을 제공자 설정과 맞춥니다.
-
-```powershell
-.\gradlew.bat bootRun --args='--spring.profiles.active=local,oauth'
-```
-
-로그인 시작 주소는 `/oauth2/authorization/google`, `/oauth2/authorization/kakao`입니다.
-
-로컬 HTTPS FE(`https://local.hanmaum.site:5173`)에서 배포 BE를 사용할 때만 시작 주소에 `?frontend=local`을 붙입니다. 성공 시 고정된 로컬 `/auth/callback`으로 복귀하며, 파라미터가 없으면 기존 `LOGIN_SUCCESS_URL`을 사용합니다. 빈 값·다른 값·중복 값은 `401 OAUTH_LOGIN_FAILED`로 거절합니다. 동일한 BE 세션 쿠키를 공유하는 탭의 요청을 state별로 분리하며, 대기 요청은 세션당 10개·10분으로 제한하고 가득 차면 새 시작만 거절합니다. 쿠키 없는 최초 동시 요청의 세션 생성 조율은 별도 FE 연동이 필요합니다. 공급자 BE 콜백, 쿠키와 CSRF 계약은 유지합니다. [운영 BE와 로컬 HTTPS FE 연결](docs/deployment.md#로컬-https-fe에서-배포-be-사용)의 설정·검증 순서를 따릅니다.
-
-OAuth 제공자가 설정된 환경에서는 Swagger **Auth → GET /oauth2/authorization/{provider}**에도 로그인 시작 경로를 표시합니다. `provider`는 현재 설정된 `google`·`kakao` 중 선택하며 로그인 세션·CSRF 토큰은 필요하지 않습니다. 실제 로그인은 설명의 **Google/Kakao 로그인 시작** 링크를 브라우저에서 열어 진행합니다. 정상 응답은 JSON 대신 `302 Location`으로 제공자 화면을 안내합니다. Swagger의 Try it out으로 로그인 화면 이동을 테스트하지 않습니다.
-
-현재는 **OAuth 로그인 시 회원 생성·조회, 회원 세션과 내 정보 조회까지 구현한 상태**입니다. Flyway V2는 `app_user`·`social_account`를 추가하고, `(provider, provider_user_id)` 유일성 및 사용자 외래 키를 검사합니다. ID는 JPA에서 UUID로 생성하고 생성·수정 시각은 서버에서 기록합니다.
-
-- Google은 검증된 ID Token의 `sub`, Kakao는 사용자 정보의 `id`를 제공자와 함께 회원 식별에 사용합니다. 이메일 일치만으로 계정을 병합하지 않습니다.
-- 표시 이름은 최초 가입 때 Google의 `name` 또는 Kakao의 `kakao_account.profile.nickname`으로 저장합니다. 값이 없거나 비어 있으면 null이며 재로그인 때 기존 이름과 프로필 수정 시각을 덮어쓰지 않습니다. 이 동작은 2026-10-09 사용자 합의이며 별도 이름 수정 API의 입력 제한은 미정입니다.
-- 제공자 통신 후 회원·소셜 연결을 하나의 DB 트랜잭션에서 생성합니다. 같은 제공자 식별자의 동시 로그인은 PostgreSQL 트랜잭션 잠금으로 직렬화하며 저장 실패 시 함께 롤백합니다.
-- 기존 콜백 주소·로그인 성공 리다이렉트·`OAUTH_LOGIN_FAILED` 응답을 유지합니다. 자동 검증은 로컬 가짜 제공자와 격리 PostgreSQL을 사용하며 실제 Google·Kakao 회원 매핑은 별도로 확인해야 합니다.
-
-로그인 성공 시 세션 principal에 한마음 사용자 UUID를 연결하며 인증 이름과 JDBC 세션의 `principal_name`도 이 UUID를 사용합니다. Google은 OIDC 사용자 형식을 유지합니다. 이전 버전의 제공자 전용 세션은 자동 변환하지 않으므로 새 버전 적용 후 다시 로그인해야 합니다.
-
-`GET /api/users/me`는 세션의 본인만 조회합니다. 요청 본문·사용자 ID 입력·CSRF 토큰은 필요 없으며 공통 성공 응답의 `data`에 `userId`, `displayName`(null 가능), `providers`(`GOOGLE`/`KAKAO`)를 반환합니다. 표시 이름과 로그인 방식은 현재 DB에서 조회하고 제공자 식별자·이메일·토큰은 응답에 포함하지 않습니다. 세션 없음·만료·이전 형식 또는 회원/소셜 연결 무효는 `401 UNAUTHENTICATED`입니다. 공통 성공 메시지는 `요청이 완료되었습니다.`를 사용합니다.
-
-다른 도메인의 로그인 필수 업무 API도 `@CurrentUser AuthenticatedUser`로 검증된 현재 회원을 받고 `currentUser.userId()`를 Service에 전달합니다. 회원·소셜 연결의 DB 검증은 공통 처리하며 공간 참여·소유권 검사는 각 업무에서 수행합니다. 사용 예시와 적용 규칙은 [현재 회원 사용](docs/api-conventions.md#controller에서-현재-회원-사용)을 따릅니다.
-
-로컬 확인은 같은 브라우저에서 소셜 로그인 후 `http://localhost:8080/api/users/me`에 접속하거나 Swagger의 **User → GET /api/users/me → Try it out → Execute**로 진행합니다. 로그인한 브라우저 세션의 회원을 현재 서버에 설정된 DB에서 조회합니다. 기본 `local` 설정에서는 Docker PostgreSQL 개발 DB이며 Swagger 주소 자체가 DB를 선택하지는 않습니다.
-
-[회원 탈퇴](docs/member-withdrawal.md)는 소유 공간 정리 후 계정·소셜 연결·전체 세션을 제거하고 공동 기록을 탈퇴 작성자로 보존합니다. 같은 소셜 계정으로 재가입하면 새 회원이며 기존 권한은 복원하지 않습니다. 계정 연결과 제공자 자체의 연결 해제 API는 후속입니다.
-
-로그인 실패 응답은 `401 OAUTH_LOGIN_FAILED`를 유지합니다. 서버의 `OAuth login failed` 로그에는 제공자·허용된 원인 분류·세션/필수 파라미터 존재 여부만 남깁니다. `AUTHORIZATION_REQUEST_MISSING`은 콜백과 대응하는 저장된 요청을 찾지 못한 경우이며, 토큰 교환·ID Token 검증·회원 저장 실패와 구분합니다. 로그에 인증 코드·토큰·쿠키·제공자 원문·예외 메시지를 추가하지 않습니다.
-
-## 프론트엔드의 세션·CSRF 사용
-
-로컬에서 프론트와 백엔드 모두 `localhost`를 사용합니다. 요청에는 `credentials: 'include'`를 설정합니다.
-
-```javascript
-const csrf = await fetch('http://localhost:8080/api/auth/csrf', {
-  credentials: 'include',
-}).then((response) => response.json());
-
-// POST / PUT / PATCH / DELETE 요청의 headers에 추가합니다.
-const headers = {
-  'Content-Type': 'application/json',
-  [csrf.headerName]: csrf.token,
-};
-```
-
-로그인 성공·로그아웃 후에는 CSRF 토큰을 다시 받습니다. 로그아웃은 토큰을 포함한 `POST /api/auth/logout`입니다. 최초 운영 구성은 Vercel의 `https://hanmaum.site`와 Nginx 뒤의 `https://api.hanmaum.site`를 사용합니다. 두 주소는 같은 사이트의 서로 다른 Origin이므로 FE의 credentials와 BE의 정확한 CORS 허용을 함께 설정합니다.
-
-## API 공통 규격
-
-공개 JSON 응답은 `success`, `code`, `message`, `data`, `errors`, `timestamp` 여섯 필드를 사용합니다. 오류는 `data: null`, 필드 오류가 없으면 `errors: []`이며 기존 `fieldErrors`는 사용하지 않습니다.
-
-- 200·201은 `SUCCESS`, 비동기 접수 202는 `ACCEPTED`, 204는 본문 없음입니다.
-- MVC·Security·OAuth 실패는 같은 오류 응답을 사용합니다.
-- CSRF 발급 성공은 기존 `{headerName, token}`, OAuth 성공은 리다이렉트, 로그아웃 성공은 204를 유지합니다. 내부 AI 계약·Actuator·OpenAPI는 공통 응답으로 감싸지 않습니다.
-- Controller의 반환 타입, 예외 처리, UUID·버전·시각 표기는 [공통 규격](docs/api-conventions.md)을 따릅니다.
-
-Swagger에는 Auth·User·CareSpace·Record·Analysis·Proposal·CareItem·Dashboard·Sharing의 실제 구현 경로와 공통 스키마를 제공합니다. 도메인별 범위는 아래 [구현 범위](#구현-범위)와 관련 계약 문서를 따릅니다. OAuth 시작 경로는 제공자가 설정된 환경에서만 표시합니다. `GET /api/auth/csrf`를 실행한 뒤 반환된 `token`을 **Authorize → CsrfToken**에 입력하면 같은 브라우저 세션의 변경 요청을 확인할 수 있습니다. HttpOnly 세션 쿠키는 브라우저가 전송하며 Swagger의 쿠키 입력만으로 로그인되지 않습니다. 로그인·로그아웃 후 토큰을 다시 발급·설정합니다.
-
-## 돌봄 공간 생성·조회
-
-로그인 후 `POST /api/spaces`, `GET /api/spaces`, `GET /api/spaces/{spaceId}`를 사용할 수 있습니다. 생성 본문은 `subjectLabel`과 `clientRequestId`(UUID)이며 생성 요청에는 CSRF가 필요합니다. 호칭은 앞뒤 공백 제거 후 한 줄·최대 30자로 제한하고, 현재 소유한 공간끼리 같은 호칭을 금지합니다.
-
-같은 생성 시도를 재전송할 때는 같은 요청 ID와 내용을 유지합니다. 이미 성공했다면 기존 공간/참여 ID를 201로 반환하며, 새 ID로 같은 호칭을 생성하면 `SPACE_LABEL_DUPLICATED`입니다. 처리 중은 `REQUEST_IN_PROGRESS`, 기존 ID의 다른 내용 재사용은 `IDEMPOTENCY_KEY_REUSED`입니다. 입력·응답·오류는 [공간 API 계약](docs/api-conventions.md#돌봄-공간-api)을 참고합니다.
-
-Flyway V3는 공간·참여·성공 요청 기록을, V4는 초대와 참여의 초대 연결을 추가합니다. 소유자가 같은 공간의 현재 참여자인지 DB 제약으로 검사하고 생성 전체를 하나의 트랜잭션에서 처리합니다. 다른 도메인의 쓰기 작업은 [공간 접근 Service 계약](docs/architecture.md#다른-도메인의-권한-확인)을 따릅니다. 초대 발급·확인·공간 참여·구성원 목록·소유권 이전·참여 종료·호칭 수정과 [공간 전체 삭제](docs/care-space-deletion.md)를 구현했습니다.
-
-소유자는 `PATCH /api/spaces/{spaceId}`에 `subjectLabel`, 조회한 `expectedSpaceVersion`, `clientRequestId`를 전달해 호칭을 수정합니다. 구성원은 기존 변경 요청 API에 `DIRECT_INPUT UPDATE_SPACE`로 제출하고 소유자가 승인합니다. 같은 호칭 저장은 공간 버전·수정 시각을 유지합니다. 입력·재전송·반영 결과의 `spaceVersion`, V20 전환과 FE 연결은 [공간 정보 수정 계약](docs/care-space-information.md)을 따릅니다.
-
-## 소유권 이전·나가기·내보내기
-
-현재 소유자는 `POST /api/spaces/{spaceId}/ownership-transfers`로 현재 다른 구성원에게 즉시 소유권을 이전합니다. `targetMembershipId`는 구성원 목록에서, `expectedSpaceVersion`은 공간 상세의 `version`에서 가져옵니다. 대상 사용자가 동일 호칭의 공간을 소유하면 전체 이전을 거절합니다.
-
-구성원 본인의 나가기는 `POST /api/spaces/{spaceId}/departures`, 소유자의 구성원 제외는 `POST /api/spaces/{spaceId}/memberships/{membershipId}/removals`입니다. 세 API 모두 `expectedSpaceVersion`(문자열)·`clientRequestId`(UUID)와 CSRF가 필요합니다. 나가기·내보내기는 참여 종료 이력을 남기고 접근을 차단하며 해당 참여에서 발급한 초대를 무효화합니다. 계정과 다른 공간 참여는 유지합니다.
-
-같은 요청을 재전송하면 다시 변경하지 않습니다. 본인 나가기는 참여가 끝난 뒤에도 동일 성공 요청의 종료 참여 ID·시각만 재응답합니다. 과거 요청으로 새 참여를 종료하지 않습니다. 상세 입력·오류·FE 재조회 기준은 [참여 변경 계약](docs/api-conventions.md#소유권-이전공간-나가기구성원-내보내기-api)을 따릅니다.
-
-이번 변경은 V3·V4의 기존 컬럼을 사용하므로 새 마이그레이션·환경변수는 없습니다. 참여 종료 시 미완료 담당 할 일의 담당자를 해제하고 잠금을 정리하며, 대기 중인 구성원 요청을 무효로 조회합니다. 종료 응답에는 `unassignedTaskCount`는 반환하지 않습니다.
-
-## AI 연동
-
-`HanmaumAiClient`는 내부 FastAPI의 `POST /v1/analyses`를 호출합니다. 연결 제한은 3초, 응답 대기는 30초이며 자동 재시도는 하지 않습니다. 외부 오류 본문은 API 오류나 로그에 그대로 노출하지 않습니다.
-
-v2 요청·응답 검증과 `HanmaumAiV2Client` 통신 어댑터는 확정 계약 `v2-20261021.1`을 따릅니다. 실행 접수 시 `ANALYSIS_CONTRACT_VERSION`을 고정하고 v1/v2 실행·저장·조회로 연결합니다. 기본은 v1이며 AI v2 준비·통합 검증 후 새 접수를 v2로 전환합니다. 기존 실행은 바뀌지 않습니다. [실행·저장 계약](docs/ai-contract-v2-execution.md)을 참고합니다. local 프로필은 초기 연동 상한인 요청 1,048,576바이트·응답 524,288바이트를 사용합니다. 다른 프로필은 `AI_V2_MAX_REQUEST_BYTES`·`AI_V2_MAX_RESPONSE_BYTES`를 명시해야 하며, 설정으로 계약 상한을 늘릴 수 없습니다. 이는 운영 성능이나 실제 모델 처리 가능량을 보장하는 값이 아닙니다. 전체 HTTP 기한·필드/문자열 제한·검증 범위와 오류 매핑은 [v2 통신 계약](docs/ai-contract-v2-client.md)을 참고합니다.
-
-[AI 계약](docs/ai-contract.md)과 [설계 기준](docs/architecture.md)을 참고합니다. 실제 FastAPI 구현과 모델 품질 평가는 별도 레포에서 진행합니다.
-
-## 소식 분석 실행
-
-새 소식 저장 시 원본·최초 `QUEUED` 분석·성공 요청 기록을 함께 저장하고 `201 SUCCESS`를 반환합니다. 이후 실행기가 DB에서 작업을 가져와 AI를 호출합니다. 기존 V5 소식은 자동 일괄 분석하지 않습니다.
-
-- 상태: `GET /api/spaces/{spaceId}/source-records/{recordId}/analyses/{analysisId}`
-- 실패 재시도: `POST /api/spaces/{spaceId}/source-records/{recordId}/analyses` → `202 ACCEPTED`
-- 재시도 입력: `failedAnalysisId`, `expectedRecordVersion`(문자열), `clientRequestId`. 현재 참여자만 최신 FAILED 분석을 재시도할 수 있습니다.
-- 상태 조회는 분석이 FAILED여도 `200 SUCCESS`이며 `data.failure`로 실패 사유를 제공합니다. 상세 계약은 [API 규격](docs/api-conventions.md#소식-분석-상태·실패-재시도)을 참고합니다.
-
-실행기는 기본적으로 꺼져 있습니다. 이 상태에서는 **소식 저장·분석 접수·조회는 가능하지만 분석은 QUEUED에 머뭅니다.** 실제 자동 분석을 켜려면 접근 가능한 AI 서버와 내부 키를 준비하고 다음 외부 설정을 모두 지정합니다. 숫자 기본값은 없으며 로컬 검증값도 운영 정책과 구분해 정합니다.
-
-| 설정 | 의미 |
-| --- | --- |
-| `ANALYSIS_WORKER_ENABLED` | `true`일 때 DB의 대기 작업 처리 시작 |
-| `ANALYSIS_WORKER_CONCURRENCY` | BE 인스턴스당 동시 실행 수, 양의 정수 |
-| `ANALYSIS_WORKER_POLL_INTERVAL` | 대기·중단 작업 확인 간격, 예: Duration의 `s` 단위 사용 |
-| `ANALYSIS_WORKER_LEASE_DURATION` | 실행기의 생존 갱신이 끊겼을 때 작업 소유권을 만료시키는 기간 |
-
-lease는 기존 AI 연결·응답 타임아웃 합보다 길어야 하며 실행 중 주기적으로 갱신합니다. 설정이 빠지거나 유효하지 않으면 enabled 실행은 시작하지 않습니다. lease 만료 작업은 `FAILED / ANALYSIS_INTERRUPTED`로 정리하고 자동으로 다시 AI를 호출하지 않습니다. 실행기를 나중에 켜면 이미 접수된 QUEUED 작업도 처리합니다.
-
-V6가 분석 실행·입력 원본 의존성·제안 문서·근거·CREATE 제안 테이블을 추가합니다. 제안은 저장·조회하며 관리 항목을 자동으로 변경하지 않습니다. V8의 CareItem 후보 조회는 같은 공간의 현재 문서와 근거를 사용하고 원본·항목 버전·문서 의존성을 함께 기록합니다. 내부 후보 50개·요약 2,000자 제한을 넘으면 내용을 자르거나 일부 후보를 조용히 생략하지 않고 `ANALYSIS_DEPENDENCY_UNAVAILABLE`로 실패합니다. 이는 공개 등록 길이 제한이 아닙니다. 이는 v1 실행 규칙입니다. v2는 V10에서 네 작업의 검토 제안 저장을 지원하고 V11의 소유자 반영, V12의 구성원 변경 요청으로 이어집니다.
-
-AI 레포의 stub과 가짜 응답 테스트는 통신·처리 흐름을 검증하는 수단입니다. 실제 LLM 품질·비용·처리량 검증을 완료했다는 의미는 아닙니다. 동시 실행 수·확인 간격·lease·재시도 제한·사용량 제한·FE 조회 간격은 운영 미정입니다.
-
-V10은 실행별 계약 버전과 v2 입력 근거 연결 ID를 추가하고 네 작업의 제안 저장을 허용합니다. 적용된 V1~V9 파일은 수정하지 않습니다. 전환·삭제 전파·공개 조회 규칙은 [v2 실행 계약](docs/ai-contract-v2-execution.md)을 따릅니다.
-
-V9는 분석 시작 시 사용한 원본 근거 ID를 추가로 기록합니다. 완료할 때 해당 근거가 제거됐으면 원본·항목 버전이 같아도 결과를 폐기합니다. 이미 적용한 V8을 수정하지 않으며, 기존 항목·문서를 유지합니다. V8에서 근거를 기록하지 않은 후보 실행은 현재 근거로 추정하지 않고 완료 검증에서 폐기합니다.
-
-V8/V9 적용 전에는 같은 DB에 연결된 구버전 분석 실행기가 새 작업을 가져가지 않도록 중지하고 실행 중인 작업을 정리해야 합니다. 이후 마이그레이션을 적용하고 호환되는 새 버전 실행기만 재개합니다. 구버전 실행기를 켠 채 스키마만 먼저 바꾸는 롤링 배포는 지원하지 않습니다. 중단된 작업의 기존 lease 복구·명시적 재시도 정책은 유지합니다. V7까지 적용된 개발 DB에는 통합 코드의 V8·V9가 순서대로 적용됩니다. V7 없이 V8/V9를 먼저 적용한 DB는 별도 순서 점검이 필요하며, outOfOrder를 공통 기본값으로 켜거나 적용된 파일을 수정하지 않습니다.
-
-### V7 인덱스 적용 시 쓰기 중지
-
-V7의 일반 `CREATE INDEX`는 빌드가 끝날 때까지 `ai_proposal` 쓰기를 차단합니다. 따라서 기존 데이터가 있는 DB의 최초 V7 적용은 제안 쓰기를 중지할 수 있는 유지보수 시간에 수행합니다. 이미 적용된 V7의 SQL·체크섬·실행 설정은 변경하지 않습니다. 쓰기 잠금의 동작과 `CONCURRENTLY`의 차이는 [PostgreSQL 공식 문서](https://www.postgresql.org/docs/17/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY)를 따릅니다.
-
-1. 적용 이력과 DB 크기를 확인하고 제안 쓰기 중지 시간을 확보합니다. 현재 별도 쓰기 차단 스위치가 없으므로 같은 DB에 연결된 기존 BE 인스턴스·분석 실행기 및 제안 쓰기 배치를 중지합니다.
-2. 진행 중인 분석 완료 처리와 쓰기 트랜잭션 종료를 확인한 뒤 마이그레이션을 시작합니다. 새 인스턴스만 worker 비활성화해도 기존 실행기의 쓰기는 중지되지 않습니다.
-3. 마이그레이션용 BE는 `ANALYSIS_WORKER_ENABLED=false`로 시작하고 검증 완료 전에는 트래픽을 재개하지 않습니다. V7 적용 성공, Flyway 검증 및 `ai_proposal_space_page_ix`의 `indisvalid=true`를 확인합니다.
-4. 검증 후 호환되는 BE와 분석 실행기를 기존 실행값으로 재개합니다. 중단된 실행은 기존 lease 복구·명시적 재시도 정책으로 처리하며 마이그레이션을 이유로 임의 재호출하지 않습니다.
-
-쓰기 중지를 허용할 수 없는 환경은 이 절차의 적용 대상이 아닙니다. 그런 환경은 트랜잭션 밖의 동시 인덱스 생성과 실패·재시도 절차를 별도로 검토해야 하며, 적용된 V7을 `CREATE INDEX CONCURRENTLY`로 덮어쓰지 않습니다. V7 없이 V8/V9가 적용된 DB의 순서 점검도 별도로 필요합니다.
-
-## AI 제안 조회
-
-- 목록: `GET /api/spaces/{spaceId}/proposals`. 선택 필터 `recordId`, `status`, 커서 `cursor`, `size`(기본 20, 최대 50)를 사용합니다.
-- 상세·근거: `GET /api/spaces/{spaceId}/proposals/{proposalId}`. 분석 상태/소식 상세의 `proposalIds` 또는 목록의 `proposalId`를 사용합니다.
-- 같은 공간의 현재 참여자가 세션으로 조회합니다. GET에는 CSRF 토큰·clientRequestId가 필요하지 않습니다. 조회 자체는 AI 호출·제안 반영·상태 변경을 하지 않습니다.
-- 기본은 `REVIEW_PENDING`이며 `INVALIDATED`를 명시하면 내용이 제거된 메타데이터만 조회합니다. 무효 상세는 `title`, `proposedValues`가 null이고 `evidence`는 빈 배열입니다.
-- 유형별 제안 값은 기존 노션 CareItem 필드명으로 변환합니다. 미상 값은 null이며 원문이나 내부 `changes` 전체를 노출하지 않습니다. v1 CREATE의 기존 응답을 유지합니다. v2는 현재 값과 변경분, 대상·후보, 관계·검토 사유, 비교 근거를 조회합니다. `changedFields`·`clearFields`로 설정·삭제를 구분하며 모호한 대상을 임의로 병합하지 않습니다. 유효한 제안 상세에서 reviewToken을 받고 소유자가 선택한 제안을 반영/미적용합니다. 계약과 Swagger 순서는 [제안 반영](docs/proposal-decisions.md)을 따릅니다.
-- V7은 공간별 제안 페이지 조회 인덱스만 추가합니다. 기존 데이터·V1~V6와 환경변수는 유지합니다. 상세 규격은 [API 규격](docs/api-conventions.md#ai-제안-목록·상세·근거-조회)을 참고합니다.
-
-Swagger에서는 소식 분석이 COMPLETED가 된 뒤 위 GET을 실행합니다. 분석 결과가 0개면 `items: []`가 정상이며, 빈 응답 stub으로는 상세에 사용할 제안 ID가 생기지 않습니다. 비어 있지 않은 유형별 제안과 삭제 방어는 격리 DB의 합성 응답으로 테스트합니다.
-
-## AI 제안 검토·소유자 반영
-
-V11에 처리 묶음/결과, 항목 편집 잠금, 확정 문서 의존성을 추가합니다. 다섯 유형 생성과 기존 항목 UPDATE/RESOLVE/LINK_EVIDENCE, 일괄 미적용을 지원합니다. 1~20개를 변경 전 상태로 검증하고 한 트랜잭션에서 저장합니다. 현재 소유자·검토 토큰·대상 버전·편집 잠금·동일 요청 재전송을 확인하며, 관련 항목 자동 재검토는 실행하지 않습니다.
-
-편집 잠금은 DB 시간 기준으로 기본 2분, 권장 갱신 30초입니다. 반영·미적용 요청 본문은 1 MiB, 자유입력 문자열은 각 10,000 UTF-16 단위, 새 최종 문서 합계는 512 KiB로 제한합니다. 소유자 반영 절차·정확한 크기 계산·오류·삭제 전파·마이그레이션 운영 절차는 [제안 반영 계약](docs/proposal-decisions.md)에 정리합니다. 노션 최종 동기화와 구분합니다.
-
-## 구성원 AI 제안 변경 요청
-
-V12는 구성원 요청 제출·목록·상세·취소와 소유자 선택 반영·미적용을 추가합니다. 구성원 제출은 현재 항목을 바꾸지 않으며 요청자 원문과 소유자 최종 편집값을 별도로 보존합니다. 기존 항목은 제출 시 구성원 잠금을 해제하고, 승인 시 소유자가 새 잠금을 획득합니다. 제출 이후 버전·원본·원래 참여가 바뀐 요청을 자동 갱신하거나 되살리지 않습니다.
-
-동일 참여자·제안의 유효한 대기 요청은 하나만 허용하며, 소유자 직접 반영과 요청 반영도 같은 제안을 중복 처리하지 않습니다. 상세 API·크기 상한·재전송·원본 삭제 전파와 두 계정 Swagger 절차는 [구성원 변경 요청 계약](docs/member-change-requests.md)을 따릅니다. 직접 입력·일반 삭제는 [관리 항목 직접 변경](docs/direct-care-items.md), 가족 답변 제출·소유자 승인은 [확인사항 답변 제출](docs/api-conventions.md#확인사항-답변-제출-api), 공간 호칭 수정·구성원 요청은 [공간 정보 수정](docs/care-space-information.md)을 따릅니다.
-
-## 컨테이너
-
-```powershell
-docker build -t hanmaum-backend:local .
-```
-
-Dockerfile은 Java 21로 빌드한 후 JRE 이미지에서 일반 사용자로 실행합니다. `.env`, Git 메타데이터, 로컬 빌드 결과는 이미지 빌드 컨텍스트에서 제외합니다. 소셜 로그인을 사용하는 운영 컨테이너에는 `SPRING_PROFILES_ACTIVE=prod,oauth`와 운영 환경변수를 주입합니다.
-
-Lightsail 시드니 리전의 Ubuntu 24.04·2 vCPU·4GB 서버를 사용합니다. [운영 배포 안내](docs/deployment.md)에 GitHub production Secrets·AWS OIDC·SSH·최초 HTTPS·DB 백업/복구 설정 순서를 정리했습니다. `dev`에 머지한 뒤 `Backend CI`가 성공하면 `Deploy backend`가 검사한 커밋의 GHCR 이미지 digest와 설정을 자동 배포합니다. 최초 HTTPS 발급·재배포용 `Run workflow`도 유지합니다. 자동·수동 실행 모두 최신 `dev`만 허용하며, 진행 중인 배포는 새 머지 때문에 취소하지 않습니다. `deploy/compose.prod.yml`은 Nginx·Spring·PostgreSQL을 구성하고 외부에는 80·443만 공개합니다. 운영 Swagger는 `https://api.hanmaum.site/swagger-ui.html`에서 공개하고 API 세션·CSRF는 유지합니다. 첫 배포에서는 AI worker를 활성화하지 않습니다. 로컬 검사와 실제 AWS 배포·OAuth·외부 백업 검증은 구분합니다. 기존 `docker-compose.yml`은 **로컬 DB용**으로 유지합니다.
-
-운영 BE는 별도 배포된 AI의 `hanmaum-ai-link` 내부 네트워크와 HTTPS를 사용하며, 공개 CA를 Java 기본 신뢰 목록에 추가합니다. BE 시작 시 인증된 AI v2 readiness를 확인하고 신규 분석은 v2로 접수합니다. 분석 워커는 GitHub `production` Variables의 `ANALYSIS_WORKER_ENABLED=true`와 동시 처리 수·조회 주기·lease를 명시한 뒤 BE를 배포해 활성화합니다. 초기 값은 `1`, `2s`, `120s`이며 활성화 여부 미설정 시 계속 꺼져 있습니다. 새 Secret은 필요하지 않습니다. [BE·AI 연결 및 워커 안내](docs/deployment.md#be와-배포된-ai-연결)에서 대기 작업 확인·등록·재배포·비활성화 절차를 따릅니다.
-
-## 구현 범위
-
-- 준비: 빌드·포맷·세션/회원/공간/초대 DB 마이그레이션·회원 엔티티/Repository·OAuth 회원 생성/조회·회원 세션·현재 회원 공통 처리·내 정보 조회·공간 생성/조회·초대 발급/확인·공간 참여·구성원 목록·소유권 이전·나가기/내보내기·참여/소유자 권한 기반·반복 요청 처리·보안 기반·공통 응답/오류·Swagger·상태 확인·AI HTTP 계약·통합 테스트
-- 추가 구현: 원본 소식 저장·커서 목록·상세 조회, 분석 접수·실행·상태 조회·실패 재시도, v1/v2 제안·근거 저장 및 삭제 전파 연결점, 제안 조회·소유자 직접 반영·미적용, 구성원 AI 제안 변경 요청·취소·소유자 검토, 일정·할 일·질문 직접 등록, 항목 수정·상태 변경, 구성원 직접 입력 요청·미완료 담당 해제, 항목 조회·편집 잠금·직접 입력 근거/이력・CareItem 후보 의존성
-- [돌봄 현황판](docs/api-conventions.md#돌봄-현황판): `GET /api/spaces/{spaceId}/dashboard`. 돌봄 탭은 기존 `GET /api/spaces/{spaceId}/items`에 `itemType`과 `view`를 전달합니다.
-- [항목 근거·이력](docs/care-item-provenance.md): 현재 근거, 확정 버전 목록 및 변경 전후 조회. 제거된 내용은 비교에서도 가리고 메타데이터만 유지
-- [소식 원본 삭제](docs/api-conventions.md#소식-원본-삭제-api): 삭제 영향을 조회한 뒤 원본과 파생 내용을 정리합니다.
-- [항목 일반 삭제](docs/direct-care-items.md#일반-삭제): 본인 잠금·버전 확인 후 소유자 직접 삭제 또는 구성원 요청·소유자 승인
-- [가족 답변 제출](docs/api-conventions.md#확인사항-답변-제출-api): 참여자 답변 제출·이력 조회·소유자 승인 후 질문 해소
-- [공간 정보 수정](docs/care-space-information.md): 소유자 호칭 수정·구성원 변경 요청과 소유자 승인
-- [공유 링크](docs/share-links.md): 복수 확정 항목의 링크 발급·현재 참여자의 최신 내용 조회. 삭제·재확인 항목은 상태만 반환하며 카드에는 유형·변경 표시·URL만 포함
-- [공간 전체 삭제](docs/care-space-deletion.md): 현재 소유자의 영향 확인·버전/영향 재검증 후 소속 서비스 데이터 전체 제거. 완료 후 200, 삭제 재요청 404, 복구 미제공
-- [회원 탈퇴](docs/member-withdrawal.md): 소유 공간 검사·공동 기록 보존·미완료 담당/잠금 해제·대기 요청 무효화·계정 및 전체 세션 정리
-- 후속: 계정 연결·제공자 자체 연결 해제, 공유 링크의 FE 진입·로그인 복귀·카카오 SDK·링크 해제, 삭제의 백업·로그·AI 제공자 보관 운영
-- 개발 규칙은 [AGENTS.md](AGENTS.md)에서 관리합니다. CI와 dev CI 성공 후 자동 실행·수동 실행 CD를 포함하며 실제 배포에는 안내된 외부 설정이 필요합니다.
+| PR 또는 `dev`·`main` push | Backend CI에서 포맷·테스트·JAR 빌드·배포 설정 검사 |
+| `dev` push의 CI 성공 | 같은 커밋의 이미지를 GHCR에 게시하고 Lightsail에 자동 배포 |
+| 수동 배포 | [Deploy backend](.github/workflows/deploy.yml)의 **Run workflow**에서 `dev` 선택 |
+
+배포는 최신 `dev` 커밋만 대상으로 하며, S3 백업 확인 후 컨테이너를 교체합니다.

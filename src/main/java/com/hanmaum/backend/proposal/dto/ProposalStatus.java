@@ -1,6 +1,6 @@
 package com.hanmaum.backend.proposal.dto;
 
-/** Approval requests are a separate, not-yet-implemented workflow. */
+/** Proposal lifecycle; member change requests have their own status. */
 public enum ProposalStatus {
   REVIEW_PENDING,
   APPLIED,

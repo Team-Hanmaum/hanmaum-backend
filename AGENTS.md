@@ -24,8 +24,7 @@
 | `Dashboard` | `dashboard` | 현황판 조회 |
 | `Sharing` | `sharing` | 공유 링크와 공유 대상 관리 |
 
-- 위 9개 도메인 모두 `code`, `controller`, `service`, `repository`, `entity`, `dto`의 공통 하위 구조를 미리 준비한다. 빈 폴더는 `.gitkeep`으로 Git에 보존한다.
-- 도메인 경계와 패키지는 `docs/architecture.md`를 따른다. 미구현 도메인의 책임은 `package-info.java`에 기록한다. 담당자는 실제 파일을 추가할 때 해당 폴더의 `.gitkeep`을 제거하고, 필요 없는 계층은 삭제하거나 조정할 수 있다. 폴더 구조를 채우기 위한 빈 업무 클래스·테이블은 만들지 않는다.
+- 도메인 경계는 `docs/architecture.md`를 따른다. `code`, `controller`, `service`, `repository`, `entity`, `dto`는 실제 구현에 필요한 계층만 만든다. 구조를 채우기 위한 빈 폴더·클래스·테이블은 만들지 않는다.
 - `global`은 공통 설정·보안·응답·예외를 담당한다. 공통 응답 코드는 업무 도메인에 의존하지 않는다.
 - `ai`는 내부 FastAPI 통신 어댑터이며 공개 분석 업무의 상태 관리·권한 판정과 구분한다.
 - Controller는 요청·응답 연결, Service는 업무 규칙·트랜잭션, Repository는 영속성 접근을 담당한다.
@@ -46,11 +45,11 @@
 - 공통 성공은 `global.code.SuccessCode`의 `SUCCESS`·`ACCEPTED`를 재사용한다. 200·201은 `ApiResponse.success(data)`, 202는 `ApiResponse.accepted(data)`를 사용하고 HTTP 상태는 Controller에서 지정한다. 204는 본문과 성공 코드 없이 반환한다.
 - API마다 성공 enum을 만들지 않는다. 도메인 전용 성공 코드가 필요한 경우 FE가 별도로 구분해야 하는 이유와 API 계약을 먼저 정리한다. 현재 성공 생성 메서드는 공통 `SuccessCode`만 지원하므로, 도메인 성공 enum을 추가할 때는 공통 응답 생성 방식·명세·테스트도 함께 확장한다. 성공 코드에 오류 전용 `ErrorCode` 인터페이스를 구현하지 않는다.
 - 오류 규칙은 `global.code.ErrorCode` 인터페이스, 공통 오류는 `CommonErrorCode`로 관리한다. 기존 공통 오류로 충분하면 재사용하고, FE가 별도로 구분해야 하는 업무 오류만 도메인의 `code` 패키지에 `<Domain>ErrorCode` enum으로 추가해 `ErrorCode`를 구현한다.
-- `<Domain>ErrorCode.java`와 필요 시 추가하는 `<Domain>SuccessCode.java`는 같은 도메인의 `code` 폴더에 두는 enum 파일이다. 빈 `code` 폴더는 `.gitkeep`으로 유지하고 실제 파일을 추가할 때 제거한다. 구조를 채우기 위한 빈 enum이나 `success`·`error` 하위 폴더는 만들지 않는다.
+- `<Domain>ErrorCode.java`와 필요 시 추가하는 `<Domain>SuccessCode.java`는 같은 도메인의 `code` 패키지에 둔다. 별도 도메인 코드가 필요할 때 패키지를 추가한다.
 - 알려진 업무 오류는 `ApiException`으로 전달해 전역 예외 처리기에서 처리한다. 필드 오류는 `ApiFieldError(field, reason)`을 사용하며, 도메인별 응답 래퍼나 중복 예외 처리기를 만들지 않는다.
 - 공개 코드 문자열은 서비스 전체에서 중복되지 않아야 한다. 코드·HTTP 상태·기본 메시지 변경은 API 계약 변경으로 검토한다. 현재 enum의 `code()`는 `name()`을 반환하므로 상수 이름 변경도 공개 코드 변경이다.
 - Swagger 오류 문서 조립은 `global.openapi`에서 담당한다. 애플리케이션 패키지 아래 `ErrorCode` 구현 enum을 자동으로 수집하며 각 API에는 실제 발생하는 오류 응답 참조를 명시한다. 자동 수집만으로 해당 API의 오류 명세가 완성되었다고 간주하지 않는다.
-- 코드 추가·변경 시 발생 조건과 HTTP 상태·공개 코드·메시지를 API 명세에 반영하고, 실제 응답과 일치하는지 관련 테스트로 검증한다. 공통 handoff·노션의 최종 동기화 시점은 사용자의 지시를 따른다.
+- 코드 추가·변경 시 발생 조건과 HTTP 상태·공개 코드·메시지를 API 명세에 반영하고, 실제 응답과 일치하는지 관련 테스트로 검증한다. 노션 API 명세의 갱신 시점은 사용자의 지시를 따른다.
 
 ## 제품·API 기준
 
@@ -105,14 +104,10 @@
 - 결과에는 변경 내용·실행한 검증·남은 미정 사항·FE/AI 의존성을 기록한다. 실행 환경 제약은 성공으로 기록하지 않는다.
 - 검증 결과는 PR과 완료 보고에 정리한다. 이슈별 검증 Markdown·스크린샷을 저장소에 기본 생성하지 않는다.
 - README·공통 규격 문서는 팀원이 알아야 할 실행 방법·설정·계약이 바뀔 때 갱신한다.
-- 공통 handoff 문서 최종 갱신과 push는 사용자가 지정한 일괄 정리 시점을 따른다.
 
 ## 참고 문서
 
-- 실행·개발 환경: `README.md`.
-- 구조·권한·삭제 정책: `docs/architecture.md`.
-- 공개 API 공통 규격: `docs/api-conventions.md` 및 연결된 노션 명세.
-- 내부 AI 통신: `docs/ai-contract.md`와 실제 DTO.
-- 공통 자료 위치와 읽는 순서: `../docs/handoff/README.md`.
-- 공통 작업은 `COMMON.md`, `BE.md`, 기능 작업은 `FEATURES.md`, `DECISIONS.md`, `sources/notion-policy.md`의 관련 부분을 확인한다. 화면 흐름은 `FIGMA.md`에서 필요한 노드를 확인한다.
-- 위 handoff 파일명은 `../docs/handoff/` 기준이다. 초기 상태가 포함되어 있으므로 현재 구현은 실제 코드와 최신 원문으로 재확인한다.
+- [실행·개발 환경](README.md)
+- [구조·권한·삭제 정책](docs/architecture.md)
+- [공개 API 공통 규격](docs/api-conventions.md) 및 연결된 노션 명세
+- [내부 AI 통신 계약](docs/ai-contract.md)과 실제 DTO

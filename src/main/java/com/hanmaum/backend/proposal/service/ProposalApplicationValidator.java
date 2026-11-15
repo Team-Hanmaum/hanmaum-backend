@@ -1,7 +1,7 @@
 package com.hanmaum.backend.proposal.service;
 
-import com.hanmaum.backend.careitem.repository.CareItemApplicationRepository;
 import com.hanmaum.backend.careitem.service.*;
+import com.hanmaum.backend.careitem.service.CareItemApplicationService.LockedItem;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.exception.ApiException;
 import com.hanmaum.backend.proposal.code.ProposalErrorCode;
@@ -37,7 +37,7 @@ public class ProposalApplicationValidator {
       UUID member,
       ProposalDecisionRepository.Proposal p,
       ProposalDecisionRequest.Entry e,
-      CareItemApplicationRepository.Item target,
+      LockedItem target,
       String path) {
     if (!p.resolution().equals("OPEN") || p.body() == null) throw state();
     if (action(p.operation()) != e.action())
@@ -65,7 +65,13 @@ public class ProposalApplicationValidator {
     }
     if (!p.available()) throw state();
     return applications.prepare(
-        space, p.type(), p.operation(), target, e.values(), path + ".values");
+        space,
+        p.type(),
+        p.operation(),
+        target,
+        e.values(),
+        path + ".values",
+        ProposalErrorCode.PROPOSAL_STATE_CONFLICT);
   }
 
   public void verifyReview(UUID actor, UUID space, UUID proposal, String supplied) {

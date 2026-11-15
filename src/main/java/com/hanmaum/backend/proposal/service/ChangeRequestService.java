@@ -1,8 +1,8 @@
 package com.hanmaum.backend.proposal.service;
 
 import com.hanmaum.backend.careitem.dto.CareItemAnswerSubmission;
-import com.hanmaum.backend.careitem.repository.CareItemApplicationRepository;
 import com.hanmaum.backend.careitem.service.*;
+import com.hanmaum.backend.careitem.service.CareItemApplicationService.LockedItem;
 import com.hanmaum.backend.carespace.dto.*;
 import com.hanmaum.backend.carespace.service.CareSpaceAccessService;
 import com.hanmaum.backend.carespace.service.CareSpaceInformationApplicationService;
@@ -256,7 +256,7 @@ public class ChangeRequestService {
       }
     }
     Map<UUID, ProposalDecisionRepository.Proposal> loaded = Map.of();
-    Map<UUID, CareItemApplicationRepository.Item> locked = Map.of();
+    Map<UUID, LockedItem> locked = Map.of();
     if (apply) {
       if (entries.values().stream().filter(e -> e.action().equals("UPDATE_SPACE")).count() > 1)
         throw batchConflict();
@@ -413,11 +413,7 @@ public class ChangeRequestService {
   }
 
   private CareItemApplicationService.Prepared prepareDirect(
-      UUID space,
-      UUID member,
-      ProposalDecisionRequest.Entry e,
-      CareItemApplicationRepository.Item target,
-      String path) {
+      UUID space, UUID member, ProposalDecisionRequest.Entry e, LockedItem target, String path) {
     if (e.action() == ProposalAction.CREATE_ITEM) {
       if (target != null || e.expectedItemVersion() != null || e.leaseToken() != null)
         throw CareItemInput.invalid(path, "생성에는 대상·버전·잠금을 전달하지 않습니다.");
@@ -448,10 +444,10 @@ public class ChangeRequestService {
     return out;
   }
 
-  private Map<UUID, CareItemApplicationRepository.Item> lockTargets(UUID space, List<UUID> ids) {
+  private Map<UUID, LockedItem> lockTargets(UUID space, List<UUID> ids) {
     Set<UUID> targets = new HashSet<>();
     for (UUID id : ids) if (id != null && !targets.add(id)) throw batchConflict();
-    Map<UUID, CareItemApplicationRepository.Item> out = new HashMap<>();
+    Map<UUID, LockedItem> out = new HashMap<>();
     targets.stream().sorted().forEach(id -> out.put(id, applications.lock(space, id)));
     return out;
   }
