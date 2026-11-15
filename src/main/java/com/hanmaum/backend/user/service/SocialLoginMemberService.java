@@ -6,6 +6,7 @@ import com.hanmaum.backend.user.entity.SocialProvider;
 import com.hanmaum.backend.user.repository.AppUserRepository;
 import com.hanmaum.backend.user.repository.SocialAccountIdentityLockRepository;
 import com.hanmaum.backend.user.repository.SocialAccountRepository;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
@@ -36,27 +37,35 @@ public class SocialLoginMemberService {
    */
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public UUID findOrCreate(
-      SocialProvider provider, String providerUserId, String initialDisplayName) {
+      SocialProvider provider,
+      String providerUserId,
+      String initialDisplayName,
+      String profileImageUrl,
+      Instant profileRequestStartedAt) {
     Objects.requireNonNull(provider, "provider");
+    Objects.requireNonNull(profileRequestStartedAt, "profileRequestStartedAt");
     if (providerUserId == null || providerUserId.isBlank()) {
       throw new IllegalArgumentException("A provider identity is required");
     }
 
     // Lock before lookup so concurrent first logins cannot leave duplicate or orphan users.
     identityLocks.lock(provider, providerUserId);
-    return socialAccounts
-        .findByProviderAndProviderUserId(provider, providerUserId)
-        .map(
-            account -> {
-              UUID id = account.getUser().getId();
-              lifecycle.requireExisting(id);
-              return id;
-            })
-        .orElseGet(
-            () -> {
-              AppUser user = users.saveAndFlush(new AppUser(initialDisplayName));
-              socialAccounts.saveAndFlush(new SocialAccount(user, provider, providerUserId));
-              return user.getId();
-            });
+    UUID id =
+        socialAccounts
+            .findByProviderAndProviderUserId(provider, providerUserId)
+            .map(
+                account -> {
+                  UUID userId = account.getUser().getId();
+                  lifecycle.requireExisting(userId);
+                  return userId;
+                })
+            .orElseGet(
+                () -> {
+                  AppUser user = users.saveAndFlush(new AppUser(initialDisplayName));
+                  socialAccounts.saveAndFlush(new SocialAccount(user, provider, providerUserId));
+                  return user.getId();
+                });
+    users.updateProfileImageIfNewer(id, profileImageUrl, profileRequestStartedAt);
+    return id;
   }
 }

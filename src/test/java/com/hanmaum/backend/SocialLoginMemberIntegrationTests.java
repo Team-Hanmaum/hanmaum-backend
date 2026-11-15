@@ -11,6 +11,7 @@ import com.hanmaum.backend.user.entity.SocialProvider;
 import com.hanmaum.backend.user.repository.AppUserRepository;
 import com.hanmaum.backend.user.repository.SocialAccountRepository;
 import com.hanmaum.backend.user.service.SocialLoginMemberService;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.UUID;
 import java.util.concurrent.CountDownLatch;
@@ -43,10 +44,12 @@ class SocialLoginMemberIntegrationTests {
 
   @Test
   void reusesTheMemberWithoutChangingTheOriginalNameOrProfileTimestamp() {
-    UUID firstId = members.findOrCreate(SocialProvider.GOOGLE, "same-user", "최초 이름");
+    UUID firstId =
+        members.findOrCreate(SocialProvider.GOOGLE, "same-user", "최초 이름", null, Instant.now());
     var before = users.findById(firstId).orElseThrow();
 
-    UUID nextId = members.findOrCreate(SocialProvider.GOOGLE, "same-user", "변경된 제공자 이름");
+    UUID nextId =
+        members.findOrCreate(SocialProvider.GOOGLE, "same-user", "변경된 제공자 이름", null, Instant.now());
     var after = users.findById(nextId).orElseThrow();
 
     assertThat(nextId).isEqualTo(firstId);
@@ -57,16 +60,35 @@ class SocialLoginMemberIntegrationTests {
   }
 
   @Test
+  void delayedProfileResponsesCannotOverwriteNewerUrlsOrRestoreRemovedPhotos() {
+    var olderRequest = Instant.parse("2026-11-16T00:00:00Z");
+    var newerRequest = olderRequest.plusSeconds(1);
+    String olderUrl = "https://images.example.invalid/older.png";
+    String newerUrl = "https://images.example.invalid/newer.png";
+    UUID memberId = members.findOrCreate(SocialProvider.KAKAO, "42", "이름", newerUrl, newerRequest);
+
+    assertThat(members.findOrCreate(SocialProvider.KAKAO, "42", "이름", olderUrl, olderRequest))
+        .isEqualTo(memberId);
+    members.findOrCreate(SocialProvider.KAKAO, "42", "이름", null, olderRequest);
+    assertThat(users.findById(memberId).orElseThrow().getProfileImageUrl()).isEqualTo(newerUrl);
+
+    members.findOrCreate(SocialProvider.KAKAO, "42", "이름", null, newerRequest.plusSeconds(1));
+    members.findOrCreate(SocialProvider.KAKAO, "42", "이름", newerUrl, newerRequest);
+    assertThat(users.findById(memberId).orElseThrow().getProfileImageUrl()).isNull();
+  }
+
+  @Test
   void preservesAMissingInitialNameOnLaterLogins() {
-    UUID id = members.findOrCreate(SocialProvider.KAKAO, "42", null);
-    assertThat(members.findOrCreate(SocialProvider.KAKAO, "42", "나중 이름")).isEqualTo(id);
+    UUID id = members.findOrCreate(SocialProvider.KAKAO, "42", null, null, Instant.now());
+    assertThat(members.findOrCreate(SocialProvider.KAKAO, "42", "나중 이름", null, Instant.now()))
+        .isEqualTo(id);
     assertThat(users.findById(id).orElseThrow().getDisplayName()).isNull();
   }
 
   @Test
   void doesNotMergeIdenticalIdsOrNamesAcrossProviders() {
-    UUID google = members.findOrCreate(SocialProvider.GOOGLE, "42", "같은 이름");
-    UUID kakao = members.findOrCreate(SocialProvider.KAKAO, "42", "같은 이름");
+    UUID google = members.findOrCreate(SocialProvider.GOOGLE, "42", "같은 이름", null, Instant.now());
+    UUID kakao = members.findOrCreate(SocialProvider.KAKAO, "42", "같은 이름", null, Instant.now());
     assertThat(google).isNotEqualTo(kakao);
     assertThat(users.count()).isEqualTo(2);
     assertThat(socialAccounts.count()).isEqualTo(2);
@@ -86,7 +108,8 @@ class SocialLoginMemberIntegrationTests {
                   ready.countDown();
                   if (!start.await(10, TimeUnit.SECONDS))
                     throw new IllegalStateException("timeout");
-                  return members.findOrCreate(SocialProvider.GOOGLE, "concurrent-user", "최초 이름");
+                  return members.findOrCreate(
+                      SocialProvider.GOOGLE, "concurrent-user", "최초 이름", null, Instant.now());
                 }));
       }
       try {
@@ -108,13 +131,15 @@ class SocialLoginMemberIntegrationTests {
         .when(socialAccounts)
         .saveAndFlush(any(SocialAccount.class));
 
-    assertThatThrownBy(() -> members.findOrCreate(SocialProvider.KAKAO, "42", "최초 이름"))
+    assertThatThrownBy(
+            () -> members.findOrCreate(SocialProvider.KAKAO, "42", "최초 이름", null, Instant.now()))
         .isInstanceOf(DataAccessResourceFailureException.class);
     assertThat(users.count()).isZero();
     assertThat(socialAccounts.count()).isZero();
 
     reset(socialAccounts);
-    assertThat(members.findOrCreate(SocialProvider.KAKAO, "42", "다시 시도")).isNotNull();
+    assertThat(members.findOrCreate(SocialProvider.KAKAO, "42", "다시 시도", null, Instant.now()))
+        .isNotNull();
     assertThat(users.count()).isEqualTo(1);
     assertThat(socialAccounts.count()).isEqualTo(1);
   }

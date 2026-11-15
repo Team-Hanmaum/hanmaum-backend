@@ -310,7 +310,8 @@ class MemberWithdrawalIntegrationTests {
   @Test
   void freshLoginCreatesNewIdentityWithoutRestoringFormerPermissions() throws Exception {
     withdraw(member).andExpect(status().isNoContent());
-    UUID fresh = social.findOrCreate(SocialProvider.KAKAO, member.toString(), "새 회원");
+    UUID fresh =
+        social.findOrCreate(SocialProvider.KAKAO, member.toString(), "새 회원", null, Instant.now());
     assertThat(fresh).isNotEqualTo(member);
     assertThat(count("space_membership", "user_id", fresh)).isZero();
     mvc.perform(get("/api/spaces/" + space).with(authentication(login(fresh, member.toString()))))
@@ -468,7 +469,11 @@ class MemberWithdrawalIntegrationTests {
                                       .membershipId();
                               case "LOGIN" ->
                                   social.findOrCreate(
-                                      SocialProvider.KAKAO, member.toString(), "새 회원");
+                                      SocialProvider.KAKAO,
+                                      member.toString(),
+                                      "새 회원",
+                                      null,
+                                      Instant.now());
                               case "SAVE_CLIENT" -> {
                                 clients.saveAuthorizedClient(
                                     client(member), login(member), null, null);

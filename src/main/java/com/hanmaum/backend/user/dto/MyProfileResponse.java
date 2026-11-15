@@ -15,5 +15,11 @@ public record MyProfileResponse(
             nullable = true,
             description = "표시 이름. 제공자에서 확보하지 못한 경우 null")
         String displayName,
+    @Schema(
+            types = {"string", "null"},
+            format = "uri",
+            requiredMode = Schema.RequiredMode.REQUIRED,
+            description = "프로필 사진 URL. 없으면 null")
+        String profileImageUrl,
     @Schema(requiredMode = Schema.RequiredMode.REQUIRED, description = "연결된 소셜 로그인 방식")
         List<SocialProvider> providers) {}

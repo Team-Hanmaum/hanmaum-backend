@@ -47,6 +47,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -108,9 +109,12 @@ class OAuthMemberLoginIntegrationTests {
     jdbc.update("DELETE FROM app_user");
     jdbc.update("DELETE FROM spring_session");
     provider.name = "첫 이름";
+    provider.profileImageUrl = "https://images.example.invalid/first.png";
+    provider.defaultImage = false;
     provider.kakaoId = 42L;
     provider.googleUserInfoSubject = "42";
     provider.userInfoFails = false;
+    provider.grants.clear();
     currentUserProbe.invocations.set(0);
   }
 
@@ -334,6 +338,7 @@ class OAuthMemberLoginIntegrationTests {
             .orElseThrow()
             .getUser();
     assertThat(userBefore.getDisplayName()).isEqualTo("첫 이름");
+    assertThat(userBefore.getProfileImageUrl()).isEqualTo(provider.profileImageUrl);
     mvc.perform(get("/api/test/current-user").cookie(cookie))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.userId").value(userBefore.getId().toString()));
@@ -344,6 +349,7 @@ class OAuthMemberLoginIntegrationTests {
             .andExpect(jsonPath("$.code").value("SUCCESS"))
             .andExpect(jsonPath("$.data.userId").value(userBefore.getId().toString()))
             .andExpect(jsonPath("$.data.displayName").value("첫 이름"))
+            .andExpect(jsonPath("$.data.profileImageUrl").value(provider.profileImageUrl))
             .andExpect(jsonPath("$.data.providers[0]").value(socialProvider.name()))
             .andExpect(jsonPath("$.data.providers.length()").value(1))
             .andExpect(jsonPath("$.errors").isEmpty())
@@ -355,7 +361,7 @@ class OAuthMemberLoginIntegrationTests {
     assertThat(body.propertyNames())
         .containsExactlyInAnyOrder("success", "code", "message", "data", "errors", "timestamp");
     assertThat(body.get("data").propertyNames())
-        .containsExactlyInAnyOrder("userId", "displayName", "providers");
+        .containsExactlyInAnyOrder("userId", "displayName", "profileImageUrl", "providers");
     assertThat(
             jdbc.queryForObject(
                 "SELECT principal_name FROM spring_session WHERE principal_name IS NOT NULL",
@@ -423,6 +429,57 @@ class OAuthMemberLoginIntegrationTests {
                 .cookie(kakaoLogin.getResponse().getCookie("HANMAUM_SESSION")))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.userId").value(kakao.toString()));
+  }
+
+  @ParameterizedTest
+  @EnumSource(SocialProvider.class)
+  void repeatLoginRefreshesAndClearsTheStoredImage(SocialProvider socialProvider) throws Exception {
+    String registration = socialProvider.name().toLowerCase(java.util.Locale.ROOT);
+    provider.profileImageUrl = null;
+    var first = login(registration);
+    assertRedirect(first);
+    assertThat(readProfile(first).path("profileImageUrl").isNull()).isTrue();
+
+    provider.profileImageUrl = "https://images.example.invalid/updated.png";
+    var repeat = login(registration);
+    assertRedirect(repeat);
+    var updated = readProfile(repeat);
+    assertThat(updated.path("profileImageUrl").asText()).isEqualTo(provider.profileImageUrl);
+    assertThat(updated.path("userId").asText())
+        .isEqualTo(readProfile(first).path("userId").asText());
+
+    provider.profileImageUrl = null;
+    var removed = login(registration);
+    assertRedirect(removed);
+    assertThat(readProfile(removed).path("profileImageUrl").isNull()).isTrue();
+    assertThat(users.findAll())
+        .singleElement()
+        .satisfies(user -> assertThat(user.getProfileImageUrl()).isNull());
+  }
+
+  @Test
+  void ignoresKakaoDefaultImage() throws Exception {
+    provider.defaultImage = true;
+    var result = login("kakao");
+    assertRedirect(result);
+    assertThat(readProfile(result).path("profileImageUrl").isNull()).isTrue();
+  }
+
+  @Test
+  void ignoresNonHttpsPhotoWithoutFailingLogin() throws Exception {
+    provider.profileImageUrl = "http://images.example.invalid/photo.png";
+    var result = login("google");
+    assertRedirect(result);
+    assertThat(readProfile(result).path("profileImageUrl").isNull()).isTrue();
+  }
+
+  private tools.jackson.databind.JsonNode readProfile(MvcResult login) throws Exception {
+    var response =
+        mvc.perform(get("/api/users/me").cookie(login.getResponse().getCookie("HANMAUM_SESSION")))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse();
+    return mapper.readTree(response.getContentAsString()).path("data");
   }
 
   @ParameterizedTest
@@ -721,9 +778,11 @@ class OAuthMemberLoginIntegrationTests {
         .isEqualTo("#/components/schemas/MyProfileResponse");
     var profile = document.at("/components/schemas/MyProfileResponse");
     assertThat(profile.get("properties").propertyNames())
-        .containsExactlyInAnyOrder("userId", "displayName", "providers");
+        .containsExactlyInAnyOrder("userId", "displayName", "profileImageUrl", "providers");
     assertThat(profile.at("/properties/userId/format").asText()).isEqualTo("uuid");
     assertThat(profile.at("/properties/displayName/type").toString()).contains("string", "null");
+    assertThat(profile.at("/properties/profileImageUrl/type").toString())
+        .contains("string", "null");
     assertThat(profile.at("/properties/providers/items/enum").toString())
         .contains("GOOGLE", "KAKAO");
     assertThat(document.at("/components/schemas/ApiResponse/properties/data").has("type"))
@@ -780,21 +839,13 @@ class OAuthMemberLoginIntegrationTests {
   private MvcResult login(String registration) throws Exception {
     int tokenRequestsBefore = provider.tokenRequests.get();
     int userInfoRequestsBefore = provider.userInfoRequests.get();
-    var start =
-        mvc.perform(get("/oauth2/authorization/" + registration))
-            .andExpect(status().is3xxRedirection())
-            .andReturn()
-            .getResponse();
-    var query =
-        UriComponentsBuilder.fromUriString(start.getRedirectedUrl()).build().getQueryParams();
-    provider.nonce = query.getFirst("nonce");
+    var start = beginLogin(registration, false, null);
     var result =
         mvc.perform(
                 get("/login/oauth2/code/" + registration)
-                    .cookie(start.getCookie("HANMAUM_SESSION"))
-                    .param("code", "synthetic-code")
-                    .param(
-                        "state", UriUtils.decode(query.getFirst("state"), StandardCharsets.UTF_8)))
+                    .cookie(start.cookie())
+                    .param("code", start.code())
+                    .param("state", start.state()))
             .andReturn();
     assertThat(provider.tokenRequests.get()).isEqualTo(tokenRequestsBefore + 1);
     assertThat(provider.userInfoRequests.get()).isEqualTo(userInfoRequestsBefore + 1);
@@ -823,7 +874,7 @@ class OAuthMemberLoginIntegrationTests {
         .isZero();
   }
 
-  private record OAuthStart(String registration, Cookie cookie, String state, String nonce) {}
+  private record OAuthStart(String registration, Cookie cookie, String state, String code) {}
 
   private OAuthStart beginLogin(String registration, boolean local, Cookie cookie)
       throws Exception {
@@ -838,16 +889,15 @@ class OAuthMemberLoginIntegrationTests {
         registration,
         cookie == null ? response.getCookie("HANMAUM_SESSION") : cookie,
         UriUtils.decode(query.getFirst("state"), StandardCharsets.UTF_8),
-        query.getFirst("nonce"));
+        provider.grantCode(query.getFirst("scope"), query.getFirst("nonce")));
   }
 
   private MvcResult completeLogin(OAuthStart start, Cookie cookie) throws Exception {
-    provider.nonce = start.nonce();
     // The callback query and Referer must never override the destination saved at login start.
     return mvc.perform(
             get("/login/oauth2/code/" + start.registration())
                 .cookie(cookie)
-                .param("code", "synthetic-code")
+                .param("code", start.code())
                 .param("state", start.state())
                 .param("frontend", "local")
                 .param("redirect_uri", "https://evil.invalid")
@@ -882,7 +932,7 @@ class OAuthMemberLoginIntegrationTests {
               .userNameAttributeName("sub")
               .build(),
           registration(provider, "kakao")
-              .scope("profile_nickname")
+              .scope("profile_nickname", "profile_image")
               .userNameAttributeName("id")
               .build());
     }
@@ -939,10 +989,29 @@ class OAuthMemberLoginIntegrationTests {
     final AtomicInteger tokenRequests = new AtomicInteger();
     final AtomicInteger userInfoRequests = new AtomicInteger();
     volatile String name;
+    volatile String profileImageUrl;
+    volatile boolean defaultImage;
     volatile Object kakaoId;
     volatile String googleUserInfoSubject;
-    volatile String nonce;
     volatile boolean userInfoFails;
+    final Map<String, Grant> grants = new ConcurrentHashMap<>();
+
+    private record Grant(String scopes, String nonce) {
+      boolean includes(String scope) {
+        return List.of(scopes.split(" ")).contains(scope);
+      }
+    }
+
+    String grantCode(String encodedScopes, String nonce) {
+      String code = UUID.randomUUID().toString();
+      grants.put(code, new Grant(UriUtils.decode(encodedScopes, StandardCharsets.UTF_8), nonce));
+      return code;
+    }
+
+    private Grant userInfoGrant(HttpExchange exchange) {
+      String authorization = exchange.getRequestHeaders().getFirst("Authorization");
+      return authorization == null ? null : grants.get(authorization.replaceFirst("^Bearer ", ""));
+    }
 
     FakeProvider(ObjectMapper mapper) throws IOException, JOSEException {
       this.mapper = mapper;
@@ -966,51 +1035,59 @@ class OAuthMemberLoginIntegrationTests {
         if (path.equals("/jwks")) {
           payload = new JWKSet(signingKey.toPublicJWK()).toJSONObject();
         } else if (path.endsWith("/token")) {
-          if (path.startsWith("/google")) {
-            payload =
-                Map.of(
-                    "access_token",
-                    "test-access-token",
-                    "token_type",
-                    "Bearer",
-                    "expires_in",
-                    300,
-                    "scope",
-                    "openid profile email",
-                    "id_token",
-                    idToken());
+          String form =
+              new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+          String code =
+              UriComponentsBuilder.fromUriString("https://fixture.invalid/?" + form)
+                  .build()
+                  .getQueryParams()
+                  .getFirst("code");
+          Grant grant = code == null ? null : grants.get(code);
+          if (grant == null) {
+            statusCode = 400;
+            payload = Map.of("error", "invalid_grant");
           } else {
-            payload =
-                Map.of(
-                    "access_token",
-                    "test-access-token",
-                    "token_type",
-                    "Bearer",
-                    "expires_in",
-                    300,
-                    "scope",
-                    "profile_nickname");
+            var token =
+                new java.util.HashMap<String, Object>(
+                    Map.of(
+                        "access_token",
+                        code,
+                        "token_type",
+                        "Bearer",
+                        "expires_in",
+                        300,
+                        "scope",
+                        grant.scopes()));
+            if (path.startsWith("/google")) token.put("id_token", idToken(grant.nonce()));
+            payload = token;
           }
         } else if (path.endsWith("/userinfo") && userInfoFails) {
           statusCode = 500;
           payload = Map.of("error", "synthetic provider failure");
         } else if (path.equals("/google/userinfo")) {
+          Grant grant = userInfoGrant(exchange);
           var claims = new java.util.HashMap<String, Object>();
           claims.put("sub", googleUserInfoSubject);
           claims.put("email", "same@example.invalid");
           if (name != null) claims.put("name", name);
+          if (grant != null && grant.includes("profile") && profileImageUrl != null) {
+            claims.put("picture", profileImageUrl);
+          }
           payload = claims;
         } else if (path.equals("/kakao/userinfo")) {
+          Grant grant = userInfoGrant(exchange);
+          var profile = new java.util.HashMap<String, Object>();
+          if (name != null) profile.put("nickname", name);
+          if (grant != null && grant.includes("profile_image")) {
+            if (profileImageUrl != null) profile.put("profile_image_url", profileImageUrl);
+            profile.put("is_default_image", defaultImage);
+          }
           payload =
               Map.of(
                   "id",
                   kakaoId,
                   "kakao_account",
-                  Map.of(
-                      "email",
-                      "same@example.invalid",
-                      "profile",
-                      name == null ? Map.of() : Map.of("nickname", name)));
+                  Map.of("email", "same@example.invalid", "profile", profile));
         } else {
           statusCode = 404;
           payload = Map.of("error", "unknown endpoint");
@@ -1027,7 +1104,7 @@ class OAuthMemberLoginIntegrationTests {
       exchange.close();
     }
 
-    private String idToken() throws JOSEException {
+    private String idToken(String nonce) throws JOSEException {
       Instant now = Instant.now();
       var token =
           new SignedJWT(
