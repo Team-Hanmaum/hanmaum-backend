@@ -169,24 +169,14 @@ public class AnalysisExecutionService {
     }
   }
 
-  /** Call within the mutation transaction, even after a captured link has been removed. */
-  @Transactional(propagation = Propagation.MANDATORY)
-  public void invalidateBasis(UUID space, UUID basis) {
-    invalidateBasisDependencies(space, basis, null);
-  }
-
   /**
    * Redacting a captured current or original direct document removes copied proposal content in the
    * same transaction.
    */
   @Transactional(propagation = Propagation.MANDATORY)
   public void invalidateDirectDocument(UUID space, UUID document) {
-    invalidateBasisDependencies(space, null, document);
-  }
-
-  private void invalidateBasisDependencies(UUID space, UUID basis, UUID document) {
     runs.lockSpace(space);
-    for (var run : runs.dependingOnBasis(space, basis, document)) {
+    for (var run : runs.dependingOnDocument(space, document)) {
       runs.lockRun(run.id());
       discard(run);
     }

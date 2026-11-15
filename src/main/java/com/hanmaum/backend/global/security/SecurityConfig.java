@@ -134,7 +134,6 @@ public class SecurityConfig {
                               requests.takeSuccessUrl(request, properties.loginSuccessUrl())))
                   .failureHandler(failureHandler));
     }
-    // Keep Spring Security's session-based CSRF protection enabled.
     return http.build();
   }
 
