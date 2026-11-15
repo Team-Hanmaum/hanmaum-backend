@@ -4,6 +4,7 @@ import com.hanmaum.backend.auth.code.AuthErrorCode;
 import com.hanmaum.backend.user.entity.SocialProvider;
 import com.hanmaum.backend.user.service.SocialLoginMemberService;
 import java.net.URI;
+import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 import org.springframework.dao.DataAccessException;
@@ -22,7 +23,7 @@ public class OAuthMemberMapper {
     this.members = members;
   }
 
-  public UUID mapGoogle(OidcUser user) {
+  public UUID mapGoogle(OidcUser user, Instant profileRequestStartedAt) {
     Object subject = user.getIdToken().getClaims().get("sub");
     if (!(subject instanceof String providerUserId) || providerUserId.isBlank()) {
       throw loginFailed("hanmaum_invalid_provider_identity");
@@ -31,10 +32,11 @@ public class OAuthMemberMapper {
         SocialProvider.GOOGLE,
         providerUserId,
         optionalName(user.getClaims().get("name")),
-        optionalImageUrl(user.getClaims().get("picture")));
+        optionalImageUrl(user.getClaims().get("picture")),
+        profileRequestStartedAt);
   }
 
-  public UUID mapKakao(OAuth2User user) {
+  public UUID mapKakao(OAuth2User user, Instant profileRequestStartedAt) {
     Object id = user.getAttributes().get("id");
     if (!(id instanceof Long || id instanceof Integer) || ((Number) id).longValue() <= 0) {
       throw loginFailed("hanmaum_invalid_provider_identity");
@@ -48,14 +50,19 @@ public class OAuthMemberMapper {
         profileImageUrl = optionalImageUrl(profile.get("profile_image_url"));
       }
     }
-    return map(SocialProvider.KAKAO, id.toString(), name, profileImageUrl);
+    return map(SocialProvider.KAKAO, id.toString(), name, profileImageUrl, profileRequestStartedAt);
   }
 
   private UUID map(
-      SocialProvider provider, String providerUserId, String name, String profileImageUrl) {
+      SocialProvider provider,
+      String providerUserId,
+      String name,
+      String profileImageUrl,
+      Instant profileRequestStartedAt) {
     try {
       // Provider HTTP calls have already finished before this short database transaction starts.
-      return members.findOrCreate(provider, providerUserId, name, profileImageUrl);
+      return members.findOrCreate(
+          provider, providerUserId, name, profileImageUrl, profileRequestStartedAt);
     } catch (DataAccessException | TransactionException exception) {
       // Do not carry SQL parameters or provider data into authentication errors/logs.
       throw loginFailed("hanmaum_member_mapping_failed");

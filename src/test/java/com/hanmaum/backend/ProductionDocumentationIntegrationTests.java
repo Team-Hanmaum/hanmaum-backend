@@ -119,6 +119,19 @@ class ProductionDocumentationIntegrationTests {
   }
 
   @Test
+  void productionKakaoLoginRequestsProfileImageConsent() throws Exception {
+    var response =
+        mvc.perform(get("/oauth2/authorization/kakao"))
+            .andExpect(status().isFound())
+            .andReturn()
+            .getResponse();
+    var query =
+        UriComponentsBuilder.fromUriString(response.getRedirectedUrl()).build().getQueryParams();
+    assertThat(UriUtils.decode(query.getFirst("scope"), StandardCharsets.UTF_8).split(" "))
+        .contains("profile_nickname", "profile_image");
+  }
+
+  @Test
   void rejectsRepeatedFrontendSelectors() throws Exception {
     mvc.perform(get("/oauth2/authorization/google").param("frontend", "local", "local"))
         .andExpect(status().isUnauthorized())

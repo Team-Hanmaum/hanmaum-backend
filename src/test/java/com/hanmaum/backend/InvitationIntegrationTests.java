@@ -420,7 +420,14 @@ class InvitationIntegrationTests {
             .getResponse();
     var data = mapper.readTree(response.getContentAsString()).get("data");
     assertThat(data.size()).isEqualTo(1);
-    for (var item : data.get("items")) {
+    var responseItems = data.path("items");
+    assertThat(responseItems.isArray()).isTrue();
+    var responseIds = new java.util.ArrayList<String>();
+    for (var item : responseItems) responseIds.add(item.path("membershipId").asText());
+    assertThat(responseIds)
+        .containsExactlyElementsOf(expectedIds.stream().map(UUID::toString).toList());
+    assertThat(responseIds).contains(photographed.toString());
+    for (var item : responseItems) {
       assertThat(item.size()).isEqualTo(5);
       var profileImageUrl = item.path("profileImageUrl");
       if (photographed.toString().equals(item.path("membershipId").asText())) {
