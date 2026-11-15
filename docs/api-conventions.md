@@ -1,579 +1,109 @@
 # 공개 API 공통 규격
 
-[노션 공통 규격](https://app.notion.com/p/3ec0f25ea138807cad15e07696472145)과 [상세 규격](https://app.notion.com/p/3ee0f25ea138800996a9f0e9d712fde5)의 백엔드 적용 기준입니다. 도메인 API 상세 초안과 실제 구현 상태는 구분합니다.
+업무 API는 `/api` 아래에 있다. 개별 요청·응답 필드와 상태 코드는 [운영 Swagger](https://api.hanmaum.site/swagger-ui/index.html)와 [노션 API 명세](https://app.notion.com/p/3ec0f25ea138807cad15e07696472145)를 참고한다.
 
 ## 응답
 
-공개 JSON 응답은 `ApiResponse<T>`를 명시적으로 반환합니다. 모든 응답을 자동으로 감싸지 않습니다. 상태 코드는 `ResponseEntity` 또는 Controller의 HTTP 설정으로 지정합니다.
+`ApiResponse<T>`는 `success`, `code`, `message`, `data`, `errors`, `timestamp`를 반환한다. `errors`는 `[{field, reason}]` 배열이고 없으면 `[]`다. 오류의 `data`는 `null`이다.
 
-```json
-{
-  "success": true,
-  "code": "SUCCESS",
-  "message": "요청이 완료되었습니다.",
-  "data": { "items": [] },
-  "errors": [],
-  "timestamp": "2026-10-07T08:00:00Z"
-}
-```
+| HTTP | 코드 | 규칙 |
+| --- | --- | --- |
+| 200·201 | `SUCCESS` | 조회·처리·생성 결과 |
+| 202 | `ACCEPTED` | 비동기 작업 접수 |
+| 204 | 없음 | 본문 없음 |
 
-- 여섯 필드를 항상 포함합니다. 오류는 `success: false`, `data: null`, 필드 오류가 없으면 `errors: []`입니다.
-- `errors` 원소는 `field`와 `reason`입니다. 중첩 경로 예시는 `entries[0].expectedItemVersion`이며 기존 `fieldErrors`는 반환하지 않습니다.
-- 200·201은 `SUCCESS`, 202는 `ACCEPTED`, 204는 본문 없음입니다. 접수 응답이 업무 완료를 뜻하지 않습니다.
-- 성공 코드·기본 메시지는 `global.code.SuccessCode`에서 관리하고 `ApiResponse.success(data)`·`accepted(data)`로 생성합니다. HTTP 상태는 Controller에서 지정하며 204용 응답 코드는 만들지 않습니다.
-- `success`는 이번 HTTP 요청의 결과입니다. 분석 상태 조회가 성공하면 분석 결과가 실패여도 `success: true`입니다.
-- `timestamp`는 응답 생성 시각이며 업무 생성·수정 시각은 필요한 API의 `data`에 별도로 정의합니다.
-- FE는 HTTP 상태와 `code`로 분기하고 메시지 문자열을 파싱하지 않습니다.
-- 목록은 `data.items`, 서비스 ID는 UUID 문자열, 공개 도메인 버전은 십진 정수 문자열, 시각은 UTC ISO 8601입니다. 공개 DTO에서 타입을 명시하며 내부 AI의 숫자 버전까지 전역 변환하지 않습니다.
+식별자는 UUID 문자열, 공개 버전은 십진 정수 문자열, 응답 시각은 UTC ISO 8601을 사용한다. 날짜만 있는 일정은 시간을 임의로 채우지 않는다.
 
 ## 오류 처리
 
-`global.code.ErrorCode` 인터페이스는 `status()`, `code()`, `message()`를 정의합니다. 공통 오류는 `CommonErrorCode`, 특정 업무 오류는 각 도메인의 `code` 패키지에 있는 enum에서 관리합니다. `ApiException`과 `ApiResponse.error`는 이 인터페이스를 받으므로 MVC와 Security가 같은 공통 응답을 사용합니다.
-
-| 관리 위치 | 기존 오류 코드 |
-| --- | --- |
-| `global/code/CommonErrorCode` | 입력·인증 필요·권한·대상 없음·버전·반복 요청·삭제 영향·서버·AI 서비스 오류 |
-| `auth/code/AuthErrorCode` | `OAUTH_LOGIN_FAILED` |
-| `carespace/code/CareSpaceErrorCode` | `SPACE_LABEL_DUPLICATED`, `INVITATION_UNAVAILABLE`, `INVITATION_EXPIRED` |
-| `careitem/code/CareItemErrorCode` | `ITEM_LOCKED`, `EDIT_LOCK_EXPIRED`, `ITEM_STATE_CONFLICT` |
-| `proposal/code/ProposalErrorCode` | `PROPOSAL_BATCH_CONFLICT`, `PROPOSAL_STATE_CONFLICT`, `CHANGE_REQUEST_ALREADY_PENDING`, `CHANGE_REQUEST_STATE_CONFLICT` |
-
-기존 공통 오류로 충분하면 재사용합니다. FE가 별도로 구분할 업무 오류만 해당 도메인에서 추가하고, `code()`가 반환하는 문자열은 서비스 전체에서 중복되지 않도록 관리합니다. 현재 enum은 `name()`을 반환하므로 상수 이름을 바꾸면 외부 API 코드도 바뀐다는 점에 주의합니다.
-
-```java
-// Controller: 생성 성공도 HTTP 상태는 명시적으로 지정합니다.
-return ResponseEntity.status(HttpStatus.CREATED).body(ApiResponse.success(response));
-
-// Service: 알려진 실패는 HTTP 상태와 안전한 안내가 정의된 코드를 사용합니다.
-throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
-
-// 도메인 전용 코드도 같은 예외로 처리합니다.
-throw new ApiException(ProposalErrorCode.PROPOSAL_BATCH_CONFLICT);
-```
-
-필드 오류가 필요하면 `ApiException(code, List<ApiFieldError>)`를 사용합니다. Validation 메시지와 `reason`에는 원문·제출 값·인증 정보를 끼워 넣지 않습니다.
-
-| HTTP 상태 | 코드 |
-| --- | --- |
-| 400 | `INVALID_REQUEST` |
-| 401 | `UNAUTHENTICATED`, `OAUTH_LOGIN_FAILED` |
-| 403 | `FORBIDDEN` |
-| 404 | `RESOURCE_NOT_FOUND`, `INVITATION_UNAVAILABLE` |
-| 409 | `VERSION_CONFLICT`, `ITEM_STATE_CONFLICT`, `ITEM_LOCKED`, `EDIT_LOCK_EXPIRED`, `PROPOSAL_STATE_CONFLICT`, `CHANGE_REQUEST_ALREADY_PENDING`, `CHANGE_REQUEST_STATE_CONFLICT`, `IDEMPOTENCY_KEY_REUSED`, `REQUEST_IN_PROGRESS`, `SPACE_LABEL_DUPLICATED`, `PROPOSAL_BATCH_CONFLICT`, `DELETION_IMPACT_CHANGED` |
-| 410 | `INVITATION_EXPIRED` |
-| 413 | `PAYLOAD_TOO_LARGE` |
-| 500 | `INTERNAL_ERROR` |
-| 502 | `AI_SERVICE_UNAVAILABLE` |
-
-- 잘못된 JSON·필수 파라미터·입력 형식·본문 검증 등 MVC 400은 `INVALID_REQUEST`, MVC 404는 `RESOURCE_NOT_FOUND`입니다.
-- 보호 경로는 보안 검사가 먼저 적용되므로 비로그인 요청은 401 또는 CSRF 검사에 따른 403일 수 있습니다.
-- 제안 반영·미적용 및 구성원 변경 요청의 POST는 JSON 파싱 전 본문 1 MiB 상한 초과 시 `413 PAYLOAD_TOO_LARGE`입니다. 자유입력 10,000 UTF-16 및 새 최종 문서 합계 512 KiB 제한 초과는 `400 INVALID_REQUEST`이며 상세 계산은 [제안 반영 계약](proposal-decisions.md)을 따릅니다. 구성원 제출 요청 문서도 합계 512 KiB를 적용합니다. 다른 API에 같은 본문 상한을 일괄 적용하지 않습니다.
-- 별도 합의하지 않은 프레임워크 상태는 실제 HTTP 상태와 `HTTP_<상태>` 및 일반 안내를 사용합니다. 예: 405 `HTTP_405`, 415 `HTTP_415`. `Allow` 등 프레임워크 헤더를 보존합니다.
-- 예상하지 못한 예외는 500이며 예외 메시지·제출 값·AI 원문을 노출하지 않습니다. 반환 값 검증 실패도 입력 오류로 바꾸지 않습니다.
-- 추가 도메인 코드는 해당 기능 구현 시 합의합니다. 코드 상수의 존재는 잠금·승인·삭제 업무 구현을 뜻하지 않습니다.
+- `400 INVALID_REQUEST`는 입력 오류, `401 UNAUTHENTICATED`는 인증 오류, `403 FORBIDDEN`은 권한·CSRF 오류, `404 RESOURCE_NOT_FOUND`는 유효한 대상이 없는 경우다.
+- 버전 충돌, 편집 잠금, 분석 상태와 제안 결정 충돌은 개별 API의 `409` 코드를 따른다. HTTP와 `code`로 분기한다.
+- `405`·`415` 등 프레임워크 오류는 `HTTP_<상태>`를 사용한다. `500 INTERNAL_ERROR`는 내부 예외나 원문을 노출하지 않는다.
+- `clientRequestId`를 요구하는 API는 같은 작업을 재전송할 때 ID와 본문을 유지한다. 다른 내용으로 재사용하면 `409 IDEMPOTENCY_KEY_REUSED`, 동일 요청 처리 중에는 `409 REQUEST_IN_PROGRESS`다.
 
 ## 인증과 적용 예외
 
-- `HANMAUM_SESSION`은 HttpOnly 세션 쿠키입니다. FE는 `credentials: 'include'`를 사용하고 쿠키를 직접 읽거나 헤더를 만들지 않습니다.
-- `GET /api/auth/csrf`는 로그인 없이 호출할 수 있고 `{headerName, token}`을 반환합니다. 변경 요청은 반환된 헤더 이름과 토큰을 사용합니다.
-- 로그인·로그아웃 후 다음 변경 요청 전에 CSRF 토큰을 다시 받습니다.
-- OAuth 시작·콜백 경로와 리다이렉트를 유지하며 OAuth 실패 JSON은 공통 오류 형식입니다.
-- `POST /api/auth/logout` 성공은 204입니다. 기존 필터의 세션·쿠키 무효화를 유지합니다.
-- BE↔AI 내부 응답, Actuator 상태 확인, OpenAPI 문서·Swagger 리소스는 업무 응답으로 감싸지 않습니다. CORS preflight는 별도의 브라우저 접근 검사입니다.
+- 요청에 세션 쿠키를 포함한다(`credentials: "include"`). `GET /api/auth/csrf`는 `{headerName, token}`을 직접 반환한다. 변경 요청에 지정된 헤더로 토큰을 보내고 로그인·로그아웃 후 다시 발급받는다.
+- `POST /api/auth/logout`은 `204`를 반환한다. OAuth 성공 리다이렉트, Actuator, Swagger, BE↔AI 내부 응답은 일반 업무 응답과 별도다.
+- 보호된 Controller는 `@CurrentUser AuthenticatedUser`로 현재 회원을 받는다. 요청의 사용자 ID를 신뢰하지 않으며 대상 공간·항목 권한은 Service에서 다시 확인한다. [백엔드 지침](../AGENTS.md)
 
 ### OAuth 로그인 시작 문서
 
-- `GET /oauth2/authorization/{provider}`는 Spring Security가 처리하는 공개 경로이며 세션 인증·CSRF 토큰·요청 본문이 필요하지 않습니다. Swagger에서는 `Auth`로 분류하고 현재 등록된 `google`·`kakao`만 provider 선택값으로 제공합니다. 제공자가 설정되지 않은 환경에서는 이 경로를 표시하지 않습니다.
-- 정상 응답은 `302`와 제공자 인증 URL인 `Location` 헤더입니다. 공통 성공 JSON은 반환하지 않습니다. 설명의 로그인 링크는 현재 BE 호스트를 기준으로 하며 localhost 주소를 고정하지 않습니다.
-- 실제 로그인은 링크를 통한 브라우저 이동으로 진행합니다. Swagger의 Try it out은 브라우저 페이지 이동을 대신하지 않습니다. 제공자가 호출하는 `/login/oauth2/code/{provider}` 콜백은 BE 주소를 유지합니다. 로그인 시작의 `frontend` 생략은 기존 성공 FE 주소, `frontend=local`은 `https://local.hanmaum.site:5173/auth/callback`으로 복귀합니다. 빈 값·다른 값·중복 선택자는 `401 OAUTH_LOGIN_FAILED` 공통 오류 JSON으로 거절합니다.
-- 복귀 대상은 authorization request의 서버 전용 속성으로 저장하며 state별 JDBC 세션 속성으로 구분합니다. 공급자에게 frontend를 전달하지 않고, 콜백 쿼리·Referer는 성공 주소 선택에 사용하지 않습니다. 해당 요청 완료/실패 시 임시 정보를 정리하고, 식별할 수 없는 state로 다른 탭의 요청을 삭제하지 않습니다. 기존 state·nonce·PKCE·세션 고정 공격 방지 처리를 유지합니다.
-- 대기 OAuth 요청은 세션당 최대 10개·시작 후 10분입니다. 만료된 요청은 거절·정리하고, 유효한 10개가 있으면 기존 요청을 보존하며 새 시작에 `401 OAUTH_LOGIN_FAILED`를 반환합니다. 타임스탬프 없는 배포 전 요청에는 최초 확인부터 한 번의 10분 유예를 적용합니다.
-- 여러 탭 분리는 동일한 BE 세션 쿠키를 이미 공유하는 경우입니다. 쿠키 없는 최초 요청을 여러 개 보내면 별도 세션이 생성되므로, 먼저 한 번의 `/api/auth/csrf` 발급 완료로 공통 세션을 준비해야 합니다. 여러 탭의 동시 최초 발급까지 보장하는 공통 조율은 별도 FE 연동 과제이며, 운영·로컬의 서로 다른 Origin 사이에는 FE별 잠금만으로 충분하지 않습니다.
-- 로그인 후 같은 브라우저의 Swagger에서 `/api/users/me`를 확인할 수 있습니다. 변경 API를 호출하기 전 CSRF를 다시 발급하고 Authorize에 설정합니다. 이 문서 등록은 OAuth 처리 Controller나 새로운 인증 방식을 추가하지 않습니다.
-
-### Controller에서 현재 회원 사용
-
-로그인한 회원이 필요한 업무 API는 `global.security`의 `@CurrentUser`와 `AuthenticatedUser`를 사용합니다. 기존 `GET /api/users/me`의 사용 예시는 다음과 같습니다. 보안 요구·성공 및 오류 응답 주석은 실제 `UserController`를 참고합니다.
-
-```java
-@GetMapping(value = "/api/users/me", produces = MediaType.APPLICATION_JSON_VALUE)
-public ResponseEntity<ApiResponse<MyProfileResponse>> me(
-    @CurrentUser AuthenticatedUser currentUser) {
-  var profile = profiles.getMe(currentUser.userId());
-  return ResponseEntity.ok()
-      .cacheControl(CacheControl.noStore())
-      .body(ApiResponse.success(profile));
-}
-```
-
-- `AuthenticatedUser`에는 한마음 사용자 UUID만 들어갑니다. FE가 보내는 인자가 아니며, `@CurrentUser`는 해당 인자를 Swagger의 요청 파라미터·본문에서 숨깁니다. 이 타입에는 반드시 `@CurrentUser`를 사용하고 요청 바인딩 어노테이션을 함께 붙이지 않습니다.
-- 공통 처리기는 Spring Security가 복원한 인증 정보를 읽고, `MemberIdentityService`가 사용자 UUID·제공자·제공자 사용자 ID에 대응하는 현재 DB 연결을 확인합니다. 검증은 요청마다 수행하며, DB 확인 없이 세션의 사용자 ID만 전달하지 않습니다.
-- 미인증·만료·이전 형식의 세션, 삭제된 회원, 끊어진 소셜 연결, 사용자 ID 불일치는 `401 UNAUTHENTICATED`입니다. 검증에 실패하면 Controller의 업무 메서드를 실행하지 않습니다. DB 장애는 인증 실패로 바꾸지 않고 `500 INTERNAL_ERROR`로 처리합니다.
-- Security 필터 검사는 먼저 적용됩니다. 변경 요청의 CSRF 검증이 실패하면 회원 검사에 앞서 `403 FORBIDDEN`이 반환될 수 있습니다. 이 공통 인자가 경로 접근 설정이나 CSRF를 대신하지 않습니다.
-- 공개 API에는 이 인자를 일괄 추가하지 않습니다. 회원 인증을 통과했어도 공간 참여·소유권·대상별 권한은 해당 Service가 업무 처리 시점에 별도로 검사해야 합니다. 이 인자에 공간 역할을 고정해 저장하지 않습니다.
+브라우저를 `GET /oauth2/authorization/{provider}`로 이동한다. BE 콜백은 `/login/oauth2/code/{provider}`이며 제공자는 `google`·`kakao`다. 성공 복귀는 시작 요청의 `frontend` 선택을 따르고, 실패 시 `401 OAUTH_LOGIN_FAILED` JSON을 반환한다. [운영·로컬 OAuth 설정](deployment.md#운영-fe-로그인세션-연결)
 
 ## 돌봄 공간 API
 
-2026-10-10 합의에 따른 구현 계약입니다. 세 API 모두 로그인 세션을 사용하며 POST에는 CSRF가 추가로 필요합니다. 요청자 ID는 입력받지 않고 `@CurrentUser`를 사용합니다.
+| 요청 | 핵심 규칙 |
+| --- | --- |
+| `POST /api/spaces` | `subjectLabel`, `clientRequestId`로 공간과 소유자 참여를 함께 생성. `201`과 `Location` 반환 |
+| `GET /api/spaces` | 현재 참여 공간 목록 |
+| `GET /api/spaces/{spaceId}` | 현재 참여자에게 해당 공간 상세·역할·버전 반환 |
+| `PATCH /api/spaces/{spaceId}` | [공간 정보 수정](care-space-information.md) |
 
-| API | 요청 | 성공 data |
-| --- | --- | --- |
-| `POST /api/spaces` | JSON `subjectLabel`, `clientRequestId` 모두 필수 | 201 `spaceId`, `membershipId` |
-| `GET /api/spaces` | 없음, 페이지네이션 없음 | 200 `items` 배열 |
-| `GET /api/spaces/{spaceId}` | UUID path parameter | 200 공간 상세 |
-
-- 생성은 최초 참여자를 소유자로 연결합니다. 호칭은 앞뒤 Unicode 공백 제거 후 1~30 Unicode code point, 한 줄이며 내부 공백을 유지합니다. FE는 UTF-16 `string.length` 대신 정규화한 값의 `Array.from(value).length`와 일치시키고, 줄바꿈은 trim 전에 거부합니다. 대소문자/Unicode 정규화로 호칭을 임의로 합치지 않습니다. 저장할 수 없는 NUL·깨진 surrogate는 400입니다.
-- 현재 같은 소유자의 같은 호칭은 금지합니다. 다른 사람이 소유한 같은 호칭의 공간에 참여하는 것은 가능하며 소유권 이전 후에는 이전 소유자가 같은 호칭으로 새 공간을 만들 수 있습니다. 사용자 전체에 대한 호칭 유일성이 아닙니다.
-- 목록 항목은 `spaceId`, `subjectLabel`, `membershipId`, `role`(OWNER/MEMBER), `memberCount`입니다. 상세는 여기에 `version`(문자열), `createdAt`, `updatedAt`을 포함합니다. 호칭은 null이 아니며 참여 ID와 역할은 요청자 기준입니다. 개별 응답용 성공 코드를 추가하지 않습니다.
-- 목록은 현재 참여하는 ACTIVE 공간만 포함하고 참여 시각 → 공간 ID 오름차순입니다. 결과가 없으면 `items: []`입니다. 인원수는 소유자·본인을 포함한 현재 참여자 수이며 종료/탈퇴 이력이나 참여하지 않은 돌봄 대상은 세지 않습니다.
-- 초기 버전은 `"1"`, 생성·수정 시각은 서버가 기록한 동일한 UTC 시각입니다. 성공 응답은 `Cache-Control: no-store`, 생성은 `Location: /api/spaces/{spaceId}`도 제공합니다.
-
-```json
-{
-  "subjectLabel": "엄마",
-  "clientRequestId": "92a91504-7765-4266-a006-ad7a37b4c192"
-}
-```
-
-| HTTP | Code | 조건 / FE 처리 |
-| --- | --- | --- |
-| 400 | `INVALID_REQUEST` | 필수값, UUID 형식, 호칭 길이·한 줄 검증 실패. errors의 field/reason으로 안내 |
-| 401 | `UNAUTHENTICATED` | 세션 또는 현재 회원 연결 무효 |
-| 403 | `FORBIDDEN` | 현재 참여자가 아니거나 CSRF 실패. 성공 재요청에서 원래 참여가 종료된 경우 포함 |
-| 404 | `RESOURCE_NOT_FOUND` | 공간 없음/삭제 진행 중. 성공 요청의 재응답에서 대상이 없어진 경우 포함 |
-| 409 | `SPACE_LABEL_DUPLICATED` | 현재 소유한 공간과 호칭 중복. 호칭 수정 후 새 생성 시도로 요청 |
-| 409 | `IDEMPOTENCY_KEY_REUSED` | 이미 성공한 요청 ID를 다른 정규화된 내용·업무·범위에 사용 |
-| 409 | `REQUEST_IN_PROGRESS` | 동일 요청 처리 중. 원래 요청이 실패했다는 뜻이 아님. 같은 ID/내용으로 재시도 |
-| 500 | `INTERNAL_ERROR` | 예상하지 못한 서버 처리 실패 |
-
-- 같은 사용자·같은 요청 ID·같은 내용의 성공 재전송은 기존 ID로 `201 SUCCESS`를 반환합니다. timestamp는 새 응답 시각이므로 응답 전체 바이트까지 동일한 것은 아닙니다. 새 요청 ID + 같은 호칭은 반복 요청이 아닌 호칭 중복입니다.
-- 타임아웃·응답 유실·결과 불명일 때 자동으로 새 ID를 발급하지 않습니다. 한 생성 시도에 같은 UUID를 유지하고, 사용자가 내용을 바꿔 새 작업을 시작하면 새 UUID를 사용합니다.
-- 생성·참여·성공 영수증은 전체 커밋 또는 전체 롤백입니다. 현재 동기 생성에서는 성공 결과만 보관하고 실패/롤백은 공간과 영수증을 남기지 않습니다. 실패한 ID라도 FE는 다른 내용의 새 시도에 재사용하지 않습니다.
-- 이번 동기 생성은 202나 `/api/commands` 폴링을 사용하지 않습니다. 영수증 자동 만료 정책은 추가하지 않습니다. 저장 구조·잠금·비밀키와 다른 도메인의 Service 사용법은 [공간 설계](architecture.md#돌봄-공간-생성조회)를 따릅니다.
-- Swagger 409에는 세 코드의 예시를 모두 제공합니다. 생성 재요청의 권한/대상 오류도 실제 발생 조건으로 문서화합니다. GET 목록에는 400·403·404를 임의로 붙이지 않습니다.
+호칭은 한 줄이며 앞뒤 Unicode 공백 제거 후 1~30 Unicode code point다. 같은 소유자의 중복 호칭은 `409 SPACE_LABEL_DUPLICATED`다.
 
 ## 가족 초대·참여·구성원 API
 
-2026-10-11 합의에 따른 구현 계약입니다. 네 API 모두 로그인 세션이 필요하며 POST는 CSRF와 필수 UUID `clientRequestId`를 JSON 본문으로 받습니다. 경로의 `spaceId`는 UUID, `invitationToken`은 발급 URL의 마지막 토큰입니다. 공통 응답 형식과 `Cache-Control: no-store`를 사용합니다.
-
-| API | 성공 HTTP | 성공 data |
-| --- | --- | --- |
-| `POST /api/spaces/{spaceId}/invitations` | 201 | `invitationId`, `spaceId`, `invitationUrl`, `issuedAt`, `expiresAt` |
-| `GET /api/invitations/{invitationToken}` | 200 | `invitationId`, `spaceId`, `expiresAt`, `isMember` |
-| `POST /api/invitations/{invitationToken}/join` | 신규 201 / 기존 참여 200 | `spaceId`, `membershipId`, `role`, `joinedAt` |
-| `GET /api/spaces/{spaceId}/members` | 200 | `items: [{membershipId, displayName, role, isMe}]` |
-
-- 소유자와 현재 구성원 모두 초대 링크를 발급할 수 있습니다. 링크는 발급 시각부터 24시간 동안 여러 사람이 사용할 수 있고 별도 인원·사용 횟수 제한은 추가하지 않습니다. 현재 시각이 `expiresAt` 이상이면 만료입니다.
-- 같은 발급 요청은 원래 링크·시각을 201로 반환하며 만료를 연장하지 않습니다. 새 요청 ID로 발급하면 새 링크를 만들고 기존 링크도 원래 만료까지 유지합니다. 설정 주소를 바꾸어도 과거 발급의 재응답 URL은 그대로입니다.
-- 링크 확인은 가입 전 이름·호칭·돌봄 내용을 노출하지 않으며 참여를 생성하지 않습니다. 없는 토큰, 삭제 중인 공간, 발급 당시 참여가 종료된 링크는 사용할 수 없습니다. 발급자가 재참여해도 예전 링크는 복구되지 않습니다.
-- 첫 참여 시 현재 유효한 링크를 검증하고 새 참여·공간 버전 증가·수정 시각·성공 기록을 하나의 트랜잭션으로 저장합니다. 이미 참여 중이면 같은 참여 ID를 200으로 반환하며 소유자의 OWNER 역할도 유지합니다. **새 요청은 기존 참여자여도 링크 유효성을 검사합니다.**
-- 성공한 참여 요청의 같은 ID 재전송은 최초 201/200을 유지합니다. 이후 링크가 만료되거나 발급자가 나갔어도 동일한 현재 참여가 유지되면 응답할 수 있습니다. 역할은 현재 기준입니다. 요청자의 원래 참여가 끝났다면 403이며 재참여해도 과거 요청이 새 참여를 대신하지 않습니다.
-- 나가기·내보내기 이력이 있는 사용자는 가장 최근 `endedAt`보다 **엄격히 나중에 발급된 링크**와 새 요청 ID로 재참여합니다. 새 참여 ID를 만들고 이전 이력을 복원하지 않습니다. 참여 종료는 아래 API에서 처리합니다.
-- 구성원 목록은 현재 참여자 전체이며 소유자 우선 → 참여 시각 → 참여 UUID 오름차순입니다. `displayName`은 null 가능, 역할은 OWNER/MEMBER, `isMe`는 본인 여부입니다. 페이지네이션과 아직 구현하지 않은 담당 할 일 개수는 포함하지 않습니다.
-- 초대 발급·확인·목록·기존 참여 확인·성공 재전송은 공간 버전과 수정 시각을 바꾸지 않습니다. 새 참여만 한 번 증가시킵니다. 클라이언트가 `expectedVersion`을 보내는 API는 아닙니다.
-
-| HTTP | Code | 발생 조건 |
-| --- | --- | --- |
-| 400 | `INVALID_REQUEST` | 요청 ID 누락/UUID 형식, spaceId 형식, 잘못된 JSON |
-| 401 | `UNAUTHENTICATED` | 세션 또는 현재 회원 연결 무효 |
-| 403 | `FORBIDDEN` | CSRF 실패, 발급·구성원 조회의 현재 참여 없음, 성공 재요청의 원래 참여 종료 |
-| 404 | `RESOURCE_NOT_FOUND` | 발급·구성원 조회 대상 공간 없음/DELETING |
-| 404 | `INVITATION_UNAVAILABLE` | 토큰 형식/존재, 공간 상태, 발급 참여 유효성 또는 재참여 링크 조건 실패 |
-| 409 | `IDEMPOTENCY_KEY_REUSED` | 같은 사용자·요청 ID를 다른 업무/공간/초대에 재사용 |
-| 409 | `REQUEST_IN_PROGRESS` | 동일 사용자·요청 ID를 처리하는 트랜잭션 진행 중 |
-| 410 | `INVITATION_EXPIRED` | 유효성을 확인한 링크의 만료 시각 도달 |
-| 500 | `INTERNAL_ERROR` | 예상하지 못한 서버 처리 실패 |
-
-오류는 각 API에 실제 해당하는 경우만 적용합니다. 링크 자체가 무효이면 만료보다 404를 우선합니다. 자동 재시도는 원래 ID·내용을 유지하고 409 처리 중을 최종 실패로 취급하지 않습니다. 성공 기록에 TTL은 추가하지 않습니다.
-
-FE는 초대 경로·비로그인 사용자의 로그인 후 복귀를 합의해야 합니다. 현재 URL은 `INVITATION_URL_PREFIX`로 분리했고 기존 OAuth 리다이렉트는 변경하지 않았습니다. FE는 발급 URL을 그대로 복사하고 토큰을 추출해 확인/참여 API를 호출하며, 세션·CSRF 및 404/410 안내를 연결합니다. URL 토큰을 분석 이벤트·로그에 남기지 않습니다. AI 의존성은 없습니다.
+- `POST /api/spaces/{spaceId}/invitations`로 현재 참여자가 링크를 발급한다. 유효 기간은 24시간이며 발급 당시 참여가 끝나면 링크가 무효다.
+- `GET /api/invitations/{invitationToken}`으로 로그인 후 초대를 확인한다. `POST /api/invitations/{invitationToken}/join`은 새 참여에 `201`, 이미 참여 중이면 `200`을 반환한다.
+- `GET /api/spaces/{spaceId}/members`는 현재 구성원을 소유자 우선으로 반환한다.
 
 ## 소유권 이전·공간 나가기·구성원 내보내기 API
 
-2026-10-11 합의. 세 API는 로그인 세션·CSRF·JSON 본문이 필요하고 `200 SUCCESS`, 공통 6필드 응답 및 `Cache-Control: no-store`를 사용합니다.
-
-| API | 추가 대상 입력 | 권한 | 성공 `data` |
-| --- | --- | --- | --- |
-| `POST /api/spaces/{spaceId}/ownership-transfers` | 본문의 `targetMembershipId`(UUID) | 현재 소유자 | `spaceId`, `ownerMembershipId`, `myRole`, `spaceVersion` |
-| `POST /api/spaces/{spaceId}/departures` | 없음. 서버가 본인의 현재 참여 식별 | 현재 MEMBER | `membershipId`, `endedAt` |
-| `POST /api/spaces/{spaceId}/memberships/{membershipId}/removals` | 경로의 `membershipId`(UUID) | 현재 소유자 | `membershipId`, `endedAt`, `spaceVersion` |
-
-공통 본문은 다음과 같습니다. 이전 요청에는 `targetMembershipId`를 추가합니다.
-
-```json
-{
-  "expectedSpaceVersion": "3",
-  "clientRequestId": "832cbe35-9970-4f99-a219-8f019315b3ab"
-}
-```
-
-- 두 필드는 필수입니다. `expectedSpaceVersion`은 공간 상세의 `version`이며 1~9223372036854775807의 십진 정수 **문자열**입니다. JSON 숫자·부호·공백·소수·선행 0은 허용하지 않습니다. 저장된 BIGINT 표현 범위이며 제품상의 사용 횟수 제한이 아닙니다.
-- 새 의도에는 새 `clientRequestId`, 응답 유실·처리 중 재시도에는 동일 ID·대상·버전을 포함한 동일 본문을 사용합니다. 버전 충돌 뒤 최신 내용을 확인해 변경하는 요청은 새 ID를 사용합니다.
-- 권한 확인 뒤 버전을 검사합니다. 소유자의 나가기는 `OWNER_TRANSFER_REQUIRED`를 우선합니다. 허용된 사용자가 요청한 대상이 없거나 다른 공간 소속이면 404, 현재 참여가 종료됐거나 본인/소유자를 이전·내보내기 대상으로 지정하면 `MEMBERSHIP_STATE_CONFLICT`입니다.
-- 소유권은 별도 수락 없이 즉시 이전합니다. 현재 다른 참여자 한 명에게 소유자 참여 ID·사용자 ID를 함께 옮기고 기존 소유자는 MEMBER가 됩니다. 새 소유자의 동일 호칭 소유 충돌은 전체 롤백합니다. 역할만 바뀌면 참여 종료가 아니므로 기존 초대는 만료·발급 참여 기준으로 유지합니다.
-- 나가기는 `LEFT`, 내보내기는 `REMOVED`로 참여 행의 종료 사유와 시각을 기록합니다. 회원·소셜 연결·다른 공간 참여를 삭제하지 않습니다. 이후 해당 공간의 조회/변경과 종료된 참여에서 발급한 링크 사용을 거절합니다.
-- 실제 변경·공간 버전 1 증가·수정 시각 갱신·성공 기록은 한 트랜잭션입니다. 실패·조회·같은 성공 요청 재전송에는 갱신하지 않습니다. 시각은 서버 UTC, PostgreSQL과 같은 마이크로초 정밀도입니다.
-- 성공 결과의 버전과 `myRole`은 **최초 성공 당시 결과**입니다. 이전의 `myRole`은 MEMBER이며 재전송도 같은 결과를 반환합니다. 현재 역할·소유권·구성원은 별도 조회합니다.
-
-### 성공 재전송의 권한
-
-| API | 재전송 조건 |
+| POST 경로 (`/api/spaces/{spaceId}` 아래) | 권한 |
 | --- | --- |
-| 소유권 이전 | 원래 요청자의 동일 참여가 현재도 유지되어야 합니다. 이미 MEMBER가 된 것은 허용하지만 종료 후 재참여한 새 참여는 403입니다. 없음/DELETING 공간은 404입니다. |
-| 본인 나가기 | **예외:** 로그인한 동일 회원의 동일 성공 요청이면 원래 종료 참여 ID·시각만 반환합니다. 공간 삭제 진행이나 이후 재참여 여부에 관계없이 새로운 참여를 변경하지 않습니다. 공간 정보·현재 버전·다른 사람 정보는 반환하지 않습니다. 회원 인증이 무효이면 401입니다. |
-| 구성원 내보내기 | 원래 요청자의 동일 현재 참여 및 현재 소유권을 요구합니다. 대상이 재참여했어도 원래 종료 결과만 반환하며 새 참여를 종료하지 않습니다. |
+| `/ownership-transfers` | 소유자가 다른 현재 참여자에게 이전 |
+| `/departures` | 구성원이 본인 참여 종료 |
+| `/memberships/{membershipId}/removals` | 소유자가 구성원을 내보냄 |
 
-| HTTP | Code | 조건 |
-| --- | --- | --- |
-| 400 | `INVALID_REQUEST` | 필수값·UUID·버전 문자열·JSON 형식 오류 |
-| 401 | `UNAUTHENTICATED` | 세션 또는 현재 회원 연결 무효 |
-| 403 | `FORBIDDEN` | 현재 참여/소유권 또는 CSRF 실패, 재전송 권한 없음 |
-| 404 | `RESOURCE_NOT_FOUND` | 공간 없음/DELETING 또는 대상 참여 없음/다른 공간 |
-| 409 | `VERSION_CONFLICT` | 검토한 버전과 현재 버전 불일치 |
-| 409 | `SPACE_LABEL_DUPLICATED` | 이전받는 사용자가 같은 호칭의 다른 공간을 현재 소유 |
-| 409 | `OWNER_TRANSFER_REQUIRED` | 현재 소유자가 나가기 요청 |
-| 409 | `MEMBERSHIP_STATE_CONFLICT` | 종료된 참여 또는 본인/소유자를 이전·내보내기 대상으로 요청 |
-| 409 | `IDEMPOTENCY_KEY_REUSED` | 성공한 ID를 다른 작업·공간·대상·버전에 재사용 |
-| 409 | `REQUEST_IN_PROGRESS` | 같은 회원·요청 ID 처리 중 |
-| 500 | `INTERNAL_ERROR` | 내부 처리 실패 |
-
-추가한 두 상태 오류는 `CareSpaceErrorCode`에서 관리합니다. 기존 노션 초안의 포괄적인 `STATE_CONFLICT` 대신 `MEMBERSHIP_STATE_CONFLICT`를 사용합니다. 오류는 실제 적용되는 API에만 명시합니다.
-
-### FE 연동과 후속 도메인 계약
-
-- 이전·내보내기 성공 시 역할·구성원·공간 상세를 재조회합니다. 나가기 성공 시 해당 공간 캐시를 제거하고 참여 공간 목록으로 이동합니다. 대상 사용자의 다른 브라우저는 다음 API의 403/404에서 캐시·화면을 정리해야 하며, 서버가 이미 표시된 내용을 회수하거나 실시간 알림을 보내지는 않습니다.
-- VERSION_CONFLICT는 최신 내용 조회 후 사용자 재확인이 필요합니다. 버전만 자동 교체해 재실행하지 않습니다. 재전송 결과의 과거 버전·역할로 현재 캐시를 덮어쓰지 않습니다.
-- CareItem의 일정 등록·조회·편집 잠금은 구현됐으며 참여 종료 시 해당 참여의 잠금을 제거합니다. 미완료 담당 할 일은 참여 종료와 함께 미지정으로 변경하며 항목 버전·이력을 남깁니다. 실제 담당 해제 집계가 없어 `unassignedTaskCount`를 응답에서 제외합니다. 담당 해제는 참여 종료와 같은 트랜잭션으로 연결하고 영향 항목 버전·이력을 갱신해야 합니다. 다른 편집 잠금이 권한 종료를 지연시키면 안 됩니다. 완료 상태·기존 공동 기록은 보존합니다.
-- Proposal은 소유자 직접 반영과 구성원 AI 제안 변경 요청을 지원합니다. 소유권 이전 후 새 소유자가 대기 요청을 검토하고, 종료된 참여자가 제출한 미처리 요청은 반영을 막되 이력을 보존합니다. 최종 반영 시 현재 소유권·요청자의 원래 참여 상태를 다시 검사하며 재참여로 예전 요청을 복구하지 않습니다. 직접 입력 변경 요청도 같은 승인 목록을 사용합니다.
-- [공유 링크](share-links.md)도 조회 시 현재 참여를 검사해 참여 종료 후 접근을 차단합니다. 참여 변경 자체는 AI를 호출하지 않으며, CareItem·Proposal·Sharing의 상세 동작은 각 계약을 따릅니다.
-
-## 공간 전체 삭제 API
-
-`GET /api/spaces/{spaceId}/deletion-impact`와 `POST /api/spaces/{spaceId}/deletions`는 현재 소유자 전용입니다. 삭제/무효 상태를 포함한 전체 건수와 영향 확인값을 조회하고, 공간 버전·현재 영향 그래프를 다시 확인해 한 트랜잭션에서 소속 서비스 데이터를 제거합니다. 완료 후 200이며 삭제 후 같은 성공 요청도 404입니다. 전역 최소 영수증은 이전 요청의 재실행을 차단하기 위해 유지합니다. 집계·동시 변경·늦은 AI 결과·FE/운영 범위는 [공간 전체 삭제 계약](care-space-deletion.md)을 따릅니다.
+각 요청의 버전·재전송 조건은 Swagger를 따른다. 참여가 끝나면 해당 참여의 잠금과 미완료 할 일 담당을 정리한다. 공간 전체 삭제는 [공간 삭제 계약](care-space-deletion.md)을 따른다.
 
 ## 소식 원본 저장·조회 API
 
-2026-10-12 합의 기준입니다. 저장·조회 및 최초 분석 접수를 구현합니다. 실제 분석은 외부 설정으로 활성화한 실행기가 처리합니다. 이 절은 BE 구현 계약이며 노션의 기존 상세 페이지 템플릿을 변경하지 않습니다.
-
-| API | 입력 | 성공 |
-| --- | --- | --- |
-| `POST /api/spaces/{spaceId}/source-records` | 본문 `content`, `clientRequestId` | `201 SUCCESS`, `recordId`, `version`, `recordedAt`, `analysis` |
-| `GET /api/spaces/{spaceId}/source-records` | 선택 query `cursor`, `size` | `200 SUCCESS`, `items`, `nextCursor`, `hasNext` |
-| `GET /api/spaces/{spaceId}/source-records/{recordId}` | 공간·소식 UUID | `200 SUCCESS`, 원본 상세 |
-
-### 입력·저장 계약
-
-```json
-{
-  "content": "오늘 병원에서 다음 달 15일에 다시 오라고 했어요.\n약은 그대로 복용합니다.",
-  "clientRequestId": "4880377e-81b6-4ab2-bcff-5dfb804583dd"
-}
-```
-
-- 소유자와 현재 구성원 모두 작성·조회할 수 있습니다. 세션이 필요하며 POST에는 CSRF가 필요합니다. 응답은 공통 여섯 필드와 `Cache-Control: no-store`를 사용합니다. POST `Location`은 생성한 소식의 상세 경로입니다.
-- `content`는 문자열 필수이며 빈 문자열·Unicode 공백만 있는 값은 거절합니다. 최대 10,000 UTF-16 코드 단위로 Java String.length 및 FE JavaScript 문자열 length와 같습니다. 일반 한글은 1, 보충 평면의 이모지 등은 2입니다. NUL·짝이 맞지 않는 surrogate는 저장할 수 없어 400으로 거절합니다.
-- 유효 원문의 앞뒤 공백·줄바꿈(CRLF 포함)·Unicode 표현을 그대로 저장합니다. FE는 일반 텍스트로 표시하고 HTML로 해석하지 않습니다. 이 길이는 이번 Record 공개 입력 합의이며 기존 AI 내부 제한과 맞춥니다.
-- 작성자 참여·UTC 등록 시각은 서버가 정합니다. 사용자 지정 작성 시각·제목·분류·수정 기능은 추가하지 않습니다. 기록 시각은 마이크로초 정밀도로 고정하고 향후 AI 상대 날짜 해석에서 `Asia/Seoul`과 함께 사용합니다.
-- 초기 원본 `version`은 문자열 `"1"`입니다. 원본 작성에는 `expectedSpaceVersion`을 요구하지 않고 공간 버전·수정 시각을 변경하지 않습니다. 실제 권한은 트랜잭션 안에서 현재 상태로 검사합니다.
-- 같은 사용자·요청 ID·업무·공간·원문의 성공 재전송은 최초 원본 ID·시각을 201로 반환합니다. 원문이 공백/줄바꿈 하나라도 달라지면 다른 내용입니다. 같은 원문이라도 새 요청 ID면 별도 소식입니다. 성공 기록에는 원문·전체 응답을 저장하지 않습니다.
-- 재전송에서도 원래 참여가 현재까지 유지되어야 합니다. 나갔다가 재참여한 경우 과거 요청은 403이며 새 요청 ID로 작성합니다. 공간이 없거나 삭제 중이거나 원본이 삭제됐으면 404이고 원본을 복구하지 않습니다. 보관 TTL은 추가하지 않습니다.
-
-### 목록·상세 계약
-
-- 목록은 `recordedAt DESC, recordId DESC`입니다. `size`는 기본 20, 1~50이며 첫 조회에는 cursor를 생략합니다. 빈 커서·형식 오류·다른 공간 커서는 400입니다.
-- `data.items` 원소는 `recordId`, `content`(원문 전체), `author`, `recordedAt`, `isMine`, `latestAnalysis`입니다. 마지막 페이지 또는 빈 목록은 `nextCursor: null`, `hasNext: false`입니다. 나머지는 반환된 커서를 그대로 다음 요청에 전달합니다.
-- 커서는 마지막 반환 원본의 시각·ID 위치이며 당시 전체 목록을 동결하지 않습니다. 이후 새로 들어온 최신 소식은 첫 목록 재조회로 확인합니다. 중간 삭제를 반영하며 커서 기준 원본이 삭제돼도 다음 위치를 조회할 수 있습니다. 매 페이지 현재 권한을 다시 검사하고 총 개수·검색·필터는 추가하지 않습니다.
-- 상세는 `recordId`, `spaceId`, `content`, `author`, `recordedAt`, `version`, `isMine`, `latestAnalysis`, `proposalIds`, `canDelete`입니다. 다른 공간의 소식 ID·삭제 원본은 404입니다.
-- `author`는 작성 당시 `membershipId`, 현재 표시 이름 `displayName`, `withdrawn`입니다. 이름 미설정은 null이며 회원 연결이 제거된 경우 ID·이름도 null, withdrawn=true입니다. 공간에서 나가기/내보내기만으로 withdrawn=true가 되거나 원본이 삭제되지 않습니다. 실제 탈퇴 처리는 [회원 탈퇴](member-withdrawal.md)의 `POST /api/users/me/withdrawals`에서 수행합니다.
-- `isMine`은 같은 회원 기준으로 재참여 후에도 true일 수 있습니다. `canDelete`는 현재 소유자 또는 본인 원본의 권한 안내입니다.
-- 새 소식 저장의 `analysis`는 `{analysisId, status: "QUEUED"}`이며 원본과 같은 트랜잭션에서 생성한 실제 접수 정보입니다. 생성 재전송에도 최초 ID·QUEUED를 반환합니다. 조회의 `latestAnalysis`는 `{analysisId, status}`로 최신 실행의 현재 상태입니다. 분석 도입 전 원본에는 null을 유지하고 자동 일괄 분석하지 않습니다.
-- 상세의 `proposalIds`는 최신 실행이 COMPLETED인 경우의 유효한 저장 제안 ID이며 나머지는 빈 배열입니다.
-
-| HTTP | Code | 발생 조건 |
-| --- | --- | --- |
-| 400 | `INVALID_REQUEST` | 본문·UUID·요청 ID·size·cursor 검증 실패 |
-| 401 | `UNAUTHENTICATED` | 세션 또는 현재 회원 연결 무효 |
-| 403 | `FORBIDDEN` | 현재 참여 없음, POST CSRF 실패, 재전송의 원래 참여 종료 |
-| 404 | `RESOURCE_NOT_FOUND` | 공간 없음/DELETING, 원본 없음/ERASED/다른 공간 |
-| 409 | `IDEMPOTENCY_KEY_REUSED` | 동일 사용자·요청 ID를 다른 업무·공간·본문에 사용 |
-| 409 | `REQUEST_IN_PROGRESS` | 동일 사용자·요청 ID 트랜잭션 처리 중 |
-| 500 | `INTERNAL_ERROR` | 예상하지 못한 서버 오류 |
-
-별도 Record 오류 enum은 만들지 않습니다. FE는 POST마다 새 의도에 UUID를 발급하고 네트워크 재전송에는 같은 값을 유지합니다. AI는 고정된 원문·recordedAt·Asia/Seoul을 사용하며 HTTP 호출 동안 DB 트랜잭션을 유지하지 않습니다.
+- `POST /api/spaces/{spaceId}/source-records`는 `content`와 `clientRequestId`를 받아 `201`로 `recordId`, `version`, `recordedAt`, `analysis`를 반환한다. 원문은 유효한 공백·줄바꿈을 보존하며 10,000 UTF-16 코드 단위로 제한한다.
+- `analysis`는 최초 분석 접수 정보다. 같은 생성 요청의 재전송은 최초 접수 정보를 재사용한다. 분석 기능 도입 전 원본의 재전송은 `analysis: null`이며 새 분석을 만들지 않는다.
+- 목록·상세 GET은 `latestAnalysis`로 최신 분석을 반환한다. 목록은 `items`, `nextCursor`, `hasNext`를 사용한다.
 
 ## 소식 원본 삭제 API
 
-- 현재 공간 소유자와 참여 중인 원본 작성자는 `GET /api/spaces/{spaceId}/source-records/{recordId}/deletion-impact`로 `recordVersion`과 `impactToken`을 조회합니다.
-- `POST /api/spaces/{spaceId}/source-records/{recordId}/deletions`는 세션 쿠키와 CSRF 토큰을 요구합니다. JSON 본문은 `expectedRecordVersion`(양의 정수 문자열), `impactToken`(조회 결과), `clientRequestId`(UUID)입니다. 200 응답의 `data`는 `recordId`, `deletedAt`, `affectedItemIds`, `reconfirmationItemIds`입니다.
-- 원본 버전이 바뀌면 `409 VERSION_CONFLICT`, 영향 범위가 바뀌면 `409 DELETION_IMPACT_CHANGED`를 반환합니다. 새로 확인한 삭제에는 새 요청 ID를 사용합니다. 네트워크 재전송은 같은 ID와 본문을 유지하며, 현재 삭제 권한과 원래 참여가 유효할 때 동일 결과를 받습니다.
-- 삭제와 파생 내용 정리는 같은 트랜잭션에서 처리합니다. 삭제에 의존하지 않는 현재 문서와 근거는 유지합니다. 필드별 독립 근거를 판별할 수 없는 영향 문서는 가리고 재확인 대상으로 표시합니다.
+1. `GET /api/spaces/{spaceId}/source-records/{recordId}/deletion-impact`로 버전과 `impactToken`을 받는다.
+2. `POST /api/spaces/{spaceId}/source-records/{recordId}/deletions`에 `expectedRecordVersion`, `impactToken`, `clientRequestId`를 보낸다.
+3. 현재 소유자 또는 원본 작성자만 삭제할 수 있다. 영향이 달라졌으면 `409 DELETION_IMPACT_CHANGED` 후 다시 조회한다. 성공 시 관련 소식·제안·근거·항목을 갱신한다.
 
 ## 소식 분석 상태·실패 재시도
 
-현재 공간 참여자(소유자·구성원)가 사용합니다. 공통 세션 인증과 여섯 필드 응답·no-store를 사용하고 POST에는 CSRF가 필요합니다. 다른 공간의 원본·분석 ID를 사용할 수 없습니다.
-
-| API | 입력 | 성공 |
-| --- | --- | --- |
-| `GET /api/spaces/{spaceId}/source-records/{recordId}/analyses/{analysisId}` | 경로 UUID | `200 SUCCESS`, 분석 상태 |
-| `POST /api/spaces/{spaceId}/source-records/{recordId}/analyses` | 아래 JSON | `202 ACCEPTED`, `{recordId, analysisId, status: "QUEUED"}` |
-
-```json
-{
-  "failedAnalysisId": "183c05e8-03f3-4692-9d9c-30f1c6ea6772",
-  "expectedRecordVersion": "1",
-  "clientRequestId": "e371364c-5681-46ef-bd89-4e1a23f6c06d"
-}
-```
-
-세 필드 모두 필수입니다. 버전은 양의 정수를 담은 문자열이며 JSON 숫자는 거절합니다. POST Location은 접수한 분석의 GET 경로입니다. 재시도는 최신 FAILED 실행만 가능하며 성공 재분석·QUEUED/RUNNING의 중복 접수·서버 자동 재시도는 지원하지 않습니다. 원본·공간 버전은 분석 실행으로 증가하지 않습니다.
-
-GET의 `data`:
-
-| 필드 | 타입 | 의미 |
-| --- | --- | --- |
-| `analysisId`, `recordId` | UUID 문자열 | 분석과 원본 식별자 |
-| `status` | 문자열 | QUEUED / RUNNING / COMPLETED / FAILED / DISCARDED |
-| `proposalIds` | UUID 배열 | 완료한 실행의 유효 제안 ID, 없으면 빈 배열 |
-| `failure` | 객체 또는 null | FAILED일 때 `{code, message}`, 그 외 null |
-| `createdAt` | UTC 시각 | 분석 접수 시각 |
-| `startedAt` | UTC 시각 또는 null | 실제 AI 실행을 시작한 시각. 시작 전 실패·폐기도 null 가능 |
-| `finishedAt` | UTC 시각 또는 null | 완료·실패·폐기 시각, 대기·진행 중에는 null |
-| `canRetry` | Boolean | 현재 조회자가 접근 가능하고 이 실행이 최신 FAILED일 때 true |
-
-기존 초안에서 등록 시각으로 표현했던 startedAt은 실제 실행 시작 시각으로 구분하고 createdAt을 제공합니다. COMPLETED는 제안 저장 완료이며 소유자의 최종 반영이나 관리 항목 생성 완료를 뜻하지 않습니다. 제안 0개도 완료입니다.
-
-| HTTP | Code | 발생 조건 |
-| --- | --- | --- |
-| 400 | `INVALID_REQUEST` | UUID·필수 입력·버전 문자열 검증 실패 |
-| 401 | `UNAUTHENTICATED` | 세션 또는 현재 회원 무효 |
-| 403 | `FORBIDDEN` | 현재 참여 없음, POST CSRF 실패, 재전송의 원래 참여 종료 |
-| 404 | `RESOURCE_NOT_FOUND` | 공간/원본/분석 없음·다른 공간, 삭제 중 공간·삭제 원본, 폐기된 재시도 접수 재전송 |
-| 409 | `VERSION_CONFLICT` | 요청 버전과 현재 원본 버전 불일치 |
-| 409 | `ANALYSIS_STATE_CONFLICT` | 지정 실행이 최신 FAILED가 아님 |
-| 409 | `IDEMPOTENCY_KEY_REUSED` | 같은 사용자·요청 ID를 다른 업무/원본/실패 실행/버전에 재사용 |
-| 409 | `REQUEST_IN_PROGRESS` | 같은 사용자·요청 ID의 접수 트랜잭션 처리 중 |
-| 500 | `INTERNAL_ERROR` | 예상하지 못한 API 처리 오류 |
-
-GET에는 재시도 전용 409를 적용하지 않습니다. 비동기 실행 실패는 HTTP 오류가 아닙니다. GET `200 SUCCESS`의 `data.failure`에는 다음 안전한 코드·메시지만 노출하며 AI 응답 원문·내부 오류를 저장하거나 반환하지 않습니다.
-
-| 작업 실패 코드 | 의미 |
-| --- | --- |
-| `AI_SERVICE_UNAVAILABLE` | AI 연결·응답 실패 또는 계약에 맞지 않는 결과 |
-| `ANALYSIS_INTERRUPTED` | 실행기의 생존 갱신 중단·lease 만료 등 실행 중단 |
-| `ANALYSIS_REQUESTER_INACTIVE` | 분석을 요청한 당시 참여가 종료됨 |
-| `ANALYSIS_DEPENDENCY_UNAVAILABLE` | CareItem 후보·결과 저장 연결이 준비되지 않음 |
-| `ANALYSIS_STORAGE_FAILED` | 결과 저장 트랜잭션 실패 |
-
-- 동일 사용자·clientRequestId·내용의 성공 접수 재전송은 원래 analysisId와 접수 당시 QUEUED를 반환합니다. 이후 작업 상태는 GET으로 확인합니다. 완료·실패 후 재전송해도 재실행하지 않습니다. 나갔다가 재참여하면 과거 요청 재전송은 403입니다.
-- 같은 실패를 다른 요청 ID로 동시에 재시도하면 하나만 접수됩니다. 이미 후속 실행이 있다면 409입니다. 새 재시도마다 새 analysisId/requestId를 사용하지만 최초 원본 recordedAt과 Asia/Seoul은 유지합니다.
-- 소식·분석 접수는 원자적이며 결과 제안·문서·근거·COMPLETED도 원자적입니다. 분석 실패로 원본을 제거하지 않습니다. 원본이 삭제되거나 입력 버전이 달라지면 결과를 폐기합니다. 공간 전체 삭제는 실행·입력 의존성도 제거하며, 늦은 결과에서 사라진 실행을 안전하게 폐기합니다. 원본 삭제 연결점은 관련 원본과 같은 트랜잭션에서 호출해야 합니다.
-- FE는 저장 응답의 analysisId 또는 최신 상태를 사용해 진행 상황을 조회하고 canRetry일 때 명시적인 재시도 요청을 보냅니다. FE 조회 간격·횟수·사용량 제한은 미정이며 임의의 자동 재시도 루프를 추가하지 않습니다.
-- 실행기 기본 비활성 환경에서는 QUEUED에 머뭅니다. 활성화와 필수 외부 설정은 README를 따릅니다. 실행기 수치는 운영 미정이며 자동 테스트의 수치를 운영 기본값으로 사용하지 않습니다.
-- v1 CREATE와 v2 CREATE/UPDATE/RESOLVE/LINK_EVIDENCE의 검토 제안 저장을 지원합니다. 실행에 고정한 계약 버전을 사용하며 자동 fallback은 없습니다. v2의 7개 AI 실패 코드는 [실행 계약](ai-contract-v2-execution.md)을 따릅니다. 현재 stub/가짜 응답 검증이 실제 모델 품질 검증을 대신하지 않습니다.
+- 소식 아래 `GET /analyses/{analysisId}`에서 `QUEUED`, `RUNNING`, `COMPLETED`, `FAILED`, `DISCARDED` 상태를 확인한다. 완료 시 `proposalIds`를, 실패 시 `failure`를 확인한다.
+- `canRetry`가 true인 최신 실패 실행은 같은 소식의 `POST /analyses`에 `failedAnalysisId`, `expectedRecordVersion`, `clientRequestId`를 보내 `202`로 새 분석을 접수할 수 있다. 같은 요청 ID의 재전송은 중복 실행하지 않는다.
+- 소식 저장 성공과 분석 성공은 별개다. [워커 설정](deployment.md#분석-워커-활성화비활성화) · [AI v2 저장과 조회](ai-contract-v2-execution.md)
 
 ## AI 제안 목록·상세·근거 조회
 
-| Method | 경로 | 설명 |
-| --- | --- | --- |
-| GET | `/api/spaces/{spaceId}/proposals` | 현재 공간의 저장된 검토 제안 목록 |
-| GET | `/api/spaces/{spaceId}/proposals/{proposalId}` | 제안 상세와 주 원본 근거 |
+`GET /api/spaces/{spaceId}/proposals` 목록과 `GET .../proposals/{proposalId}` 상세는 현재 공간 참여자가 사용한다. 목록을 `recordId`, `status`, `cursor`, `size`로 조회한다. `status`는 `REVIEW_PENDING`(기본), `APPLIED`, `DECLINED`, `INVALIDATED`를 지원한다. 구성원 승인 요청은 별도 변경 요청 API에서 관리한다.
 
-활성 공간의 현재 참여자(소유자/구성원)가 세션으로 조회합니다. 두 API 모두 `200 SUCCESS` 공통 응답과 `Cache-Control: no-store`를 사용합니다. GET은 상태·버전·성공 요청 기록을 변경하거나 AI를 호출하지 않으며 CSRF·clientRequestId·항목 잠금을 요구하지 않습니다.
-
-### 목록 요청과 응답
-
-| Query | 타입 | 의미 |
-| --- | --- | --- |
-| recordId | UUID, 선택 | 같은 공간의 특정 원본으로 제한. 존재하지 않거나 다른 공간의 원본은 404 |
-| status | 문자열, 선택 | `REVIEW_PENDING`(생략 시 기본), `INVALIDATED`, `APPLIED`, `DECLINED` |
-| cursor | 문자열, 선택 | 같은 공간·recordId·status에서 받은 nextCursor. 첫 조회는 생략 |
-| size | 정수, 선택 | 기본 20, 1~50 |
-
-생성 시각·제안 ID 내림차순입니다. `data`는 `items`, `nextCursor`(마지막 null), `hasNext`를 포함합니다. 빈 결과는 `items: []`, `nextCursor: null`, `hasNext: false`입니다. 아직 분석 대기 중이거나 완료 결과가 0개여도 빈 목록입니다. 새로 생긴 제안은 첫 페이지를 다시 조회해야 합니다. 커서는 위치이며 페이지 전체를 고정하지 않습니다. 필터 변경·훼손·키 변경으로 무효가 되면 첫 조회부터 시작합니다.
-
-| items 필드 | 타입 | 설명 |
-| --- | --- | --- |
-| proposalId / recordId / analysisId | UUID | 제안·원본·분석 실행 식별자 |
-| itemType | 문자열 | SCHEDULE / TASK / QUESTION / OBSERVATION / GUIDANCE |
-| action | 문자열 | CREATE_ITEM / UPDATE_ITEM / RESOLVE_QUESTION / LINK_EVIDENCE |
-| status | 문자열 | 유효한 OPEN은 `REVIEW_PENDING`, 무효는 `INVALIDATED` |
-| title | 문자열 또는 null | 제안 제목. 무효는 null |
-| targetItemId | UUID 또는 null | CREATE·미확정 대상·무효 제안은 null |
-| needsConflictReview | boolean 또는 null | v2 CONFLICT 여부. v1·무효 제안은 null |
-| createdAt | UTC ISO 8601 | 제안 저장 시각 |
-
-APPLIED/DECLINED는 처리 이력으로 유지하며, 출처 삭제에 따른 내용 가림과 구분합니다. 구성원 승인 요청의 APPROVAL_REQUESTED는 아직 400입니다.
-
-### 상세 응답
-
-목록의 식별·유형·작업·상태·제목·시각 필드에 다음을 추가합니다.
-
-| 필드 | 타입 | 설명 |
-| --- | --- | --- |
-| spaceId | UUID | 소속 공간 |
-| analysisTargetVersion / currentItemVersion | 문자열 또는 null | CREATE·미확정 대상·무효 제안은 null |
-| currentValues | 객체 또는 null | CREATE·미확정 대상·무효 제안은 null |
-| proposedValues | 유형별 객체 또는 null | 아래 공개 필드. 무효 제안은 객체 전체 null |
-| candidates | 배열 | v2 미확정 대상 후보(itemId/version/title). CREATE·무효는 빈 배열 |
-| evidence | 배열 | evidenceId, recordId, quote, valid, author, recordedAt. 무효는 빈 배열 |
-| relationKind | 문자열 또는 null | v2 NEW / RELATED / CONFLICT / DUPLICATE / UNDETERMINED. v1·무효는 null |
-| reviewToken | 문자열 또는 null | 유효한 OPEN 제안의 상태·회원/참여에 묶인 HMAC. 처리/무효 시 null, 고정 TTL 없음 |
-| decision | 객체 또는 null | 처리 묶음·시각·결과 항목/버전·확정 문서. [반영 계약](proposal-decisions.md) 참고 |
-| redactedFields | 문자열 배열 | 정상은 빈 배열. 무효 시 가린 필드 목록 |
-| changedFields / clearFields | 문자열 배열 | v2 설정할 필드 / 명시적으로 지울 필드. v1·무효는 빈 배열 |
-| reviewReasons | 문자열 배열 | v2 검토 사유. v1·무효는 빈 배열 |
-| comparisonBasis | 배열 | basisId, itemId, kind, recordId(null 허용), text. v2 응답이 참조한 유효 근거. 무효는 빈 배열 |
-
-근거의 `valid`는 반환된 유효 근거에 대해 true이며, `author`는 소식 조회와 같은 membershipId/displayName/withdrawn을 사용합니다. 탈퇴하여 회원 연결이 없는 작성자는 ID·이름 null, withdrawn=true입니다. 단순 참여 종료는 원본 삭제가 아닙니다. `recordedAt`은 제안 시각이 아닌 원본 등록 시각입니다.
-
-| itemType | proposedValues 필드 (공통 title/description 포함) |
-| --- | --- |
-| SCHEDULE | scheduledDate(YYYY-MM-DD), scheduledTime(HH:mm, Asia/Seoul), location, v2 status |
-| TASK | dueDate(YYYY-MM-DD), assigneeMembershipId(UUID), v2 status |
-| QUESTION | title, description, v2 status·answerText |
-| OBSERVATION | observedDate(YYYY-MM-DD), observedTimeText |
-| GUIDANCE | sourceName, receivedDate(YYYY-MM-DD) |
-
-기존 노션 CareItem 필드명으로 조회용 변환을 합니다. 저장 제목 외 누락/미상/변환 불가 값은 null이며 새로운 입력 필수값·길이 제한·과거/미래 날짜 정책을 정한 것이 아닙니다. TASK 담당자는 같은 공간의 현재 참여 ID만 반환합니다. 내부 changes 전체와 알 수 없는 필드는 노출하지 않습니다. v2 answerText는 미확정 답변 제안이며 CareItem의 확정 답변이 아닙니다. v2 proposedValues는 변경분이고 changedFields·clearFields로 설정·삭제를 구분합니다. 현재 값과 자동 병합하지 않으며 표시 제목 title은 changes.title과 별개입니다. 내부 필드 별칭의 호환 규칙은 [AI 계약](ai-contract.md#be-공개-조회로의-변환)을 따릅니다.
-
-### 무효화·오류·연동 경계
-
-- 원본 삭제/버전 변경, 제안 무효화, 실행 폐기, 문서·근거 제거를 검사합니다. 주 원본 이외 분석에 입력된 모든 원본, 후보 항목의 현재 버전·문서·가시성·재확인 상태, 시작 시 기록한 근거 ID도 검사하며, 파생 내용이 DB에 아직 남아 있어도 API로 반환하지 않습니다. 기본 목록은 제외하고 INVALIDATED 필터/상세에서는 식별 메타데이터만 반환합니다. 삭제된 같은 공간 원본으로 INVALIDATED 필터를 조회할 수 있습니다.
-- 후보 의존성의 근거 ID가 null인 과거 실행은 안전하게 INVALIDATED로 조회합니다. 캡처된 근거가 살아 있어도 해당 후보의 `care_item_basis` 연결이 끊기면 무효로 처리합니다. 직접 입력만 사용한 후보의 빈 배열과 후보가 없는 기존 실행은 유효할 수 있습니다. 조회는 실행 상태·제안·항목을 갱신하지 않습니다.
-- 원본 삭제 트랜잭션에서 영향을 받는 문서와 근거의 내용을 제거합니다.
-- 400 INVALID_REQUEST: 잘못된 ID·필터·size·cursor. 401 UNAUTHENTICATED: 유효 세션/회원 없음. 403 FORBIDDEN: 공간 현재 참여 아님. 404 RESOURCE_NOT_FOUND: 활성 공간/같은 공간의 대상 없음. 500 INTERNAL_ERROR: 서버 실패. 업무 오류 메시지와 필드 오류는 공통 규격을 사용합니다.
-- FE는 네 상태와 null 필드를 처리하고, 원문 확인에는 기존 소식 상세 API를 사용합니다. 검토·편집 잠금·일괄 반영/미적용은 [소유자 반영 계약](proposal-decisions.md)을 따릅니다.
-- 실제 모델 품질 평가와 관련 항목 재분석은 후속입니다. 제출 전 검토 초안은 FE가 보관합니다. 소유자는 직접 반영하고 구성원은 [변경 요청 계약](member-change-requests.md)에 따라 요청을 저장합니다. 조회 주기는 추가 확정하지 않았으며 쓰기 입력 상한은 해당 계약을 따릅니다.
-
-명세 근거: [제안 목록](https://app.notion.com/p/3ef0f25ea138818dab00e94f7b6a08bd), [제안 상세](https://app.notion.com/p/3ef0f25ea1388176bbd3d1381325fe19), [CareItem 상세 필드](https://app.notion.com/p/3ef0f25ea138814696dddf926758474b). 이 문서는 현재 구현 범위를 기록하며 노션 DB/템플릿 갱신과 구분합니다.
-
-## 문서화와 적용 범위
-
-이름이 같은 중첩 DTO는 `@Schema(name = "도메인을구분하는이름")`으로 고유한 문서 스키마 이름을 지정합니다. 예를 들어 공유 항목의 `Entry`와 변경 이력의 `Entry`가 서로의 필드를 덮어쓰지 않도록 합니다. 문서 스키마 이름은 실제 JSON 필드명을 바꾸지 않습니다.
-
-`JsonNode`는 Java 내부 속성 대신 자유형 JSON으로 문서화합니다. 각 API의 필드 설명과 업무 검증이 허용 값을 결정하며, 별도 DTO로 정의된 요청의 `oneOf` 등 구체적인 스키마는 유지합니다. 이 설정은 JSON 직렬화·역직렬화나 입력 검증을 변경하지 않습니다.
-
-Swagger에 공통 응답·오류 스키마, 재사용 가능한 오류 응답, 세션 쿠키·CSRF 보안 스키마를 둡니다. 공개 경로에 인증을 잘못 표시하지 않도록 전역 보안 요구를 일괄 적용하지 않고 각 API에 필요한 조건과 실제 오류만 명시합니다.
-
-각 Controller의 OpenAPI 주석에서 `SessionCookie`, `CsrfToken` 보안 스키마와 `#/components/responses/코드명` 오류 응답을 참조합니다. 둘 다 필요하면 하나의 보안 요구에 묶어 AND 조건으로 표현합니다. 성공의 `data`는 해당 응답 DTO로 구체화합니다. 모든 예외 처리기의 응답을 모든 API에 자동 추가하는 Springdoc 옵션은 끄고 실제 발생 조건을 명시합니다.
-
-`global.openapi.ErrorResponseDocumentation`은 Swagger가 활성화된 환경에서 `com.hanmaum.backend` 아래의 구체적인 `ErrorCode` 구현 enum을 탐색해 재사용 응답을 등록합니다. 새 도메인 오류 enum 추가 시 공통 enum 목록이나 설정 파일을 수정할 필요가 없습니다. 중복 코드가 발견되면 문서 구성을 실패시켜 기존 예시를 덮어쓰지 않습니다. 이 등록은 각 API의 발생 오류를 자동으로 결정하지 않으므로 Controller의 응답 참조와 명세·테스트도 함께 작성합니다.
-
-CSRF·로그아웃 등 존재하는 경로만 문서화하며 미구현 도메인 API를 문서용 Controller로 만들지 않습니다. Swagger는 브라우저 로그인 세션을 사용하며 임의 쿠키 입력이 실제 인증을 대신하지 않습니다.
-
-공통 handoff와 노션의 최종 동기화는 사용자가 지정한 시점에 진행합니다. FE의 오류 파싱도 새 규격에 맞춰야 합니다. 입력 길이·페이지 크기·잠금 TTL·반복 요청 보관 기간은 이 공통 설정에서 확정하지 않습니다.
+상세의 `currentValues`, `proposedValues`, `changedFields`, `clearFields`, 근거·후보·검토 사유를 함께 읽는다. 유효한 미처리 제안의 `reviewToken`은 결정 요청에 사용한다. 제거된 원본에서 파생된 내용은 목록·상세에서 가리며, 필요한 식별·결정 메타데이터만 유지한다.
 
 ## 일정 직접 등록·관리 항목 조회 (#22)
 
-아래는 일정 등록 예시입니다. 직접 등록 지원 유형·역할별 경로·수정·상태 전이는 [직접 입력 계약](direct-care-items.md)을 따릅니다. 기반 경로는 `/api/spaces/{spaceId}/items`입니다.
-
-### 등록
-
-`POST /api/spaces/{spaceId}/items`는 현재 생성 권한·세션·CSRF를 요구하고 `201 SUCCESS`와 Location을 반환합니다.
-
-```json
-{
-  "itemType": "SCHEDULE",
-  "title": "내과 재진",
-  "description": null,
-  "fields": {
-    "scheduledDate": "2026-10-15",
-    "scheduledTime": "10:00",
-    "location": null
-  },
-  "clientRequestId": "832cbe35-9970-4f99-a219-8f019315b3ab"
-}
-```
-
-- `itemType`, 비어 있지 않은 `title`, 객체 `fields`, UUID `clientRequestId`는 필수입니다. 일정·할 일·질문을 등록합니다. 구성원은 본인 담당 할 일만 즉시 등록하고 나머지는 승인 요청으로 제출합니다.
-- 텍스트는 문자열/null만 받으며 숫자·불리언을 문자열로 변환하지 않습니다. 제목의 공백·줄바꿈을 보존하며 자유입력은 각 10,000 UTF-16 단위 이하입니다. NUL·잘못된 surrogate는 저장 기술 제약으로 거절합니다.
-- `description`, `scheduledDate`, `scheduledTime`, `location`은 생략/null을 같은 없음으로 해석합니다. 날짜는 실제 존재하는 `YYYY-MM-DD`, 시각은 `HH:mm`이며 Asia/Seoul 기준입니다. 날짜나 시각을 추측하지 않으며 00:00 기본값을 넣지 않습니다.
-- 요청에 없는 업무 상태·작성자·버전·시각은 서버가 정합니다. 지원 외 필드는 거절합니다. 일정 초기 상태는 `SCHEDULED`, 버전은 문자열 `"1"`입니다.
-- 성공 `data`는 `itemId`, `itemType`, `version`, `createdAt`입니다. 일정·직접 입력 문서/근거·최초 이력·영수증은 하나의 트랜잭션에서 저장하며 공간 버전은 바꾸지 않습니다.
-- 같은 사용자·요청 ID·작업·공간·내용이면 최초 결과를 반환합니다. 내용/대상이 다르면 `409 IDEMPOTENCY_KEY_REUSED`, 실행 중이면 `409 REQUEST_IN_PROGRESS`입니다. 재전송도 현재 생성 권한과 최초 동일 참여를 요구하며 삭제/제거된 문서의 항목은 404입니다. 영수증에 제목·원문·필드를 복제하지 않습니다.
-
-### 목록·상세
-
-- `GET /api/spaces/{spaceId}/items`는 공간의 현재 참여자가 조회합니다. 일반 카드의 `items`와 `totalCount`, 별도 표시용 `reconfirmationItems`, 예정 탭의 `pastScheduleCount`를 반환합니다. 페이지 제한 없이 선택 목록 전체를 반환합니다.
-- `itemType`은 다섯 명세 유형을 받습니다. 확정된 다섯 유형 모두 조회합니다. 상태 없이 조회하면 모든 업무 상태를 포함하며 일반 삭제만 제외합니다. `status`는 `itemType`을 함께 지정하고 해당 유형의 상태를 사용합니다.
-- `view`는 해당 `itemType`과 함께 사용하며 `status`와 조합할 수 없습니다. 허용하지 않는 조합·값 또는 예전 초안의 `scheduleView`는 `400 INVALID_REQUEST`입니다.
-
-| 돌봄 탭 | 조회 조건과 표시 순서 |
-| --- | --- |
-| 일정 `SCHEDULE` | `UPCOMING` 날짜·시간 오름차순, `PAST` 날짜·시간 내림차순. `CLOSED`는 완료·취소를 실제 마지막 상태 변경순으로 표시 |
-| 할 일 `TASK` | `REMAINING`은 미시작·진행 중을 기한순으로 표시하며 같은 기한이면 진행 중 우선. `COMPLETED`는 마지막 완료순 |
-| 질문 `QUESTION` | `UNCONFIRMED`는 최초 등록순(답변 제출만으로 제외하지 않음), `CONFIRMED`는 마지막 확인순 |
-| 관찰·안내 | `itemType=OBSERVATION` 또는 `GUIDANCE`만 지정. 각각 관찰일·안내 수신일 내림차순 |
-
-- 미정·잘못된 날짜는 마지막입니다. 같은 날짜 안에서 시간 미정도 마지막이며, 같은 정렬값은 최초 생성 시각·ID 오름차순으로 고정합니다. 유형·상태가 섞인 기본 조회는 기존 생성 최신순입니다.
-- `SCHEDULED` 일정만 한국 시간(Asia/Seoul)으로 구분합니다. 시각까지 있으면 해당 시각이 지난 후, 날짜만 있으면 다음 날 0시부터 지난 일정입니다. 날짜 미정은 예정의 마지막입니다. 날짜 경과는 저장된 상태를 변경하지 않습니다.
-- 예정 탭의 `pastScheduleCount`는 지난 일정 전체 건수입니다. 다른 조회에서는 null입니다. 재확인 대상은 일반 건수에서 제외하고 별도 배열에 ID·유형·상태·버전과 표시 플래그만 남깁니다(제목·담당자 이름 null, fields 빈 객체). 상충만 있는 항목은 현재 값과 확인 필요 표시를 유지합니다. 할 일 담당자는 같은 공간에 현재 참여 중인 경우에만 표시합니다.
-- 돌봄 탭의 별도 ‘재확인 필요’ 영역은 유형 기준입니다. 예를 들어 일정의 `view=UPCOMING`과 `view=PAST`는 같은 재확인 배열을 반환하고, 일반 카드·건수만 각각의 날짜 조건으로 구분합니다.
-- `GET /api/spaces/{spaceId}/items/{itemId}`는 현재값·상태·버전·시각과 재확인/상충/삭제 표시를 제공합니다. `editLock`은 현재 잠금 요약이고 `confirmedAnswer`는 소유자가 확정한 답변입니다. 질문의 `answers`는 제출 이력을 반환하며 질문 이외 유형에는 빈 배열을 반환합니다.
-- 권한과 목록/상세는 같은 SQL 스냅샷에서 조회합니다. 현재 비구성원은 403, 다른 공간의 항목이나 삭제 중인 공간은 404입니다. 조회는 업무 데이터를 변경하지 않으며 응답은 `Cache-Control: no-store`입니다.
-- 문서 내용이 제거됐으면 제목·설명/fields를 노출하지 않고 재확인 표시와 `redactedFields`를 반환합니다. 일반 삭제 상세는 내용 없는 삭제 표시입니다. 별도 근거·확정 이력 조회는 아래 계약을 따릅니다.
+`GET /api/spaces/{spaceId}/items`는 `itemType`과 `view` 또는 `status`를 사용한다. 재확인 항목은 별도 배열이며, 일정의 예정·지난 분류는 Asia/Seoul 기준이다. 상세는 `GET .../items/{itemId}`다. 쓰기 계약은 [관리 항목 직접 변경](direct-care-items.md)을 참고한다.
 
 ### 확인사항 답변 제출 API
 
-- `POST /api/spaces/{spaceId}/items/{itemId}/answers`는 세션 쿠키와 CSRF 토큰이 필요합니다. 현재 공간 참여자는 `answer`, `basis`(공백이 아닌 문자열), `expectedItemVersion`(양의 정수 문자열), `clientRequestId`(UUID)를 모두 보냅니다.
-- 미확인 질문의 답변·근거를 한 승인 대기 요청에 저장합니다. 소유자 본인의 제출에도 같은 규칙을 적용합니다. 제출 시 편집 잠금을 요구하거나 변경하지 않으며, 질문 상태와 버전은 유지합니다.
-- 201 응답의 `data`는 `answerId`, `requestId`, `requestEntryId`, `status: "PENDING"`, `questionStatus: "UNCONFIRMED"`, `submittedAt`입니다. 같은 요청 ID와 같은 내용의 재전송은 원래 제출 결과를 반환합니다. 한 참여자가 같은 질문 버전에 이미 유효한 대기 답변을 남겼다면 새 요청 ID의 추가 제출은 `409 CHANGE_REQUEST_ALREADY_PENDING`입니다. 다른 참여자는 각자 제출할 수 있습니다.
-- 변경 요청 상세에서 `sourceType: "DIRECT_INPUT"`, `action: "RESOLVE_QUESTION"` 및 `requestedValues.answer`와 `requestedValues.basis`로 검토합니다. 소유자는 기존 `POST /api/spaces/{spaceId}/request-applications`에 요청 항목 ID, 검토 토큰, 질문 버전, 본인 편집 잠금 토큰을 전달합니다. 승인할 답변은 서버가 저장된 제출 내용에서 가져오므로 이 동작에 `values` 재입력을 허용하지 않습니다.
-- 첫 유효 승인만 질문을 `CONFIRMED`로 전환하고 확정 답변, 근거, `RESOLVE` 이력, 요청 결정을 함께 기록합니다. 이후 다른 답변 요청은 항목 버전 변경으로 무효화되며, 오래된 승인은 `409 VERSION_CONFLICT`입니다.
-- 상세의 `answers[]`는 `answerId`, `requestEntryId`, `answer`, `basis`, `submittedByMembershipId`, `submittedAt`, `status`를 반환합니다. 상태는 `PENDING`, `APPLIED`, `DECLINED`, `CANCELED`, `INVALIDATED`입니다. 원본 삭제 등으로 답변 문서가 무효화되면 `answer`와 `basis`를 null로 반환합니다.
-- 제출 오류는 `400 INVALID_REQUEST`, `401 UNAUTHENTICATED`, `403 FORBIDDEN`, `404 RESOURCE_NOT_FOUND`(대상 없음·다른 공간·삭제 항목), `409 VERSION_CONFLICT`(버전 불일치), `409 ITEM_STATE_CONFLICT`(열린 질문이 아니거나 항목 내용이 가려짐), `409 IDEMPOTENCY_KEY_REUSED`, `409 REQUEST_IN_PROGRESS`, `413 PAYLOAD_TOO_LARGE`입니다.
+`POST /api/spaces/{spaceId}/items/{itemId}/answers`는 `answer`, `basis`, `expectedItemVersion`, `clientRequestId`를 받는다. 참여자가 답변을 제출하면 소유자는 별도 변경 요청 승인으로 확정한다. 답변 제출만으로 질문이 해결되지 않는다.
 
 ### 돌봄 항목 근거 재확인 API
 
-- 현재 소유자는 재확인 대상 항목의 `POST /api/spaces/{spaceId}/items/{itemId}/edit-lock`에서 `expectedItemVersion`과 `purpose: "RECONFIRMATION"`을 보냅니다. 잠금 갱신에도 같은 `purpose`와 `leaseToken`을 보냅니다. 잠금 해제에는 기존처럼 `leaseToken`을 사용합니다.
-- `POST /api/spaces/{spaceId}/items/{itemId}/reconfirmations`는 세션 쿠키, CSRF 토큰, `expectedItemVersion`, `leaseToken`, `values`, `evidenceIds`, `clientRequestId`를 받습니다. 성공 응답은 `itemId`, 새 `version`, `needsReconfirmation: false`, `updatedAt`을 반환합니다.
-- `values`는 새 `title`, `description`, 유형별 `fields`로 구성합니다. 생략한 선택 값은 null로 처리합니다. `QUESTION`이 이미 확정 상태이면 `fields.confirmedAnswer`가 필요합니다. 미확인 질문의 답변은 별도 확정 경로에서 처리합니다.
-- `basis`는 새 확인 근거입니다. 생략하려면 선택한 기존 독립 근거 문서 하나가 제출한 값 전체와 일치해야 합니다. 다른 항목의 근거, 삭제되거나 무효화된 근거는 `409 ITEM_STATE_CONFLICT`를 반환합니다.
-- 재확인한 문서, 새 근거, 선택 근거의 출처와 `RECONFIRM` 이력을 한 트랜잭션으로 저장하고 잠금을 해제합니다. 항목의 업무 상태는 유지합니다. 선택 근거가 나중에 삭제되면 그 근거에 의존한 문서를 삭제 범위에 포함합니다.
-- 재확인 시 선택한 근거와 새 근거를 이후 AI 분석 입력에 사용합니다. 선택하지 않은 근거는 기존 조회 규칙에 따라 확인할 수 있으며, 재확인 이후 새로 연결한 유효한 근거는 분석에 포함됩니다.
-
-### 저장·분석 연동과 후속
-
-V8은 `care_item`, `care_item_basis`, `care_item_history`, `analysis_input_item`을 추가하고 기존 `content_document`에 DIRECT_INPUT 유형을 허용합니다. 통합 코드에는 V7 제안 조회 인덱스와 V8·V9가 모두 포함됩니다. 기존 V1~V9 파일은 수정하지 않습니다. V7까지 적용된 DB는 V8·V9로 순서대로 업그레이드하며, V7 없이 V8/V9를 먼저 적용한 DB는 적용 순서를 별도로 점검합니다.
-
-후보는 같은 공간의 유효한 현재 문서와 근거만 사용합니다. 실행기가 분석을 시작할 때 항목 버전·문서와 원본 의존성을 함께 기록하고 완료 시 재검증합니다. V9는 그때 사용한 근거 ID를 추가로 보존하므로 근거 연결이 없어지거나 원본 버전 변경 없이 근거 내용만 제거되어도 늦은 결과를 폐기합니다. V8에서 근거 목록을 기록하지 않은 후보 실행은 완료를 허용하지 않습니다. 기존 내부 후보 50개·요약 2,000 UTF-16 코드 단위 한도를 초과하면 자동 축약/부분 선택하지 않고 분석 의존성 오류로 종료합니다. 공개 일정 입력 제한과 별개입니다. 현재 summary 표현과 AI 연동 경계는 [AI 계약](ai-contract.md#careitem-후보와-입력-근거-검증)을 따릅니다.
-
-v1 CREATE와 v2 네 작업의 검토 제안 저장을 지원합니다. 소유자 제안 반영/미적용·편집 잠금은 [별도 계약](proposal-decisions.md), 구성원 AI 제안 승인 요청은 [변경 요청 계약](member-change-requests.md)을 따릅니다. 관리 항목 직접 등록·수정과 구성원 직접 입력 요청은 V13에서 지원합니다. V21의 공유 링크 발급·현재 참여자의 최신 대상 조회는 [공유 링크 계약](share-links.md)을 따릅니다. 외부 메시지 전송·FE 로그인 복귀는 후속입니다.
+현재 소유자가 `purpose: "RECONFIRMATION"`으로 편집 잠금을 획득한 뒤 `POST .../items/{itemId}/reconfirmations`에 `expectedItemVersion`, `leaseToken`, `values`, `evidenceIds`, `clientRequestId`를 보낸다. 확인할 값과 유효한 근거를 검증하여 새 버전을 저장한다.
 
 ## 관리 항목 일반 삭제
 
-`POST /api/spaces/{spaceId}/items/{itemId}/deletions`는 현재 소유자가 `expectedItemVersion`, 본인 `leaseToken`, `clientRequestId`를 전달해 삭제 표시합니다. 성공 `200 SUCCESS`의 data는 `{itemId,version,visibility:"DELETED",deletedAt}`입니다. 삭제 표시·버전·DELETE 이력·요청 결과를 함께 저장하고 잠금을 해제합니다. 원본·근거·이력은 보존하며 이후 원본 삭제 시 내용 제거 규칙도 유지합니다.
-
-구성원은 기존 `/change-requests`에 `sourceType:"DIRECT_INPUT",action:"DELETE_ITEM"`으로 제출하고 소유자가 승인합니다. `values`는 생략/null만 허용하며 AI 제안 삭제는 지원하지 않습니다. 직접 삭제·요청 제출·승인 모두 본인 잠금이 필요합니다. 재확인 대상·내용이 가려진 항목은 `purpose:"DELETION"`으로 잠금을 획득·갱신합니다. 일반 EDIT 잠금은 정상 항목 삭제에만 사용할 수 있으며 RECONFIRMATION 잠금으로 삭제할 수 없습니다.
-
-동일 요청 재전송은 최초 삭제 메타데이터를 반환합니다. 새 키로 이미 삭제된 항목은 `409 ITEM_STATE_CONFLICT`, 버전 불일치는 `409 VERSION_CONFLICT`, 타인 잠금은 `409 ITEM_LOCKED`, 본인 잠금 검증 실패는 `409 EDIT_LOCK_EXPIRED`입니다. 계약·FE 연결·V19 전환 기준은 [일반 삭제](direct-care-items.md#일반-삭제)를 따릅니다.
-
-## 공간 정보 수정
-
-현재 소유자는 `PATCH /api/spaces/{spaceId}`에 `subjectLabel`, `expectedSpaceVersion`, `clientRequestId`를 전달합니다. 성공 `200 SUCCESS`의 data는 `{spaceId,subjectLabel,version,updatedAt}`입니다. 생성과 동일한 호칭 정규화·소유자별 중복 기준을 적용하며 실제 호칭 변경에만 공간 버전·수정 시각을 갱신합니다. 같은 호칭 저장과 성공 재전송은 이를 갱신하지 않습니다.
-
-현재 구성원은 `/change-requests`에 `DIRECT_INPUT UPDATE_SPACE`, `expectedSpaceVersion`, `values:{subjectLabel}`로 제출하고 소유자가 기존 결정 API로 처리합니다. 항목 대상·버전·잠금은 전달하지 않습니다. 공간 수정과 관리 항목을 함께 선택할 때 전체 원자성을 유지하며 같은 공간 중복 반영은 금지합니다. 공간 버전 변화는 대기 요청을 `SPACE_VERSION_CHANGED`로 무효화합니다. 요청 상세의 공간 버전, 결정 결과의 nullable `spaceVersion`, 재전송·배포·FE 기준은 [공간 정보 수정 계약](care-space-information.md)을 따릅니다.
-
-## 항목 근거·확정 이력 조회
-
-현재 참여자가 `GET /api/spaces/{spaceId}/items/{itemId}/evidence`, `/history`, `/history/{version}`으로 근거·확정 이력·버전 비교를 조회합니다. 세션 인증, 동일 공간 소속, REPEATABLE_READ 스냅샷과 `no-store`를 적용합니다. 제거된 before/after는 null과 `redactedFields`로 표시하고 최소 변경 메타데이터를 유지합니다. 근거 종류·ID·정렬·삭제 상태와 과거 연결의 검증 범위는 [항목 근거·이력 계약](care-item-provenance.md)을 따릅니다. 필드별 근거는 저장하지 않아 `fieldPaths=[]`이며 전체 필드 근거라는 의미가 아닙니다.
+항목 버전·편집 잠금·권한을 확인하여 삭제 표시를 남긴다. 원본 소식 삭제와 별도 동작이다. [일반 삭제 계약](direct-care-items.md#일반-삭제)
 
 ## 돌봄 현황판
 
-`GET /api/spaces/{spaceId}/dashboard`는 세션 인증을 거친 현재 참여자가 공간 전체를 조회합니다. `data.spaceId`와 `asOf`(UTC ISO 8601) 및 다음 요약을 반환합니다. 조회 시각과 DB 스냅샷을 공유해 반영·삭제·상태 변경 중에도 응답 안의 값이 섞이지 않습니다.
+`GET /api/spaces/{spaceId}/dashboard`는 예정 일정 최대 2건, 지난 미완료 일정 건수, 남은 할 일 최대 3건, 미확인 질문 최대 2건, 최근 확정 변경 최대 3건을 동일 조회 시점 기준으로 반환한다.
 
-| data 필드 | 내용 |
-| --- | --- |
-| upcomingSchedules | 예정 일정 최대 2건 및 전체 건수 |
-| pastScheduleCount | 지난 미완료 일정 전체 건수 |
-| remainingTasks | 남은 할 일 최대 3건 및 전체 건수 |
-| unconfirmedQuestions | 미확인 질문 최대 2건 및 전체 건수 |
-| recentChanges | 기간 제한 없이 확정된 항목별 이력 최대 3건 및 전체 건수. 같은 항목의 다른 버전도 각각 1건 |
+## 상세 업무 계약
 
-각 요약은 `{items, totalCount}`입니다. 일반 카드와 돌봄 탭의 필터·정렬은 같습니다. 변경은 `changedAt` 내림차순(동률은 itemId 오름차순, version 내림차순). 변경 행에는 itemId·itemType·문자열 version·changeKind·changedAt·changedByMembershipId·changedByDisplayName·title이 있습니다. 일반 삭제·재확인·읽을 수 없는 현재/이력 문서는 제외합니다. 편집 시점까지 유효한 원문만 표시하며 승인 대기 및 미적용 요청은 집계하지 않습니다.
-
-빈 공간도 `200 SUCCESS`로 배열과 건수는 각각 []·0입니다. 잘못된 경로 ID는 400, 세션 없음은 401, 비참여자는 403, 없거나 비활성인 공간은 404입니다. 섹션 조회에 실패하면 전체 `500 INTERNAL_ERROR`입니다. 가족 미리보기·최근 소식·검토 대기는 기존 도메인 API를 사용합니다.
-
-## 구성원 AI 제안 변경 요청·소유자 검토
-
-공통 응답 형식을 유지하며 Proposal 도메인에 제출·목록·상세·소유자 반영/미적용·제출자 취소 API를 제공합니다. [상세 계약](member-change-requests.md)에 요청 예시, entry별 상태, 현재 권한·원래 참여 검사, 검토/잠금 토큰, 1~20개 원자성, 커서, 크기 상한과 삭제 전파를 정리합니다. 신규 409 코드 `CHANGE_REQUEST_ALREADY_PENDING`, `CHANGE_REQUEST_STATE_CONFLICT`는 Proposal 오류 enum에서 관리합니다. 기존 노션 초안의 포괄적인 `STATE_CONFLICT`는 사용하지 않습니다.
+- [AI 제안 반영과 잠금](proposal-decisions.md) · [구성원 변경 요청](member-change-requests.md)
+- [항목 근거·이력](care-item-provenance.md) · [공유 링크](share-links.md)
+- [공간 전체 삭제](care-space-deletion.md) · [회원 탈퇴](member-withdrawal.md)
