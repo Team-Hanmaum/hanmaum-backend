@@ -387,9 +387,12 @@ class InvitationIntegrationTests {
     var link = issue(owner);
     var a = newUser(null);
     var b = newUser("이름");
+    String photo = "https://images.example.invalid/member.png";
+    jdbc.update("UPDATE app_user SET profile_image_url=? WHERE id=?", photo, b);
     var removed = newUser("나간 사람");
     invitations.join(a, token(link), UUID.randomUUID());
-    invitations.join(b, token(link), UUID.randomUUID());
+    var photographed =
+        invitations.join(b, token(link), UUID.randomUUID()).response().membershipId();
     var ended = invitations.join(removed, token(link), UUID.randomUUID());
     end(ended.response().membershipId(), NOW.plusSeconds(1), "LEFT");
     var list = members.list(a, space).items();
@@ -417,7 +420,15 @@ class InvitationIntegrationTests {
             .getResponse();
     var data = mapper.readTree(response.getContentAsString()).get("data");
     assertThat(data.size()).isEqualTo(1);
-    for (var item : data.get("items")) assertThat(item.size()).isEqualTo(4);
+    for (var item : data.get("items")) {
+      assertThat(item.size()).isEqualTo(5);
+      var profileImageUrl = item.path("profileImageUrl");
+      if (photographed.toString().equals(item.path("membershipId").asText())) {
+        assertThat(profileImageUrl.asText()).isEqualTo(photo);
+      } else {
+        assertThat(profileImageUrl.isNull()).isTrue();
+      }
+    }
     assertThat(response.getContentAsString())
         .doesNotContain("assignedTaskCount", "userId", "나간 사람");
   }
@@ -616,7 +627,9 @@ class InvitationIntegrationTests {
         .isEqualTo(2);
     assertThat(doc.at("/components/schemas/InvitationRequest/properties").size()).isEqualTo(1);
     assertThat(doc.at("/components/schemas/InvitationPreview/properties").size()).isEqualTo(4);
-    assertThat(doc.at("/components/schemas/SpaceMemberSummary/properties").size()).isEqualTo(4);
+    var memberProperties = doc.at("/components/schemas/SpaceMemberSummary/properties");
+    assertThat(memberProperties.size()).isEqualTo(5);
+    assertThat(memberProperties.at("/profileImageUrl/type").toString()).contains("string", "null");
     for (var code : List.of("200", "201")) {
       assertThat(
               doc.at(

@@ -2,7 +2,7 @@ package com.hanmaum.backend.record.repository;
 
 import com.hanmaum.backend.analysis.dto.AnalysisSummary;
 import com.hanmaum.backend.analysis.entity.AnalysisStatus;
-import com.hanmaum.backend.record.dto.SourceRecordAuthor;
+import com.hanmaum.backend.record.dto.SourceRecordAuthorProfile;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
@@ -40,7 +40,7 @@ public class SourceRecordQueryRepository {
             """
         SELECT viewer.id AS viewer_id, viewer.id = s.owner_membership_id AS viewer_owner,
                r.id, r.body, r.recorded_at, r.version, r.author_membership_id,
-               author.user_id AS author_user_id, u.display_name, author.user_id = ? AS is_mine,
+               author.user_id AS author_user_id, u.display_name, u.profile_image_url, author.user_id = ? AS is_mine,
                a.id AS analysis_id, a.status AS analysis_status,
                ARRAY(SELECT p.id FROM ai_proposal p WHERE p.run_id = a.id AND a.status = 'COMPLETED'
                  AND p.invalidated_at IS NULL AND care_document_available(p.output_document_id)
@@ -73,7 +73,7 @@ public class SourceRecordQueryRepository {
             """
         SELECT viewer.id AS viewer_id, viewer.id = s.owner_membership_id AS viewer_owner,
                r.id, r.body, r.recorded_at, r.version, r.author_membership_id,
-               author.user_id AS author_user_id, u.display_name, author.user_id = ? AS is_mine,
+               author.user_id AS author_user_id, u.display_name, u.profile_image_url, author.user_id = ? AS is_mine,
                a.id AS analysis_id, a.status AS analysis_status,
                ARRAY(SELECT p.id FROM ai_proposal p WHERE p.run_id = a.id AND a.status = 'COMPLETED'
                  AND p.invalidated_at IS NULL AND care_document_available(p.output_document_id)
@@ -104,9 +104,10 @@ public class SourceRecordQueryRepository {
             : new View(
                 id,
                 rs.getString("body"),
-                new SourceRecordAuthor(
+                new SourceRecordAuthorProfile(
                     withdrawn ? null : rs.getObject("author_membership_id", UUID.class),
                     withdrawn ? null : rs.getString("display_name"),
+                    withdrawn ? null : rs.getString("profile_image_url"),
                     withdrawn),
                 rs.getTimestamp("recorded_at").toInstant(),
                 rs.getLong("version"),
@@ -136,7 +137,7 @@ public class SourceRecordQueryRepository {
   public record View(
       UUID id,
       String content,
-      SourceRecordAuthor author,
+      SourceRecordAuthorProfile author,
       Instant recordedAt,
       long version,
       boolean isMine,

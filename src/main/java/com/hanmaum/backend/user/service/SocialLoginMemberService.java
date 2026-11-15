@@ -36,7 +36,10 @@ public class SocialLoginMemberService {
    */
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public UUID findOrCreate(
-      SocialProvider provider, String providerUserId, String initialDisplayName) {
+      SocialProvider provider,
+      String providerUserId,
+      String initialDisplayName,
+      String profileImageUrl) {
     Objects.requireNonNull(provider, "provider");
     if (providerUserId == null || providerUserId.isBlank()) {
       throw new IllegalArgumentException("A provider identity is required");
@@ -48,13 +51,16 @@ public class SocialLoginMemberService {
         .findByProviderAndProviderUserId(provider, providerUserId)
         .map(
             account -> {
-              UUID id = account.getUser().getId();
-              lifecycle.requireExisting(id);
-              return id;
+              AppUser user = account.getUser();
+              lifecycle.requireExisting(user.getId());
+              user.updateProfileImageUrl(profileImageUrl);
+              return user.getId();
             })
         .orElseGet(
             () -> {
-              AppUser user = users.saveAndFlush(new AppUser(initialDisplayName));
+              AppUser user = new AppUser(initialDisplayName);
+              user.updateProfileImageUrl(profileImageUrl);
+              users.saveAndFlush(user);
               socialAccounts.saveAndFlush(new SocialAccount(user, provider, providerUserId));
               return user.getId();
             });

@@ -22,7 +22,7 @@ public class SpaceMemberQueryRepository {
     var rows =
         jdbc.query(
             """
-        SELECT viewer.id AS viewer_id, m.id AS membership_id, u.display_name,
+        SELECT viewer.id AS viewer_id, m.id AS membership_id, u.display_name, u.profile_image_url,
                m.id = s.owner_membership_id AS is_owner, m.user_id = ? AS is_me
         FROM care_space s
         LEFT JOIN space_membership viewer ON viewer.space_id = s.id AND viewer.user_id = ? AND viewer.is_active
@@ -40,6 +40,7 @@ public class SpaceMemberQueryRepository {
                       : new SpaceMemberSummary(
                           member,
                           rs.getString("display_name"),
+                          rs.getString("profile_image_url"),
                           rs.getBoolean("is_owner") ? CareSpaceRole.OWNER : CareSpaceRole.MEMBER,
                           rs.getBoolean("is_me")));
             },

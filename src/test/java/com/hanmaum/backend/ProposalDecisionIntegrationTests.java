@@ -1074,7 +1074,10 @@ class ProposalDecisionIntegrationTests {
         s -> {
           jdbc.execute("SET LOCAL search_path TO " + schema);
           jdbc.update(
-              "INSERT INTO app_user SELECT * FROM public.app_user WHERE id IN (?,?)",
+              """
+              INSERT INTO app_user(id,display_name,created_at,updated_at)
+              SELECT id,display_name,created_at,updated_at FROM public.app_user WHERE id IN (?,?)
+              """,
               owner,
               member);
           jdbc.update(

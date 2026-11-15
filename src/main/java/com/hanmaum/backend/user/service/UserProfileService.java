@@ -31,6 +31,7 @@ public class UserProfileService {
             .distinct()
             .sorted()
             .toList();
-    return new MyProfileResponse(user.getId(), user.getDisplayName(), providers);
+    return new MyProfileResponse(
+        user.getId(), user.getDisplayName(), user.getProfileImageUrl(), providers);
   }
 }

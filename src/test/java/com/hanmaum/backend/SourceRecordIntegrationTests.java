@@ -281,22 +281,30 @@ class SourceRecordIntegrationTests {
   @Test
   void publicReadsUseCurrentRightsAndDoNotExposeAccountIds() throws Exception {
     var created = create(member, "소식");
+    String photo = "https://images.example.invalid/author.png";
+    jdbc.update("UPDATE app_user SET profile_image_url=? WHERE id=?", photo, member);
     mvc.perform(get(path() + "/" + created.recordId()).with(authentication(login(owner))))
         .andExpect(status().isOk())
         .andExpect(header().string("Cache-Control", "no-store"))
         .andExpect(jsonPath("$.data.isMine").value(false))
         .andExpect(jsonPath("$.data.canDelete").value(true))
         .andExpect(jsonPath("$.data.author.userId").doesNotExist())
+        .andExpect(jsonPath("$.data.author.profileImageUrl").value(photo))
         .andExpect(jsonPath("$.data.author.withdrawn").value(false));
     mvc.perform(get(path()).with(authentication(login(member))))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.items[0].isMine").value(true))
         .andExpect(jsonPath("$.data.items[0].content").value("소식"))
+        .andExpect(jsonPath("$.data.items[0].author.profileImageUrl").value(photo))
         .andExpect(jsonPath("$.data.hasNext").value(false));
     UUID other = newUser(null);
     join(other);
     assertThat(queries.detail(other, space.spaceId(), created.recordId()).canDelete()).isFalse();
     var anonymousName = create(other, "이름 미설정 소식");
+    mvc.perform(get(path() + "/" + anonymousName.recordId()).with(authentication(login(owner))))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.author.profileImageUrl").hasJsonPath())
+        .andExpect(jsonPath("$.data.author.profileImageUrl").isEmpty());
     assertThat(
             queries.detail(owner, space.spaceId(), anonymousName.recordId()).author().displayName())
         .isNull();
@@ -452,12 +460,17 @@ class SourceRecordIntegrationTests {
   @Test
   void disconnectedAuthorIsDifferentFromEndedParticipation() {
     var record = create(member, "공동 기록");
+    jdbc.update(
+        "UPDATE app_user SET profile_image_url=? WHERE id=?",
+        "https://images.example.invalid/author.png",
+        member);
     end(memberMembership);
     jdbc.update("UPDATE space_membership SET user_id = NULL WHERE id = ?", memberMembership);
     var author = queries.detail(owner, space.spaceId(), record.recordId()).author();
     assertThat(author.withdrawn()).isTrue();
     assertThat(author.membershipId()).isNull();
     assertThat(author.displayName()).isNull();
+    assertThat(author.profileImageUrl()).isNull();
   }
 
   @Test
@@ -734,6 +747,14 @@ class SourceRecordIntegrationTests {
         .isEqualTo(2);
     assertThat(doc.at("/components/schemas/SourceRecordDetail/properties/version/type").asText())
         .isEqualTo("string");
+    for (String schema : List.of("SourceRecordDetail", "SourceRecordSummary")) {
+      assertThat(doc.at("/components/schemas/" + schema + "/properties/author/$ref").asText())
+          .isEqualTo("#/components/schemas/SourceRecordAuthorProfile");
+    }
+    assertThat(
+            doc.at("/components/schemas/SourceRecordAuthorProfile/properties/profileImageUrl/type")
+                .toString())
+        .contains("string", "null");
     var analysisSchema =
         doc.at("/components/schemas/CreateSourceRecordResponse/properties/analysis");
     assertThat(analysisSchema.isMissingNode()).isFalse();

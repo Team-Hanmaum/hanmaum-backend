@@ -27,6 +27,9 @@ public class AppUser {
   @Column(name = "display_name", columnDefinition = "text")
   private String displayName;
 
+  @Column(name = "profile_image_url", columnDefinition = "text")
+  private String profileImageUrl;
+
   @CreationTimestamp
   @Column(name = "created_at", nullable = false, updatable = false)
   private Instant createdAt;
@@ -37,5 +40,9 @@ public class AppUser {
 
   public AppUser(String displayName) {
     this.displayName = displayName;
+  }
+
+  public void updateProfileImageUrl(String profileImageUrl) {
+    this.profileImageUrl = profileImageUrl;
   }
 }

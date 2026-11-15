@@ -43,10 +43,10 @@ class SocialLoginMemberIntegrationTests {
 
   @Test
   void reusesTheMemberWithoutChangingTheOriginalNameOrProfileTimestamp() {
-    UUID firstId = members.findOrCreate(SocialProvider.GOOGLE, "same-user", "최초 이름");
+    UUID firstId = members.findOrCreate(SocialProvider.GOOGLE, "same-user", "최초 이름", null);
     var before = users.findById(firstId).orElseThrow();
 
-    UUID nextId = members.findOrCreate(SocialProvider.GOOGLE, "same-user", "변경된 제공자 이름");
+    UUID nextId = members.findOrCreate(SocialProvider.GOOGLE, "same-user", "변경된 제공자 이름", null);
     var after = users.findById(nextId).orElseThrow();
 
     assertThat(nextId).isEqualTo(firstId);
@@ -58,15 +58,15 @@ class SocialLoginMemberIntegrationTests {
 
   @Test
   void preservesAMissingInitialNameOnLaterLogins() {
-    UUID id = members.findOrCreate(SocialProvider.KAKAO, "42", null);
-    assertThat(members.findOrCreate(SocialProvider.KAKAO, "42", "나중 이름")).isEqualTo(id);
+    UUID id = members.findOrCreate(SocialProvider.KAKAO, "42", null, null);
+    assertThat(members.findOrCreate(SocialProvider.KAKAO, "42", "나중 이름", null)).isEqualTo(id);
     assertThat(users.findById(id).orElseThrow().getDisplayName()).isNull();
   }
 
   @Test
   void doesNotMergeIdenticalIdsOrNamesAcrossProviders() {
-    UUID google = members.findOrCreate(SocialProvider.GOOGLE, "42", "같은 이름");
-    UUID kakao = members.findOrCreate(SocialProvider.KAKAO, "42", "같은 이름");
+    UUID google = members.findOrCreate(SocialProvider.GOOGLE, "42", "같은 이름", null);
+    UUID kakao = members.findOrCreate(SocialProvider.KAKAO, "42", "같은 이름", null);
     assertThat(google).isNotEqualTo(kakao);
     assertThat(users.count()).isEqualTo(2);
     assertThat(socialAccounts.count()).isEqualTo(2);
@@ -86,7 +86,8 @@ class SocialLoginMemberIntegrationTests {
                   ready.countDown();
                   if (!start.await(10, TimeUnit.SECONDS))
                     throw new IllegalStateException("timeout");
-                  return members.findOrCreate(SocialProvider.GOOGLE, "concurrent-user", "최초 이름");
+                  return members.findOrCreate(
+                      SocialProvider.GOOGLE, "concurrent-user", "최초 이름", null);
                 }));
       }
       try {
@@ -108,13 +109,13 @@ class SocialLoginMemberIntegrationTests {
         .when(socialAccounts)
         .saveAndFlush(any(SocialAccount.class));
 
-    assertThatThrownBy(() -> members.findOrCreate(SocialProvider.KAKAO, "42", "최초 이름"))
+    assertThatThrownBy(() -> members.findOrCreate(SocialProvider.KAKAO, "42", "최초 이름", null))
         .isInstanceOf(DataAccessResourceFailureException.class);
     assertThat(users.count()).isZero();
     assertThat(socialAccounts.count()).isZero();
 
     reset(socialAccounts);
-    assertThat(members.findOrCreate(SocialProvider.KAKAO, "42", "다시 시도")).isNotNull();
+    assertThat(members.findOrCreate(SocialProvider.KAKAO, "42", "다시 시도", null)).isNotNull();
     assertThat(users.count()).isEqualTo(1);
     assertThat(socialAccounts.count()).isEqualTo(1);
   }

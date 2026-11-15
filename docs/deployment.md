@@ -11,6 +11,7 @@ FE는 `https://hanmaum.site`(Vercel), BE는 `https://api.hanmaum.site`(Lightsail
 - FE는 OAuth 시작 주소 `/oauth2/authorization/{provider}`로 브라우저를 이동한다. Google·카카오 공급자 콜백은 `https://api.hanmaum.site/login/oauth2/code/{provider}`다.
 - 기본 성공 복귀는 `https://hanmaum.site/auth/callback`이다. 실패는 `401 OAUTH_LOGIN_FAILED` JSON이다.
 - 운영 쿠키는 `HANMAUM_SESSION`, BE 호스트 전용, `HttpOnly`·`Secure`·`SameSite=Lax`다. FE는 credentials를 포함하고 변경 요청에 CSRF 토큰을 보낸다. [인증 API 규격](api-conventions.md#인증과-적용-예외)
+- 카카오 프로필 사진 지원을 배포하기 전에 앱 관리의 **카카오 로그인 → 동의항목 → 개인정보 → 프로필 사진(`profile_image`)**에서 **선택 동의**를 설정한다. 사용자가 거절하거나 등록한 사진이 없으면 사진 주소는 `null`이다. [카카오 동의항목 설정](https://developers.kakao.com/docs/latest/ko/kakaologin/prerequisite#consent-item)
 
 ### 로컬 HTTPS FE에서 배포 BE 사용
 

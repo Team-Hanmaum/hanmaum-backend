@@ -31,6 +31,8 @@
 
 브라우저를 `GET /oauth2/authorization/{provider}`로 이동한다. BE 콜백은 `/login/oauth2/code/{provider}`이며 제공자는 `google`·`kakao`다. 성공 복귀는 시작 요청의 `frontend` 선택을 따르고, 실패 시 `401 OAUTH_LOGIN_FAILED` JSON을 반환한다. [운영·로컬 OAuth 설정](deployment.md#운영-fe-로그인세션-연결)
 
+`GET /api/users/me`는 `profileImageUrl`을 반환한다. 소셜 로그인 성공 시 받은 HTTPS 주소를 저장하며, 사진을 받지 못하면 `null`이다. 기존 회원의 사진도 다시 로그인할 때 갱신한다.
+
 ## 돌봄 공간 API
 
 | 요청 | 핵심 규칙 |
@@ -46,7 +48,7 @@
 
 - `POST /api/spaces/{spaceId}/invitations`로 현재 참여자가 링크를 발급한다. 유효 기간은 24시간이며 발급 당시 참여가 끝나면 링크가 무효다.
 - `GET /api/invitations/{invitationToken}`으로 로그인 후 초대를 확인한다. `POST /api/invitations/{invitationToken}/join`은 새 참여에 `201`, 이미 참여 중이면 `200`을 반환한다.
-- `GET /api/spaces/{spaceId}/members`는 현재 구성원을 소유자 우선으로 반환한다.
+- `GET /api/spaces/{spaceId}/members`는 현재 구성원을 소유자 우선으로 반환한다. 각 구성원의 `profileImageUrl`은 사진이 없으면 `null`이다.
 
 ## 소유권 이전·공간 나가기·구성원 내보내기 API
 
@@ -63,6 +65,7 @@
 - `POST /api/spaces/{spaceId}/source-records`는 `content`와 `clientRequestId`를 받아 `201`로 `recordId`, `version`, `recordedAt`, `analysis`를 반환한다. 원문은 유효한 공백·줄바꿈을 보존하며 10,000 UTF-16 코드 단위로 제한한다.
 - `analysis`는 최초 분석 접수 정보다. 같은 생성 요청의 재전송은 최초 접수 정보를 재사용한다. 분석 기능 도입 전 원본의 재전송은 `analysis: null`이며 새 분석을 만들지 않는다.
 - 목록·상세 GET은 `latestAnalysis`로 최신 분석을 반환한다. 목록은 `items`, `nextCursor`, `hasNext`를 사용한다.
+- 목록·상세의 `author.profileImageUrl`은 작성자의 현재 프로필 사진 주소다. 사진이 없거나 작성자의 회원 연결이 제거되었으면 `null`이다.
 
 ## 소식 원본 삭제 API
 

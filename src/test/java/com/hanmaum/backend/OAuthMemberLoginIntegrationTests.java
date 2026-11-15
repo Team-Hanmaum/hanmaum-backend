@@ -108,6 +108,8 @@ class OAuthMemberLoginIntegrationTests {
     jdbc.update("DELETE FROM app_user");
     jdbc.update("DELETE FROM spring_session");
     provider.name = "첫 이름";
+    provider.profileImageUrl = "https://images.example.invalid/first.png";
+    provider.defaultImage = false;
     provider.kakaoId = 42L;
     provider.googleUserInfoSubject = "42";
     provider.userInfoFails = false;
@@ -334,6 +336,7 @@ class OAuthMemberLoginIntegrationTests {
             .orElseThrow()
             .getUser();
     assertThat(userBefore.getDisplayName()).isEqualTo("첫 이름");
+    assertThat(userBefore.getProfileImageUrl()).isEqualTo(provider.profileImageUrl);
     mvc.perform(get("/api/test/current-user").cookie(cookie))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.userId").value(userBefore.getId().toString()));
@@ -344,6 +347,7 @@ class OAuthMemberLoginIntegrationTests {
             .andExpect(jsonPath("$.code").value("SUCCESS"))
             .andExpect(jsonPath("$.data.userId").value(userBefore.getId().toString()))
             .andExpect(jsonPath("$.data.displayName").value("첫 이름"))
+            .andExpect(jsonPath("$.data.profileImageUrl").value(provider.profileImageUrl))
             .andExpect(jsonPath("$.data.providers[0]").value(socialProvider.name()))
             .andExpect(jsonPath("$.data.providers.length()").value(1))
             .andExpect(jsonPath("$.errors").isEmpty())
@@ -355,7 +359,7 @@ class OAuthMemberLoginIntegrationTests {
     assertThat(body.propertyNames())
         .containsExactlyInAnyOrder("success", "code", "message", "data", "errors", "timestamp");
     assertThat(body.get("data").propertyNames())
-        .containsExactlyInAnyOrder("userId", "displayName", "providers");
+        .containsExactlyInAnyOrder("userId", "displayName", "profileImageUrl", "providers");
     assertThat(
             jdbc.queryForObject(
                 "SELECT principal_name FROM spring_session WHERE principal_name IS NOT NULL",
@@ -423,6 +427,57 @@ class OAuthMemberLoginIntegrationTests {
                 .cookie(kakaoLogin.getResponse().getCookie("HANMAUM_SESSION")))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.userId").value(kakao.toString()));
+  }
+
+  @ParameterizedTest
+  @EnumSource(SocialProvider.class)
+  void repeatLoginRefreshesAndClearsTheStoredImage(SocialProvider socialProvider) throws Exception {
+    String registration = socialProvider.name().toLowerCase(java.util.Locale.ROOT);
+    provider.profileImageUrl = null;
+    var first = login(registration);
+    assertRedirect(first);
+    assertThat(readProfile(first).path("profileImageUrl").isNull()).isTrue();
+
+    provider.profileImageUrl = "https://images.example.invalid/updated.png";
+    var repeat = login(registration);
+    assertRedirect(repeat);
+    var updated = readProfile(repeat);
+    assertThat(updated.path("profileImageUrl").asText()).isEqualTo(provider.profileImageUrl);
+    assertThat(updated.path("userId").asText())
+        .isEqualTo(readProfile(first).path("userId").asText());
+
+    provider.profileImageUrl = null;
+    var removed = login(registration);
+    assertRedirect(removed);
+    assertThat(readProfile(removed).path("profileImageUrl").isNull()).isTrue();
+    assertThat(users.findAll())
+        .singleElement()
+        .satisfies(user -> assertThat(user.getProfileImageUrl()).isNull());
+  }
+
+  @Test
+  void ignoresKakaoDefaultImage() throws Exception {
+    provider.defaultImage = true;
+    var result = login("kakao");
+    assertRedirect(result);
+    assertThat(readProfile(result).path("profileImageUrl").isNull()).isTrue();
+  }
+
+  @Test
+  void ignoresNonHttpsPhotoWithoutFailingLogin() throws Exception {
+    provider.profileImageUrl = "http://images.example.invalid/photo.png";
+    var result = login("google");
+    assertRedirect(result);
+    assertThat(readProfile(result).path("profileImageUrl").isNull()).isTrue();
+  }
+
+  private tools.jackson.databind.JsonNode readProfile(MvcResult login) throws Exception {
+    var response =
+        mvc.perform(get("/api/users/me").cookie(login.getResponse().getCookie("HANMAUM_SESSION")))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse();
+    return mapper.readTree(response.getContentAsString()).path("data");
   }
 
   @ParameterizedTest
@@ -721,9 +776,11 @@ class OAuthMemberLoginIntegrationTests {
         .isEqualTo("#/components/schemas/MyProfileResponse");
     var profile = document.at("/components/schemas/MyProfileResponse");
     assertThat(profile.get("properties").propertyNames())
-        .containsExactlyInAnyOrder("userId", "displayName", "providers");
+        .containsExactlyInAnyOrder("userId", "displayName", "profileImageUrl", "providers");
     assertThat(profile.at("/properties/userId/format").asText()).isEqualTo("uuid");
     assertThat(profile.at("/properties/displayName/type").toString()).contains("string", "null");
+    assertThat(profile.at("/properties/profileImageUrl/type").toString())
+        .contains("string", "null");
     assertThat(profile.at("/properties/providers/items/enum").toString())
         .contains("GOOGLE", "KAKAO");
     assertThat(document.at("/components/schemas/ApiResponse/properties/data").has("type"))
@@ -882,7 +939,7 @@ class OAuthMemberLoginIntegrationTests {
               .userNameAttributeName("sub")
               .build(),
           registration(provider, "kakao")
-              .scope("profile_nickname")
+              .scope("profile_nickname", "profile_image")
               .userNameAttributeName("id")
               .build());
     }
@@ -939,6 +996,8 @@ class OAuthMemberLoginIntegrationTests {
     final AtomicInteger tokenRequests = new AtomicInteger();
     final AtomicInteger userInfoRequests = new AtomicInteger();
     volatile String name;
+    volatile String profileImageUrl;
+    volatile boolean defaultImage;
     volatile Object kakaoId;
     volatile String googleUserInfoSubject;
     volatile String nonce;
@@ -989,7 +1048,7 @@ class OAuthMemberLoginIntegrationTests {
                     "expires_in",
                     300,
                     "scope",
-                    "profile_nickname");
+                    "profile_nickname profile_image");
           }
         } else if (path.endsWith("/userinfo") && userInfoFails) {
           statusCode = 500;
@@ -999,18 +1058,19 @@ class OAuthMemberLoginIntegrationTests {
           claims.put("sub", googleUserInfoSubject);
           claims.put("email", "same@example.invalid");
           if (name != null) claims.put("name", name);
+          if (profileImageUrl != null) claims.put("picture", profileImageUrl);
           payload = claims;
         } else if (path.equals("/kakao/userinfo")) {
+          var profile = new java.util.HashMap<String, Object>();
+          if (name != null) profile.put("nickname", name);
+          if (profileImageUrl != null) profile.put("profile_image_url", profileImageUrl);
+          profile.put("is_default_image", defaultImage);
           payload =
               Map.of(
                   "id",
                   kakaoId,
                   "kakao_account",
-                  Map.of(
-                      "email",
-                      "same@example.invalid",
-                      "profile",
-                      name == null ? Map.of() : Map.of("nickname", name)));
+                  Map.of("email", "same@example.invalid", "profile", profile));
         } else {
           statusCode = 404;
           payload = Map.of("error", "unknown endpoint");

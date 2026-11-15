@@ -10,7 +10,7 @@ public record SourceRecordDetail(
     UUID recordId,
     UUID spaceId,
     String content,
-    SourceRecordAuthor author,
+    SourceRecordAuthorProfile author,
     Instant recordedAt,
     @Schema(type = "string", example = "1") String version,
     boolean isMine,
