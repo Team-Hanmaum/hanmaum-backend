@@ -36,32 +36,19 @@
 
 ## 🌿 프로젝트 소개
 
-한마음은 가족이 함께 부모님의 돌봄을 이어갈 수 있도록, 흩어진 소식과 확인한 돌봄 정보를 한 공간에 모읍니다. 가족이 남긴 소식을 AI가 분석해 변경 사항을 제안하고, 소유자가 검토한 내용을 일정·할 일·질문 등에 반영합니다.
-
-이 저장소는 로그인·세션·공간 권한, 돌봄 업무 API와 데이터 저장, AI 분석 작업 실행을 담당합니다.
-
-| 주요 기능 | 백엔드 역할 |
-| --- | --- |
-| 함께 돌보는 공간 | Google·카카오 로그인, 공간 생성·초대·참여, 구성원과 소유권 관리 |
-| 소식과 AI 제안 | 원문 보존, 비동기 분석 접수·상태 조회·실패 재시도, 제안과 근거 저장 |
-| 돌봄 관리 | 일정·할 일·질문 등 조회·직접 변경, 편집 잠금·버전 검사, 근거와 이력 조회 |
-| 검토와 반영 | 소유자의 반영·미적용, 구성원의 변경 요청, 원본 삭제에 따른 파생 내용 정리 |
-| 현황판과 공유 | 돌봄 현황판 조회, 공유 링크 발급, 현재 참여 권한에 따른 최신 정보 제공 |
+한마음 백엔드는 가족의 돌봄 공간과 참여 권한을 관리합니다. 소식 원문, AI 제안, 가족이 확인한 일정과 할 일을 저장하고 웹 화면에 API로 제공합니다.
 
 <a id="서비스-흐름"></a>
 
 ## 🧭 서비스 흐름
 
 ```text
-로그인 → 공간 생성 또는 초대 참여 → 홈
-  └─ 소식 작성 → 원본 저장·분석 접수 → AI 분석 → 제안·근거 검토
-       ├─ 소유자: 최종 반영 또는 미적용
-       └─ 구성원: 변경 요청 → 소유자 검토
-
-최종 반영 → 홈·돌봄 목록·상세에서 변경된 정보 확인
+로그인 → 공간 생성 또는 초대 참여
+  → 소식 작성 → AI 분석 → 제안·근거 검토
+  → 소유자 반영 → 일정·할 일 확인
 ```
 
-소식 저장은 분석이 끝나기 전에 응답합니다. 분석 워커가 대기 중인 작업을 가져와 AI에 요청하고, BE는 반환된 결과를 검토용 제안으로 저장합니다. 구성원의 직접 변경 허용 범위와 역할별 검토 규칙은 [백엔드 구조·권한 정책](docs/architecture.md)을 참고하세요.
+구성원은 제안을 검토하고 소유자에게 변경을 요청할 수 있습니다. [백엔드 구조·권한 정책](docs/architecture.md)
 
 <a id="시스템-구성"></a>
 
@@ -75,7 +62,7 @@
 | [Backend](https://github.com/Team-Hanmaum/hanmaum-backend) | 인증·세션·권한, 돌봄 API, PostgreSQL 저장, AI 분석 워커 |
 | [AI](https://github.com/Team-Hanmaum/hanmaum-ai) | FastAPI 기반 소식 분석과 구조화된 돌봄 제안 생성 |
 
-FE는 `https://api.hanmaum.site`로 요청합니다. 운영 BE와 AI는 AWS Lightsail 시드니 리전의 같은 인스턴스에서 별도 컨테이너로 실행됩니다. Nginx가 공개 HTTPS를 처리하고, BE는 전용 Docker 네트워크의 내부 HTTPS로 AI에 요청합니다. DB와 AI 서비스는 내부에서 접근합니다.
+Nginx가 `https://api.hanmaum.site`의 요청을 BE로 전달합니다. BE·AI는 같은 Lightsail 인스턴스에서 별도 컨테이너로 실행되며 내부 HTTPS로 통신합니다.
 
 <a id="기술-스택"></a>
 
@@ -94,18 +81,18 @@ FE는 `https://api.hanmaum.site`로 요청합니다. 운영 BE와 AI는 AWS Ligh
 
 ## 🔐 인증·권한과 데이터 저장
 
-- **인증과 세션.** Google·카카오 OAuth 로그인 후 `HANMAUM_SESSION` 쿠키를 발급하고, 세션은 PostgreSQL에 저장합니다. 운영 쿠키는 BE 호스트 범위의 `HttpOnly`, `Secure`, `SameSite=Lax`입니다.
-- **요청 권한.** BE는 유효한 세션의 회원과 소셜 연결을 확인합니다. 각 업무 서비스는 대상 공간의 현재 참여 상태와 소유자·구성원 권한을 확인합니다.
-- **데이터 저장.** 소식 원문, 분석 실행, AI 제안, 확정 돌봄 항목과 근거·이력을 구분해 관리합니다. Flyway가 스키마를 적용하고 Hibernate가 검증합니다. 스키마 변경은 새 마이그레이션으로 추가합니다.
-- **동시 변경과 재전송.** 계약에 따라 대상 버전·편집 잠금을 확인하고, `clientRequestId`를 받는 API는 같은 논리적 요청의 중복 실행을 방지합니다. 원본 삭제 시 해당 내용에서 파생된 제안·근거 등을 함께 정리합니다.
+| 영역 | 처리 방식 |
+| --- | --- |
+| 인증·세션 | Google·카카오 OAuth 로그인 후 `HANMAUM_SESSION` 쿠키 발급. 세션은 PostgreSQL에 저장 |
+| 권한 | 요청마다 대상 공간의 현재 참여 상태와 소유자·구성원 권한 확인 |
+| 데이터 | 소식 원문·분석 실행·AI 제안·확정 항목과 근거·이력을 구분해 저장. Flyway로 스키마 관리 |
+| 동시 변경·재전송 | 필요한 요청에 버전·편집 잠금 검사, `clientRequestId`로 중복 실행 방지 |
 
-세션·CSRF 요청 형식은 [공개 API 공통 규격](docs/api-conventions.md), Origin과 OAuth 복귀 주소는 [운영 및 로컬 HTTPS FE 연결 설정](docs/deployment.md#운영-fe-로그인세션-연결)을 참고하세요.
+운영 세션 쿠키는 BE 호스트 전용이며 `HttpOnly`, `Secure`, `SameSite=Lax`를 적용합니다. [로그인·세션 연결 설정](docs/deployment.md#운영-fe-로그인세션-연결)
 
 <a id="폴더-구조"></a>
 
 ## 📁 폴더 구조
-
-주요 디렉터리를 기준으로 정리했습니다.
 
 ```text
 hanmaum-backend/
@@ -143,30 +130,23 @@ hanmaum-backend/
         └── resources/                    # 테스트 프로필과 AI 계약 fixture
 ```
 
-도메인은 Controller에서 HTTP 요청·응답을 연결하고, Service에서 업무 규칙과 트랜잭션을 처리하며, Repository에서 데이터를 읽고 씁니다. 도메인별 경계는 [백엔드 아키텍처](docs/architecture.md)를 참고하세요.
-
 <a id="api-계약과-ai-분석"></a>
 
 ## 🔌 API 계약과 AI 분석
 
-업무 API는 `/api` 아래에 있고, OAuth 로그인 시작과 공급자 콜백은 Spring Security가 처리합니다. 전체 경로·요청·응답 스키마는 [운영 Swagger](https://api.hanmaum.site/swagger-ui/index.html)와 [노션 API 명세서](https://app.notion.com/p/3ec0f25ea138807cad15e07696472145)에서 확인할 수 있습니다.
-
-| 영역 | 대표 요청 |
+| 영역 | 핵심 계약 |
 | --- | --- |
-| 인증과 내 정보 | `GET /oauth2/authorization/{provider}`, `GET /api/users/me`, `GET /api/auth/csrf`, `POST /api/auth/logout` |
-| 공간과 참여 | `GET /api/spaces`, `POST /api/spaces`, `POST /api/invitations/{invitationToken}/join` |
-| 소식·분석·제안 | `POST /api/spaces/{spaceId}/source-records`, `GET /api/spaces/{spaceId}/source-records/{recordId}/analyses/{analysisId}`, `GET /api/spaces/{spaceId}/proposals` |
-| 항목과 공유 | `GET /api/spaces/{spaceId}/items`, `GET /api/spaces/{spaceId}/dashboard`, `GET /api/share-links/{token}` |
+| 요청 | 인증이 필요한 요청에 세션 쿠키 포함. 변경 요청에는 `GET /api/auth/csrf` 토큰을 지정된 헤더에 담아 전달 |
+| 응답 | 일반 JSON은 `success`, `code`, `message`, `data`, `errors`, `timestamp` 사용. OAuth·CSRF 발급·로그아웃은 별도 형식 |
+| AI 분석 | 소식 저장 시 분석을 접수하고 워커가 내부 AI API 호출. 운영은 v2 계약을 사용하며 결과를 검토용 제안으로 저장 |
 
-일반 JSON 응답은 `success`, `code`, `message`, `data`, `errors`, `timestamp`로 구성합니다. FE는 쿠키를 포함해 요청하고, CSRF가 필요한 변경 요청에는 `GET /api/auth/csrf`에서 받은 `{headerName, token}`을 헤더로 전달합니다. CSRF 발급 성공은 이 객체 자체를 반환하고, OAuth는 리다이렉트를 사용하며, 로그아웃 성공은 본문 없는 `204`입니다. [공개 API 공통 규격](docs/api-conventions.md)
-
-운영에서는 신규 분석을 v2 계약으로 접수합니다. BE는 원문과 같은 공간의 후보·근거를 구성하고, DB 트랜잭션 밖에서 내부 AI API를 호출합니다. 응답을 저장하기 전에 현재 입력·권한을 재검증합니다. 소식 작성 성공과 분석 성공은 별개이며, FE는 BE에서 분석 상태와 제안을 조회합니다. 실제 항목은 권한에 맞는 반영 요청을 거쳐 확정합니다. [AI v2 실행 계약](docs/ai-contract-v2-execution.md) · [제안 반영 규칙](docs/proposal-decisions.md)
+[운영 Swagger](https://api.hanmaum.site/swagger-ui/index.html) · [노션 API 명세](https://app.notion.com/p/3ec0f25ea138807cad15e07696472145) · [공통 API 규격](docs/api-conventions.md) · [AI v2 실행 계약](docs/ai-contract-v2-execution.md)
 
 <a id="로컬-실행"></a>
 
 ## 🚀 로컬 실행
 
-**필수 환경: JDK 21 · Docker Engine(Linux 컨테이너) · Docker Compose v2.** Windows에서는 Docker Desktop의 엔진을 먼저 실행합니다. Gradle은 저장소의 Wrapper를 사용합니다.
+JDK 21과 Docker Compose v2가 필요합니다. Windows에서는 Docker Desktop을 Linux 컨테이너 모드로 실행합니다.
 
 ```sh
 git clone https://github.com/Team-Hanmaum/hanmaum-backend.git
@@ -174,25 +154,20 @@ cd hanmaum-backend
 git config core.hooksPath .githooks
 ```
 
-저장소 루트에서 다음 명령을 실행합니다.
-
 ```powershell
 if (-not (Test-Path .env)) { Copy-Item .env.example .env }
 docker compose up -d --wait postgres
 .\gradlew.bat bootRun
 ```
 
-Git Bash·macOS·Linux에서는 복사 명령에 `test -f .env || cp .env.example .env`, 실행 명령에 `./gradlew bootRun`을 사용합니다.
+Git Bash·macOS·Linux에서는 `test -f .env || cp .env.example .env`와 `./gradlew bootRun`을 사용합니다. Compose는 PostgreSQL을 실행하고 BE는 `local` 프로필로 시작합니다. [.env.example](.env.example)
 
-루트 [docker-compose.yml](docker-compose.yml)은 로컬 PostgreSQL만 실행합니다. BE는 기본 `local` 프로필로 실행되며, [.env.example](.env.example)의 개발 DB 설정을 사용합니다. 포트가 겹치면 `POSTGRES_PORT` 또는 `SERVER_PORT`를 조정하세요. `.env`는 Spring의 properties 형식이므로 값에 따옴표를 붙이지 않습니다.
+- 실행 확인은 [서버 상태](http://localhost:8080/actuator/health)와 [로컬 Swagger](http://localhost:8080/swagger-ui/index.html)에서 할 수 있습니다.
+- 종료할 때는 BE 터미널에서 `Ctrl+C`를 누른 뒤 `docker compose down`을 실행합니다.
 
-- 상태: [http://localhost:8080/actuator/health](http://localhost:8080/actuator/health)
-- API 문서: [로컬 Swagger](http://localhost:8080/swagger-ui/index.html) · [OpenAPI JSON](http://localhost:8080/v3/api-docs)
-- 종료: BE 터미널에서 `Ctrl+C`, DB는 `docker compose down`으로 중지하면 볼륨 데이터가 유지됩니다.
+로컬 OAuth 테스트에는 `.env`의 공급자별 자격 증명과 `http://localhost:8080/login/oauth2/code/{provider}` 콜백 등록이 필요합니다. `{provider}`는 `google` 또는 `kakao`이며, 실행 명령에 `--args='--spring.profiles.active=local,oauth'`를 추가합니다. [로컬 HTTPS FE와 배포 BE 연결](docs/deployment.md#로컬-https-fe에서-배포-be-사용)
 
-로컬 BE에서 실제 소셜 로그인을 확인하려면 개발자 콘솔에 `http://localhost:8080/login/oauth2/code/google`과 `http://localhost:8080/login/oauth2/code/kakao`를 각 공급자별로 등록하고, `.env`의 `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `KAKAO_CLIENT_ID`, `KAKAO_CLIENT_SECRET`을 채웁니다. BE를 `.\gradlew.bat bootRun --args='--spring.profiles.active=local,oauth'`로 실행하세요. 배포 BE와 연동하는 로컬 HTTPS FE는 [별도 연결 절차](docs/deployment.md#로컬-https-fe에서-배포-be-사용)를 따릅니다.
-
-기본 로컬 설정에서 분석 워커는 꺼져 있어 소식의 분석은 대기 상태로 남습니다. AI까지 연동할 때는 로컬 AI 서버, 같은 내부 API 키, 계약 버전과 워커 설정을 맞추세요. [AI 통신 계약](docs/ai-contract.md) · [워커 설정](docs/deployment.md#분석-워커-활성화비활성화)
+기본 로컬 설정에서는 분석 작업이 대기 상태로 남습니다. [AI 통신 계약](docs/ai-contract.md) · [워커 설정](docs/deployment.md#분석-워커-활성화비활성화)
 
 <a id="개발-워크플로우"></a>
 
@@ -228,27 +203,14 @@ PowerShell에서 다음 명령을 실행합니다. Git Bash·macOS·Linux에서�
 .\gradlew.bat check bootJar --no-daemon
 ```
 
-`check`는 포맷과 테스트를 검증하고, `bootJar`는 `build/libs/hanmaum-backend.jar`를 생성합니다. 전체 검증에는 Docker가 필요합니다. 통합 테스트는 Testcontainers의 별도 PostgreSQL을 사용하며, 테스트 보고서는 `build/reports/tests/test/index.html`에 생성됩니다.
-
-배포 설정을 변경했다면 CI와 같은 Bash 환경에서 Python 3와 Docker를 준비하고 다음을 실행합니다.
-
-```bash
-for script in deploy/*.sh; do bash -n "$script" || exit 1; done
-python3 -m unittest discover -s deploy/tests -v
-docker run --rm --network none \
-  --mount "type=bind,src=$PWD,dst=/src,readonly" \
-  python:3.13-slim-bookworm python /src/deploy/tests/activation_smoke.py
-python3 deploy/validate.py --nginx --postgres
-python3 deploy/tests/ai_tls_smoke.py
-```
+통합 테스트에는 Docker가 필요합니다. `bootJar`는 `build/libs/hanmaum-backend.jar`를 생성합니다. 배포 설정 검사 명령은 [CI 워크플로우](.github/workflows/ci.yml)에서 확인할 수 있습니다.
 
 ![한마음 CI/CD 파이프라인](https://raw.githubusercontent.com/Team-Hanmaum/hanmaum-docs/main/assets/development/ci-cd.png)
 
 | 시점 | 실행 내용 |
 | --- | --- |
-| PR 생성·새 커밋·다시 열기 | [Backend CI](.github/workflows/ci.yml)가 대상 브랜치 제한 없이 포맷·테스트·JAR 빌드와 배포 설정을 검사 |
-| `dev`·`main` push | Backend CI가 해당 브랜치의 커밋을 검사 |
-| `dev` push의 Backend CI 성공 | [Deploy backend](.github/workflows/deploy.yml)가 같은 커밋을 다시 검증하고 GHCR에 이미지를 게시한 뒤 Lightsail에 배포 |
-| 수동 재배포·최초 HTTPS 설정 | GitHub Actions의 **Deploy backend → Run workflow**에서 최신 `dev` 선택. 최초 인증서 발급 때 `bootstrap_https` 선택 |
+| PR 또는 `dev`·`main` push | Backend CI에서 포맷·테스트·JAR 빌드·배포 설정 검사 |
+| `dev` push의 CI 성공 | 같은 커밋의 이미지를 GHCR에 게시하고 Lightsail에 자동 배포 |
+| 수동 배포 | [Deploy backend](.github/workflows/deploy.yml)의 **Run workflow**에서 `dev` 선택 |
 
-배포는 최신 `dev` 커밋을 대상으로 한 번에 하나씩 진행합니다. 배포 작업은 AWS OIDC로 임시 권한을 받아 서버에 접속하고, S3 백업을 확인한 뒤 컨테이너를 교체합니다. Actions 결과와 함께 [운영 health](https://api.hanmaum.site/actuator/health)와 [운영 Swagger](https://api.hanmaum.site/swagger-ui/index.html)를 확인하세요. Secrets·Variables, 초기 설정과 장애 대응은 [운영 배포 안내](docs/deployment.md), 실제 소식 분석과 제안 반영 점검은 [배포 환경 연동 점검](docs/deployed-analysis-verification.md)을 따릅니다.
+배포는 최신 `dev` 커밋만 대상으로 하며, S3 백업 확인 후 컨테이너를 교체합니다.
