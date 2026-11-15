@@ -97,6 +97,11 @@ public class CareItemQueryService {
     return result.items().getFirst();
   }
 
+  /** A historical request can still be displayed when its target no longer exists. */
+  public Optional<CareItemDetail> changeRequestTarget(UUID actor, UUID space, UUID item) {
+    return require(items.read(actor, space, item, null, null, false)).items().stream().findFirst();
+  }
+
   /**
    * Batch projection for sharing; the caller must suppress details for unavailable target states.
    */

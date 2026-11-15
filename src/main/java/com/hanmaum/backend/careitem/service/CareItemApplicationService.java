@@ -5,7 +5,6 @@ import com.hanmaum.backend.careitem.repository.CareItemApplicationRepository;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.code.ErrorCode;
 import com.hanmaum.backend.global.exception.ApiException;
-import com.hanmaum.backend.proposal.code.ProposalErrorCode;
 import java.time.*;
 import java.util.*;
 import org.springframework.stereotype.Service;
@@ -38,18 +37,19 @@ public class CareItemApplicationService {
     this.mapper = mapper;
   }
 
-  public CareItemApplicationRepository.Item lock(UUID space, UUID item) {
+  public LockedItem lock(UUID space, UUID item) {
     return items
         .lock(space, item)
+        .map(LockedItem::new)
         .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND));
   }
 
-  public void requireEditable(CareItemApplicationRepository.Item item, long expected) {
+  public void requireEditable(LockedItem item, long expected) {
     if (!item.available()) throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND);
     if (item.version() != expected) throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
   }
 
-  public Prepared prepareDeletion(CareItemApplicationRepository.Item item, long expected) {
+  public Prepared prepareDeletion(LockedItem item, long expected) {
     if (!item.visible()) throw new ApiException(CareItemErrorCode.ITEM_STATE_CONFLICT);
     if (item.version() != expected) throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
     if (item.version() == Long.MAX_VALUE)
@@ -72,7 +72,7 @@ public class CareItemApplicationService {
     return new Applied(prepared.item(), prepared.version(), prepared.previousDocument());
   }
 
-  public void requireOpenQuestion(CareItemApplicationRepository.Item item, long expected) {
+  public void requireOpenQuestion(LockedItem item, long expected) {
     if (!item.visible()) throw new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND);
     if (item.version() != expected) throw new ApiException(CommonErrorCode.VERSION_CONFLICT);
     if (!item.available()
@@ -81,8 +81,7 @@ public class CareItemApplicationService {
       throw new ApiException(CareItemErrorCode.ITEM_STATE_CONFLICT);
   }
 
-  public Prepared prepareAnswer(
-      UUID space, CareItemApplicationRepository.Item target, JsonNode answer, String path) {
+  public Prepared prepareAnswer(UUID space, LockedItem target, JsonNode answer, String path) {
     var values = mapper.createObjectNode();
     values.set("confirmedAnswer", answer);
     return prepare(
@@ -95,20 +94,7 @@ public class CareItemApplicationService {
         CareItemErrorCode.ITEM_STATE_CONFLICT);
   }
 
-  /** No writes here: every entry must be prepared before the first entry is persisted. */
-  public Prepared prepare(
-      UUID space,
-      String type,
-      String operation,
-      CareItemApplicationRepository.Item current,
-      JsonNode values,
-      String path) {
-    return prepare(
-        space, type, operation, current, values, path, ProposalErrorCode.PROPOSAL_STATE_CONFLICT);
-  }
-
-  public Prepared prepareDirect(
-      UUID space, CareItemApplicationRepository.Item target, JsonNode values, String path) {
+  public Prepared prepareDirect(UUID space, LockedItem target, JsonNode values, String path) {
     String type =
         target == null
             ? CareMutationInput.text(
@@ -131,11 +117,12 @@ public class CareItemApplicationService {
     return result;
   }
 
-  private Prepared prepare(
+  /** No writes here: every entry must be prepared before the first entry is persisted. */
+  public Prepared prepare(
       UUID space,
       String type,
       String operation,
-      CareItemApplicationRepository.Item current,
+      LockedItem current,
       JsonNode values,
       String path,
       ErrorCode conflict) {
@@ -304,8 +291,7 @@ public class CareItemApplicationService {
     items.unassignOpenTasks(space, departing, actor, now);
   }
 
-  public ObjectNode reconfirmedValues(
-      UUID space, CareItemApplicationRepository.Item item, JsonNode values) {
+  public ObjectNode reconfirmedValues(UUID space, LockedItem item, JsonNode values) {
     CareMutationInput.object(values, "values", Set.of("title", "description", "fields"));
     var body = mapper.createObjectNode();
     body.put("title", CareMutationInput.text(values.path("title"), "values.title", true));
@@ -369,6 +355,47 @@ public class CareItemApplicationService {
       }
     } catch (IllegalArgumentException | DateTimeException e) {
       throw CareItemInput.invalid(path, "유효한 날짜 또는 시각을 입력해주세요.");
+    }
+  }
+
+  /** Target loaded under a row lock in the caller's write transaction. */
+  public static final class LockedItem {
+    private final CareItemApplicationRepository.Item row;
+
+    private LockedItem(CareItemApplicationRepository.Item row) {
+      this.row = row;
+    }
+
+    public UUID id() {
+      return row.id();
+    }
+
+    public String type() {
+      return row.type();
+    }
+
+    public long version() {
+      return row.version();
+    }
+
+    public UUID document() {
+      return row.document();
+    }
+
+    public boolean available() {
+      return row.available();
+    }
+
+    public boolean visible() {
+      return row.visible();
+    }
+
+    String body() {
+      return row.body();
+    }
+
+    String status() {
+      return row.status();
     }
   }
 

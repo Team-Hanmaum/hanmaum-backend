@@ -1,8 +1,8 @@
 package com.hanmaum.backend.proposal.service;
 
 import com.hanmaum.backend.careitem.dto.CareItemDetail;
-import com.hanmaum.backend.careitem.repository.CareItemQueryRepository;
 import com.hanmaum.backend.careitem.service.CareItemInput;
+import com.hanmaum.backend.careitem.service.CareItemQueryService;
 import com.hanmaum.backend.carespace.service.CareSpaceQueryService;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.exception.ApiException;
@@ -23,7 +23,7 @@ public class ChangeRequestQueryService {
   private static final Set<String> STATUSES =
       Set.of("PENDING", "APPLIED", "DECLINED", "CANCELED", "INVALIDATED");
   private final ChangeRequestRepository requests;
-  private final CareItemQueryRepository items;
+  private final CareItemQueryService items;
   private final ChangeRequestReviewToken tokens;
   private final ChangeRequestCursor cursors;
   private final ObjectMapper mapper;
@@ -31,7 +31,7 @@ public class ChangeRequestQueryService {
 
   public ChangeRequestQueryService(
       ChangeRequestRepository requests,
-      CareItemQueryRepository items,
+      CareItemQueryService items,
       ChangeRequestReviewToken tokens,
       ChangeRequestCursor cursors,
       ObjectMapper mapper,
@@ -109,16 +109,9 @@ public class ChangeRequestQueryService {
       var removed = row.putArray("redactedFields");
       if (e.values() == null) removed.add("requestedValues");
       if (e.targetItemId() != null) {
-        // A missing target is a valid historical request view, not a nested transactional error.
-        // Keep the repository's authorization and redacted public projection; never reload raw
-        // body.
-        var target =
-            items
-                .read(actor, space, e.targetItemId(), null, null, false)
-                .orElseThrow(() -> new ApiException(CommonErrorCode.RESOURCE_NOT_FOUND));
-        if (!target.authorized()) throw new ApiException(CommonErrorCode.FORBIDDEN);
-        if (!target.items().isEmpty()) {
-          CareItemDetail item = target.items().getFirst();
+        var target = items.changeRequestTarget(actor, space, e.targetItemId());
+        if (target.isPresent()) {
+          CareItemDetail item = target.get();
           row.put("currentItemVersion", item.version());
           if ("VISIBLE".equals(item.visibility())) {
             var current =

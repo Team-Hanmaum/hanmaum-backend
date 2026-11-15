@@ -1,7 +1,7 @@
 package com.hanmaum.backend.proposal.service;
 
-import com.hanmaum.backend.careitem.repository.CareItemApplicationRepository;
 import com.hanmaum.backend.careitem.service.*;
+import com.hanmaum.backend.careitem.service.CareItemApplicationService.LockedItem;
 import com.hanmaum.backend.carespace.service.CareSpaceAccessService;
 import com.hanmaum.backend.global.code.CommonErrorCode;
 import com.hanmaum.backend.global.command.*;
@@ -111,7 +111,7 @@ public class ProposalDecisionService {
         throw new ApiException(
             ProposalErrorCode.PROPOSAL_BATCH_CONFLICT,
             List.of(new ApiFieldError("entries", "같은 항목의 제안은 하나만 선택해주세요.")));
-    Map<UUID, CareItemApplicationRepository.Item> locked = new HashMap<>();
+    Map<UUID, LockedItem> locked = new HashMap<>();
     targets.stream().sorted().forEach(id -> locked.put(id, applications.lock(space, id)));
     List<Plan> plans = new ArrayList<>();
     int documentBytes = 0;
