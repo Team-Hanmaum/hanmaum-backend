@@ -46,9 +46,7 @@ public class OAuthMemberMapper {
     if (user.getAttributes().get("kakao_account") instanceof Map<?, ?> account
         && account.get("profile") instanceof Map<?, ?> profile) {
       name = optionalName(profile.get("nickname"));
-      if (!Boolean.TRUE.equals(profile.get("is_default_image"))) {
-        profileImageUrl = optionalImageUrl(profile.get("profile_image_url"));
-      }
+      profileImageUrl = optionalImageUrl(profile.get("profile_image_url"));
     }
     return map(SocialProvider.KAKAO, id.toString(), name, profileImageUrl, profileRequestStartedAt);
   }
