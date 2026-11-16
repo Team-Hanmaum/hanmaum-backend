@@ -458,11 +458,12 @@ class OAuthMemberLoginIntegrationTests {
   }
 
   @Test
-  void ignoresKakaoDefaultImage() throws Exception {
+  void savesAndReturnsKakaoDefaultImageWhenItHasAnHttpsUrl() throws Exception {
     provider.defaultImage = true;
     var result = login("kakao");
     assertRedirect(result);
-    assertThat(readProfile(result).path("profileImageUrl").isNull()).isTrue();
+    assertThat(readProfile(result).path("profileImageUrl").asText())
+        .isEqualTo(provider.profileImageUrl);
   }
 
   @Test
