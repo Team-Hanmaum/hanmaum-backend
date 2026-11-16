@@ -127,8 +127,12 @@ class ProductionDocumentationIntegrationTests {
             .getResponse();
     var query =
         UriComponentsBuilder.fromUriString(response.getRedirectedUrl()).build().getQueryParams();
-    assertThat(UriUtils.decode(query.getFirst("scope"), StandardCharsets.UTF_8).split(" "))
-        .contains("profile_nickname", "profile_image");
+    assertThat(query.get("scope"))
+        .singleElement()
+        .satisfies(
+            scope ->
+                assertThat(UriUtils.decode(scope, StandardCharsets.UTF_8).split(",", -1))
+                    .containsExactlyInAnyOrder("profile_nickname", "profile_image"));
   }
 
   @Test

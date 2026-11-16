@@ -8,6 +8,7 @@ import org.springframework.security.oauth2.client.web.OAuth2AuthorizationRequest
 import org.springframework.security.oauth2.core.OAuth2AuthenticationException;
 import org.springframework.security.oauth2.core.OAuth2Error;
 import org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest;
+import org.springframework.security.oauth2.core.endpoint.OAuth2ParameterNames;
 
 /**
  * Selects only server-owned destinations; keeps Spring's state, nonce, PKCE and BE redirect URI.
@@ -44,8 +45,16 @@ public final class FrontendAuthorizationRequestResolver
     }
     String successUrl = frontend == null ? defaultSuccessUrl : LOCAL_SUCCESS_URL;
     // Attributes remain in the server session, unlike additionalParameters sent to the provider.
-    return OAuth2AuthorizationRequest.from(authorization)
-        .attributes(attributes -> attributes.put(SUCCESS_URL_ATTRIBUTE, successUrl))
-        .build();
+    var result =
+        OAuth2AuthorizationRequest.from(authorization)
+            .attributes(attributes -> attributes.put(SUCCESS_URL_ATTRIBUTE, successUrl));
+    if ("kakao".equals(authorization.getAttribute(OAuth2ParameterNames.REGISTRATION_ID))
+        && !authorization.getScopes().isEmpty()) {
+      result.parameters(
+          parameters ->
+              parameters.put(
+                  OAuth2ParameterNames.SCOPE, String.join(",", authorization.getScopes())));
+    }
+    return result.build();
   }
 }
