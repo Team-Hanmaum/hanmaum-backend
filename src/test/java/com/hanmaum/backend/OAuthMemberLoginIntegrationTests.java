@@ -889,7 +889,7 @@ class OAuthMemberLoginIntegrationTests {
         registration,
         cookie == null ? response.getCookie("HANMAUM_SESSION") : cookie,
         UriUtils.decode(query.getFirst("state"), StandardCharsets.UTF_8),
-        provider.grantCode(query.getFirst("scope"), query.getFirst("nonce")));
+        provider.grantCode(registration, query.getFirst("scope"), query.getFirst("nonce")));
   }
 
   private MvcResult completeLogin(OAuthStart start, Cookie cookie) throws Exception {
@@ -996,15 +996,17 @@ class OAuthMemberLoginIntegrationTests {
     volatile boolean userInfoFails;
     final Map<String, Grant> grants = new ConcurrentHashMap<>();
 
-    private record Grant(String scopes, String nonce) {
+    private record Grant(List<String> scopes, String nonce) {
       boolean includes(String scope) {
-        return List.of(scopes.split(" ")).contains(scope);
+        return scopes.contains(scope);
       }
     }
 
-    String grantCode(String encodedScopes, String nonce) {
+    String grantCode(String registration, String encodedScopes, String nonce) {
       String code = UUID.randomUUID().toString();
-      grants.put(code, new Grant(UriUtils.decode(encodedScopes, StandardCharsets.UTF_8), nonce));
+      String delimiter = "kakao".equals(registration) ? "," : " ";
+      var scopes = List.of(UriUtils.decode(encodedScopes, StandardCharsets.UTF_8).split(delimiter));
+      grants.put(code, new Grant(scopes, nonce));
       return code;
     }
 
@@ -1057,7 +1059,7 @@ class OAuthMemberLoginIntegrationTests {
                         "expires_in",
                         300,
                         "scope",
-                        grant.scopes()));
+                        String.join(" ", grant.scopes())));
             if (path.startsWith("/google")) token.put("id_token", idToken(grant.nonce()));
             payload = token;
           }
